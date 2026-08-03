@@ -1,0 +1,7 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# Local test fixtures are third-party documents; never committed.
+public/sample.pdf

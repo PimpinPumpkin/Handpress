@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vellum, a PDF text editor</title>
+    <meta name="description" content="Edit the text in a PDF, in your browser. Nothing is uploaded." />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6.5 3.5h7l4.5 4.5v12a.8.8 0 0 1-.8.8H6.5a.8.8 0 0 1-.8-.8V4.3a.8.8 0 0 1 .8-.8z" />
+            <path d="M13.4 3.6v4.6h4.4" />
+            <path d="M9 15.4l4.5-4.5 1.9 1.9-4.5 4.5-2.4.5z" />
+          </svg>
+          <span class="brand-name">Vellum</span>
+        </div>
+
+        <div class="doc-title" id="docTitle">No document open</div>
+
+        <div class="topbar-actions">
+          <button class="btn" id="btnOpen" type="button">Open</button>
+          <button class="btn btn-primary" id="btnSave" type="button" disabled>Save a copy</button>
+        </div>
+      </header>
+
+      <div class="toolbar">
+        <div class="tool-group">
+          <button class="tool" id="btnUndo" type="button" title="Undo" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5" /><path d="M4 9h9a7 7 0 1 1 0 14h-3" /></svg>
+            <span>Undo</span>
+          </button>
+          <button class="tool" id="btnRedo" type="button" title="Redo" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5" /><path d="M20 9h-9a7 7 0 1 0 0 14h3" /></svg>
+            <span>Redo</span>
+          </button>
+        </div>
+
+        <div class="tool-sep"></div>
+
+        <div class="tool-group">
+          <span class="tool tool-active" id="modeChip" title="Click any line of text to edit it">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h12v2" /><path d="M10 5v14" /><path d="M8 19h4" /><path d="M15.5 15.5l4-4 2.5 2.5-4 4-3 .5z" /></svg>
+            <span>Edit text</span>
+          </span>
+        </div>
+
+        <div class="tool-sep"></div>
+
+        <div class="tool-group zoom-group">
+          <button class="tool tool-icon" id="btnZoomOut" type="button" title="Zoom out">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M8 11h6" /><path d="M20 20l-3.5-3.5" /></svg>
+          </button>
+          <select class="zoom-select" id="zoomSelect" title="Zoom">
+            <option value="fit">Fit width</option>
+            <option value="0.5">50%</option>
+            <option value="0.75">75%</option>
+            <option value="1">100%</option>
+            <option value="1.25">125%</option>
+            <option value="1.5">150%</option>
+            <option value="2">200%</option>
+            <option value="3">300%</option>
+          </select>
+          <button class="tool tool-icon" id="btnZoomIn" type="button" title="Zoom in">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M11 8v6" /><path d="M8 11h6" /><path d="M20 20l-3.5-3.5" /></svg>
+          </button>
+        </div>
+
+        <div class="toolbar-spacer"></div>
+
+        <div class="tool-group">
+          <button class="tool" id="btnSidebar" type="button" title="Show or hide page thumbnails">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
+            <span>Pages</span>
+          </button>
+          <button class="tool" id="btnPanel" type="button" title="Show or hide the properties panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+            <span>Properties</span>
+          </button>
+        </div>
+      </div>
+
+      <main class="workspace">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-head">Pages</div>
+          <div class="thumbs" id="thumbs"></div>
+        </aside>
+
+        <section class="viewer-wrap">
+          <div class="viewer" id="viewer"></div>
+
+          <div class="dropzone" id="dropzone">
+            <div class="dropzone-inner">
+              <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6.5 3.5h7l4.5 4.5v12a.8.8 0 0 1-.8.8H6.5a.8.8 0 0 1-.8-.8V4.3a.8.8 0 0 1 .8-.8z" />
+                <path d="M13.4 3.6v4.6h4.4" />
+              </svg>
+              <h1>Edit the text in a PDF</h1>
+              <p class="lede">Click any line, retype it, and save. Vellum reuses the document's own fonts.</p>
+              <button class="btn btn-primary btn-lg" id="btnChoose" type="button">Choose a PDF</button>
+              <p class="hint">or drop one anywhere on this window</p>
+              <p class="privacy">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
+                Your file never leaves this browser. No server, no upload, no account.
+              </p>
+            </div>
+          </div>
+
+          <div class="busy" id="busy" hidden><div class="spinner"></div><span id="busyText">Working…</span></div>
+        </section>
+
+        <aside class="panel" id="panel">
+          <div class="panel-head">Properties</div>
+          <div class="panel-body" id="panelBody">
+            <p class="panel-empty">Select a line of text to see how it is set.</p>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="statusbar">
+        <div class="status-nav">
+          <button class="tool tool-icon" id="btnPrev" type="button" title="Previous page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+          </button>
+          <input class="page-input" id="pageInput" type="text" value="1" aria-label="Page number" />
+          <span class="page-total" id="pageTotal">/ 0</span>
+          <button class="tool tool-icon" id="btnNext" type="button" title="Next page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
+          </button>
+        </div>
+        <div class="status-message" id="statusMessage"></div>
+        <div class="status-right" id="editCount"></div>
+      </footer>
+    </div>
+
+    <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
