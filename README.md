@@ -80,8 +80,15 @@ npm install
 npm run dev
 ```
 
-Build a static bundle with `npm run build`. The output is plain files with no
-backend, so it can be hosted anywhere.
+Build a static bundle with `npm run build`, then check it with `npm run preview`.
+The output in `dist` is plain files with no backend, so it can be dropped on any
+static host.
+
+CI typechecks and builds every push and uploads `dist` as a workflow artifact.
+It does not publish anywhere: GitHub Pages is not available for private repos on
+the free plan. To get a live URL, either make the repo public and add a Pages
+workflow, or point Cloudflare Pages or Netlify at it with build command
+`npm run build` and output directory `dist`.
 
 ## Tests
 

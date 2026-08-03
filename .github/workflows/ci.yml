@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+      # The build is a plain static folder. Publishing it from here needs Pages,
+      # which is not available for private repos on the free plan, so it is
+      # uploaded as an artifact instead and can be dropped on any static host.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vellum-site
+          path: dist
+          retention-days: 30
