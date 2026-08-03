@@ -5,6 +5,7 @@
 import './style.css';
 import { VellumDocument, type PageModel } from './app/model';
 import { Viewer } from './app/viewer';
+import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -20,6 +21,7 @@ const els = {
   btnZoomOut: $<HTMLButtonElement>('btnZoomOut'),
   btnSidebar: $<HTMLButtonElement>('btnSidebar'),
   btnPanel: $<HTMLButtonElement>('btnPanel'),
+  btnLocalFonts: $<HTMLButtonElement>('btnLocalFonts'),
   btnPrev: $<HTMLButtonElement>('btnPrev'),
   btnNext: $<HTMLButtonElement>('btnNext'),
   zoomSelect: $<HTMLSelectElement>('zoomSelect'),
@@ -93,6 +95,7 @@ async function openFile(file: File): Promise<void> {
 
     const { doc: opened, report } = await VellumDocument.open(file.name, bytes);
     doc = opened;
+    if (localFonts.enabled) doc.fontProvider = localFonts;
 
     els.dropzone.hidden = true;
     els.docTitle.textContent = file.name;
@@ -222,6 +225,46 @@ function syncEditState(): void {
   const n = doc?.editCount() ?? 0;
   els.editCount.textContent = n ? `${n} edit${n === 1 ? '' : 's'}` : '';
 }
+
+/* ---------------- local font matching ---------------- */
+
+const localFonts = new LocalFontProvider();
+
+els.btnLocalFonts.addEventListener('click', async () => {
+  if (localFonts.enabled) {
+    setStatus(`Already matching against ${localFonts.familyCount} font families on this computer.`);
+    return;
+  }
+  if (!localFontsSupported()) {
+    setStatus(
+      'Matching local fonts needs the Local Font Access API, which currently only Chromium browsers provide. Substitutions will use a standard font instead.',
+      'warn',
+    );
+    return;
+  }
+
+  const ok = await localFonts.enable();
+  if (!ok) {
+    setStatus('Without access to local fonts, substitutions will use a standard font instead.', 'warn');
+    return;
+  }
+
+  els.btnLocalFonts.classList.add('tool-active');
+  setStatus(`Matching against ${localFonts.familyCount} font families on this computer.`);
+
+  if (doc) {
+    // Existing edits are rebuilt so any earlier substitution can improve.
+    doc.fontProvider = localFonts;
+    setBusy(true, 'Rebuilding with matched fonts…');
+    try {
+      await doc.refresh();
+      await viewer.refreshRendered();
+      await renderThumbs();
+    } finally {
+      setBusy(false);
+    }
+  }
+});
 
 /* ---------------- zoom ---------------- */
 

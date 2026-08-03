@@ -65,12 +65,18 @@ fixtures will not surface the encoding and subsetting problems that matter. Do
 not commit third-party PDFs to the repo; `public/sample.pdf` is gitignored and is
 only a local dev convenience, loaded with `?sample=/sample.pdf` in dev builds.
 
+## Font substitution tiers
+
+When a character is not in the embedded subset, `FontResolver.substitute` tries,
+in order: a real typeface from the `FontProvider` (the Match fonts button, backed
+by `queryLocalFonts()` in `app/local-fonts.ts`), then a style-matched standard
+font. The provider is optional everywhere, so nothing regresses when it is absent
+or the permission is declined. fontkit is imported on demand, only when a real
+font actually has to be embedded.
+
 ## Open work
 
 - Encrypted PDFs. All the locked files tested so far open with an empty user
   password, so RC4 and AES decryption plus writing out unencrypted would cover
   them. This is the single biggest coverage gap.
-- Local font matching. When substituting, `queryLocalFonts()` could supply the
-  real typeface by name instead of a standard font. Chromium only and permission
-  gated, so it has to stay a progressive enhancement.
 - Reflow across lines, adding and deleting text blocks, OCR for scans.

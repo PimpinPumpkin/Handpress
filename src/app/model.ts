@@ -14,7 +14,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
 import { groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
-import { applyEdits, type EditWarning, type LineEdit } from '../pdf/writer';
+import { applyEdits, type EditWarning, type FontProvider, type LineEdit } from '../pdf/writer';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -63,6 +63,8 @@ export class VellumDocument {
 
   pageCount = 0;
   lastWarnings: EditWarning[] = [];
+  /** Optional source of real typefaces for substitutions. */
+  fontProvider: FontProvider | null = null;
 
   private constructor(name: string, bytes: Uint8Array) {
     this.name = name;
@@ -219,7 +221,7 @@ export class VellumDocument {
       const list: LineEdit[] = [];
       for (const [lineId, newText] of pageEdits) list.push({ lineId, newText });
 
-      const result = await applyEdits(doc, page, walk, lines, list, content.bytes);
+      const result = await applyEdits(doc, page, walk, lines, list, content.bytes, this.fontProvider);
       warnings.push(...result.warnings);
     }
 

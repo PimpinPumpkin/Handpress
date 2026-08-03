@@ -22,6 +22,22 @@ export interface LineEdit {
   newText: string;
 }
 
+/** Describes the typeface a substitution needs. */
+export interface FontRequest {
+  /** Family name from the PDF, subset tag and style suffix removed. */
+  family: string;
+  bold: boolean;
+  italic: boolean;
+}
+
+/**
+ * Supplies real font files for substitutions, letting the caller source a closer
+ * match than the standard fonts. Returning null falls back to a standard font.
+ */
+export interface FontProvider {
+  fetch(req: FontRequest): Promise<Uint8Array | null>;
+}
+
 export interface EditWarning {
   lineId: string;
   kind: 'substituted-font' | 'unencodable' | 'stream-missing';
@@ -40,6 +56,8 @@ interface OutFont {
   /** Encodes text, returning drawing parts and total advance in 1/1000 em. */
   encode(text: string, spaceWidth?: number): { parts: EncodedPart[]; width: number; glyphs: number } | null;
   substituted: boolean;
+  /** True when the substitute came from a real matching typeface. */
+  local?: boolean;
 }
 
 const enc = new TextEncoder();
@@ -150,11 +168,48 @@ function addFontResource(resources: PDFDict, ref: PDFRef, preferred: string): st
 
 class FontResolver {
   private standardCache = new Map<string, PDFFont>();
+  private embeddedCache = new Map<string, PDFFont | null>();
   private resourceNames = new Map<string, string>();
   private doc: PDFDocument;
+  private provider: FontProvider | null;
+  private fontkitReady = false;
 
-  constructor(doc: PDFDocument) {
+  constructor(doc: PDFDocument, provider: FontProvider | null = null) {
     this.doc = doc;
+    this.provider = provider;
+  }
+
+  /**
+   * Embeds a real font file supplied by the provider, subset to what is used.
+   * fontkit is loaded on demand so its cost is only paid when a document
+   * actually needs a substitution.
+   */
+  private async embedProvided(font: LoadedFont): Promise<PDFFont | null> {
+    if (!this.provider) return null;
+    const key = `${font.family}|${font.bold}|${font.italic}`;
+    const cached = this.embeddedCache.get(key);
+    if (cached !== undefined) return cached;
+
+    let embedded: PDFFont | null = null;
+    try {
+      const bytes = await this.provider.fetch({
+        family: font.family || font.baseFont,
+        bold: font.bold,
+        italic: font.italic,
+      });
+      if (bytes) {
+        if (!this.fontkitReady) {
+          const fontkit = (await import('@pdf-lib/fontkit')).default;
+          this.doc.registerFontkit(fontkit);
+          this.fontkitReady = true;
+        }
+        embedded = await this.doc.embedFont(bytes, { subset: true });
+      }
+    } catch {
+      embedded = null; // an unusable font file is not worth failing the edit over
+    }
+    this.embeddedCache.set(key, embedded);
+    return embedded;
   }
 
   /** The document's own font, used whenever it can draw the text. */
@@ -166,16 +221,23 @@ class FontResolver {
     };
   }
 
-  /** A standard font matched to the original's style, for characters it lacks. */
+  /**
+   * A replacement font for characters the document's own font lacks. A real
+   * matching typeface from the provider is preferred; a style-matched standard
+   * font is the fallback.
+   */
   async substitute(font: LoadedFont, resources: PDFDict): Promise<OutFont | null> {
+    const provided = await this.embedProvided(font);
+
     const alias = standardFontAlias(font) ?? 'Helvetica';
-    const key = alias;
-    let embedded = this.standardCache.get(key);
+    const key = provided ? `local:${font.family}|${font.bold}|${font.italic}` : alias;
+
+    let embedded = provided ?? this.standardCache.get(alias) ?? null;
     if (!embedded) {
       const std = (StandardFonts as Record<string, string>)[alias];
       if (!std) return null;
       embedded = await this.doc.embedFont(std as never);
-      this.standardCache.set(key, embedded);
+      this.standardCache.set(alias, embedded);
     }
 
     const resKey = `${key}@${resources.toString().length}`;
@@ -189,6 +251,7 @@ class FontResolver {
     return {
       resourceName,
       substituted: true,
+      local: provided !== null,
       encode: (text) => {
         try {
           const hex = f.encodeText(text);
@@ -284,7 +347,7 @@ async function buildLineFragment(
             kind: 'substituted-font',
             detail: `${seg.font.family || seg.font.baseFont || 'font'} has no glyph for ${JSON.stringify(
               missingChars(seg.font, span.text).join(''),
-            )}; drew that with ${standardFontAlias(seg.font)}`,
+            )}; drew that with ${sub.local ? `${seg.font.family} from this computer` : standardFontAlias(seg.font)}`,
           });
         } else {
           warn({
@@ -386,12 +449,13 @@ export async function applyEdits(
   lines: TextLine[],
   edits: LineEdit[],
   pageContentBytes: Uint8Array,
+  fontProvider: FontProvider | null = null,
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
     warnings.push(w);
   };
-  const resolver = new FontResolver(doc);
+  const resolver = new FontResolver(doc, fontProvider);
   const byId = new Map(lines.map((l) => [l.id, l]));
   const patchesByStream = new Map<string, Patch[]>();
   let editedLines = 0;

@@ -41,9 +41,18 @@ are nearly always subset to only the glyphs the document actually uses, so the
 letter you just typed may genuinely not exist in the file. Vellum inverts the
 font's ToUnicode CMap to get both a Unicode to character-code encoder and an
 honest test of what the subset can draw. Characters the font has are written with
-the document's own font. Characters it lacks are drawn with a style-matched
-standard font, and only those characters, so one unusual letter never restyles
-the text around it. The properties panel says when this happened.
+the document's own font. Characters it lacks are drawn with a substitute,
+and only those characters, so one unusual letter never restyles the text around
+it. The properties panel says when this happened.
+
+For the substitute, Vellum prefers the real typeface. Press **Match fonts** and
+it will look up the document's font by name among the ones installed on your
+computer, and embed a subset of the genuine face rather than a lookalike. That
+uses the Local Font Access API, so it is Chromium only and asks permission the
+first time, because listing installed fonts is a fingerprinting signal. Decline
+it, or use another browser, and substitutions fall back to a style-matched
+standard font. Font data is read and embedded locally either way; nothing is
+sent anywhere.
 
 Some other details that turned out to matter:
 
