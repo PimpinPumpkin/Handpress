@@ -37,11 +37,16 @@ const els = {
   pageInput: $<HTMLInputElement>('pageInput'),
   pageTotal: $('pageTotal'),
   busy: $('busy'),
+  notice: $('notice'),
+  noticeText: $('noticeText'),
+  noticeClose: $<HTMLButtonElement>('noticeClose'),
   busyText: $('busyText'),
 };
 
 let doc: VellumDocument | null = null;
 let statusTimer: number | undefined;
+/** Remembered so saving can repeat the warning at the moment it matters. */
+let signedDocument = false;
 
 function setStatus(message: string, tone: 'info' | 'warn' = 'info'): void {
   els.statusMessage.textContent = message;
@@ -57,6 +62,15 @@ function setStatus(message: string, tone: 'info' | 'warn' = 'info'): void {
     );
   }
 }
+
+function showNotice(message: string | null): void {
+  els.noticeText.textContent = message ?? '';
+  els.notice.hidden = !message;
+}
+
+els.noticeClose.addEventListener('click', () => {
+  els.notice.hidden = true;
+});
 
 function setBusy(on: boolean, text = 'Working…'): void {
   els.busyText.textContent = text;
@@ -86,9 +100,11 @@ async function openFile(file: File): Promise<void> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const { doc: opened, report } = await VellumDocument.open(file.name, bytes);
     doc = opened;
+    signedDocument = report.signatures.signatures.length > 0;
     if (localFonts.enabled) doc.fontProvider = localFonts;
 
     els.dropzone.hidden = true;
+    showNotice(report.signatureWarning);
     els.docTitle.textContent = file.name;
     els.docTitle.classList.remove('dirty');
     els.pageTotal.textContent = `/ ${report.pageCount}`;
@@ -173,7 +189,10 @@ els.btnSave.addEventListener('click', async () => {
     setTimeout(() => URL.revokeObjectURL(url), 20000);
 
     const subs = warnings.filter((w) => w.kind === 'substituted-font').length;
-    setStatus(subs ? `Saved. ${subs} run${subs === 1 ? '' : 's'} used a substitute font.` : 'Saved.');
+    const parts = ['Saved.'];
+    if (subs) parts.push(`${subs} run${subs === 1 ? '' : 's'} used a substitute font.`);
+    if (signedDocument) parts.push('The saved copy no longer carries a valid digital signature.');
+    setStatus(parts.join(' '), signedDocument ? 'warn' : 'info');
   } catch (e) {
     setStatus(`Could not build the PDF: ${(e as Error).message}`, 'warn');
   } finally {

@@ -6,3 +6,4 @@ dist
 # Local test fixtures are third-party documents; never committed.
 public/sample.pdf
 public/sample-enc.pdf
+public/sample-signed.pdf

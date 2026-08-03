@@ -16,6 +16,7 @@ import { getPageContent } from '../pdf/page';
 import { groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
 import { applyEdits, type EditWarning, type FontProvider, type LineEdit } from '../pdf/writer';
 import { decryptToBytes } from '../pdf/decrypt';
+import { describeSignatures, findSignatures, type SignatureReport } from '../pdf/signatures';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -37,6 +38,10 @@ export interface LoadReport {
   scannedPages: number[];
   /** True when the file arrived encrypted and was unlocked on the way in. */
   wasEncrypted: boolean;
+  /** What the document declares about its own digital signatures. */
+  signatures: SignatureReport;
+  /** One sentence naming the risk, or null when the document is unsigned. */
+  signatureWarning: string | null;
 }
 
 export class VellumDocument {
@@ -116,7 +121,26 @@ export class VellumDocument {
       if (model && model.lines.length === 0) scannedPages.push(i);
     }
 
-    return { pageCount: this.pageCount, scannedPages, wasEncrypted: false };
+    // Signatures are read from the original file, since that is what a reader
+    // would be verifying against.
+    let signatures: SignatureReport = { signatures: [], emptyFields: 0 };
+    try {
+      const libDoc = await PDFDocument.load(this.originalBytes.slice(), {
+        throwOnInvalidObject: false,
+        updateMetadata: false,
+      });
+      signatures = findSignatures(libDoc);
+    } catch {
+      // An unreadable object graph simply reports no signatures.
+    }
+
+    return {
+      pageCount: this.pageCount,
+      scannedPages,
+      wasEncrypted: false,
+      signatures,
+      signatureWarning: describeSignatures(signatures),
+    };
   }
 
   get pdfjs(): PDFDocumentProxy | null {
