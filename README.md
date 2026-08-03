@@ -105,6 +105,30 @@ The PDF engine is tested headlessly against a folder of real PDFs, which matters
 far more than synthetic fixtures: the failure modes here come from the variety of
 real producers.
 
+### Where it stands
+
+Measured across roughly 3,900 PDFs from three sources: a local folder of
+everyday documents, the Mozilla pdf.js regression corpus (974 files, real-world
+edge cases attached to real bugs) and the veraPDF corpus (2,907 files, systematic
+specification tests).
+
+| Corpus | Text-bearing files | At least 99% editable in place |
+| --- | --- | --- |
+| Everyday documents | 47 | 47 (100%) |
+| pdf.js regression corpus | 500 | 492 (98%) |
+| veraPDF corpus | 747 | 747 (100%) |
+
+Text extraction sits at a median 0% deviation from pdf.js across the pdf.js
+corpus. Edit round trips pass 241 of 258 attempted on that corpus; most of the
+remainder are deliberately corrupted files, which now degrade to "nothing to
+edit here" rather than failing.
+
+Worth being clear that no PDF equivalent of Acid3 exists. veraPDF and Isartor
+test validators against PDF/A, not editing fidelity. The closest thing to a
+compliance score for this kind of tool is the round-trip test below: change a
+line, save, reload, and assert that every other line is identical in text and
+position to a hundredth of a point.
+
 ```bash
 # Text extraction and per-font editability, compared against pdf.js
 npx tsx tools/test-engine.ts --list /path/to/pdf-list.txt
@@ -117,7 +141,22 @@ npx tsx tools/test-multi.ts --list /path/to/pdf-list.txt
 ```
 
 Each takes either a list file with one path per line, or paths as arguments. Set
-`ANON=1` to label documents by index instead of filename.
+`ANON=1` to label documents by index instead of filename, which matters when the
+corpus is someone's own documents.
+
+Good corpora to point them at, all free:
+
+- [pdf-association/pdf-corpora](https://github.com/pdf-association/pdf-corpora),
+  an index of the rest, and the right starting point.
+- [Mozilla pdf.js test files](https://github.com/mozilla/pdf.js/tree/master/test/pdfs),
+  the highest value per megabyte: every file is attached to a real bug.
+- [veraPDF corpus](https://github.com/veraPDF/veraPDF-corpus) and the
+  [Isartor suite](https://pdfa.org/resource/isartor-test-suite/) for systematic
+  specification violations.
+- [Ghent Workgroup suites](https://www.gwg.org/workflow-tools-downloads/test-suites/)
+  for font and prepress stress.
+- [GovDocs1](https://digitalcorpora.org/corpora/files) and the Common Crawl PDF
+  sets for producer variety at scale.
 
 ## Licence
 
