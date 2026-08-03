@@ -14,7 +14,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
 import { groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
-import { applyEdits, type EditWarning, type FontProvider, type LineEdit } from '../pdf/writer';
+import { applyEdits, type EditWarning, type FontProvider, type LineEdit, type TextInsertion } from '../pdf/writer';
 import { decryptToBytes } from '../pdf/decrypt';
 import { describeSignatures, findSignatures, type SignatureReport } from '../pdf/signatures';
 
@@ -30,6 +30,11 @@ export interface PageModel {
   contentBytes: Uint8Array;
   /** CSS font-family per line id, taken from pdf.js so editing shows the real font. */
   cssFonts: Map<string, string>;
+}
+
+interface EditState {
+  edits: Map<number, Map<string, string>>;
+  insertions: Map<number, Map<string, TextInsertion>>;
 }
 
 export interface LoadReport {
@@ -49,8 +54,18 @@ export class VellumDocument {
   private originalBytes: Uint8Array;
   /** pageIndex -> lineId -> replacement text. */
   private edits = new Map<number, Map<string, string>>();
-  private undoStack: Array<{ page: number; lineId: string; before: string | undefined }> = [];
-  private redoStack: Array<{ page: number; lineId: string; before: string | undefined; after: string | undefined }> = [];
+  /** pageIndex -> insertion id -> text added where the page had none. */
+  private insertions = new Map<number, Map<string, TextInsertion>>();
+  /**
+   * History as whole-state snapshots rather than per-change deltas.
+   *
+   * There are two kinds of change now, edits and insertions, and the state is
+   * only ever a little text, so snapshotting is far cheaper to reason about
+   * than composing inverse operations for each kind.
+   */
+  private undoStack: EditState[] = [];
+  private redoStack: EditState[] = [];
+  private nextInsertionId = 1;
 
   private pdfjsDoc: PDFDocumentProxy | null = null;
   private loadingTask: PDFDocumentLoadingTask | null = null;
@@ -153,6 +168,7 @@ export class VellumDocument {
 
   hasEdits(): boolean {
     for (const m of this.edits.values()) if (m.size) return true;
+    for (const m of this.insertions.values()) if (m.size) return true;
     return false;
   }
 
@@ -167,6 +183,7 @@ export class VellumDocument {
   editCount(): number {
     let n = 0;
     for (const m of this.edits.values()) n += m.size;
+    for (const m of this.insertions.values()) n += m.size;
     return n;
   }
 
@@ -179,46 +196,84 @@ export class VellumDocument {
     return this.edits.get(pageIndex)?.has(lineId) ?? false;
   }
 
+  private snapshot(): EditState {
+    return {
+      edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
+      insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
+    };
+  }
+
+  private restore(state: EditState): void {
+    this.edits = state.edits;
+    this.insertions = state.insertions;
+  }
+
   /** Records an edit. Returns false when the text is unchanged. */
   setLineText(pageIndex: number, line: TextLine, newText: string): boolean {
     const current = this.textFor(pageIndex, line);
     if (current === newText) return false;
 
+    const before = this.snapshot();
     let pageEdits = this.edits.get(pageIndex);
     if (!pageEdits) {
       pageEdits = new Map();
       this.edits.set(pageIndex, pageEdits);
     }
-    const before = pageEdits.get(line.id);
     if (newText === line.text) pageEdits.delete(line.id);
     else pageEdits.set(line.id, newText);
 
-    this.undoStack.push({ page: pageIndex, lineId: line.id, before });
+    this.undoStack.push(before);
     this.redoStack = [];
     return true;
   }
 
-  undo(): number | null {
-    const entry = this.undoStack.pop();
-    if (!entry) return null;
-    const pageEdits = this.edits.get(entry.page) ?? new Map<string, string>();
-    const after = pageEdits.get(entry.lineId);
-    if (entry.before === undefined) pageEdits.delete(entry.lineId);
-    else pageEdits.set(entry.lineId, entry.before);
-    this.edits.set(entry.page, pageEdits);
-    this.redoStack.push({ ...entry, after });
-    return entry.page;
+  /** Adds new text at a point on a page and returns it. */
+  addInsertion(pageIndex: number, insertion: Omit<TextInsertion, 'id'>): TextInsertion {
+    const before = this.snapshot();
+    const created: TextInsertion = { ...insertion, id: `ins${this.nextInsertionId++}` };
+    let page = this.insertions.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.insertions.set(pageIndex, page);
+    }
+    page.set(created.id, created);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return created;
   }
 
-  redo(): number | null {
-    const entry = this.redoStack.pop();
-    if (!entry) return null;
-    const pageEdits = this.edits.get(entry.page) ?? new Map<string, string>();
-    if (entry.after === undefined) pageEdits.delete(entry.lineId);
-    else pageEdits.set(entry.lineId, entry.after);
-    this.edits.set(entry.page, pageEdits);
-    this.undoStack.push({ page: entry.page, lineId: entry.lineId, before: entry.before });
-    return entry.page;
+  /** Updates added text. Empty text removes it, which is how deleting works. */
+  setInsertionText(pageIndex: number, id: string, text: string): boolean {
+    const page = this.insertions.get(pageIndex);
+    const existing = page?.get(id);
+    if (!existing || existing.text === text) return false;
+
+    const before = this.snapshot();
+    if (text.trim().length === 0) page!.delete(id);
+    else page!.set(id, { ...existing, text });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  insertionsFor(pageIndex: number): TextInsertion[] {
+    return [...(this.insertions.get(pageIndex)?.values() ?? [])];
+  }
+
+  undo(): boolean {
+    const previous = this.undoStack.pop();
+    if (!previous) return false;
+    this.redoStack.push(this.snapshot());
+    this.restore(previous);
+    return true;
+  }
+
+  redo(): boolean {
+    const next = this.redoStack.pop();
+    if (!next) return false;
+    this.undoStack.push(this.snapshot());
+    this.restore(next);
+    return true;
   }
 
   /**
@@ -232,8 +287,11 @@ export class VellumDocument {
     });
     const warnings: EditWarning[] = [];
 
-    for (const [pageIndex, pageEdits] of this.edits) {
-      if (!pageEdits.size) continue;
+    const touchedPages = new Set<number>([...this.edits.keys(), ...this.insertions.keys()]);
+    for (const pageIndex of touchedPages) {
+      const pageEdits = this.edits.get(pageIndex) ?? new Map<string, string>();
+      const pageInsertions = [...(this.insertions.get(pageIndex)?.values() ?? [])];
+      if (!pageEdits.size && !pageInsertions.length) continue;
       try {
         if (pageIndex >= doc.getPageCount()) continue;
 
@@ -244,7 +302,16 @@ export class VellumDocument {
         const list: LineEdit[] = [];
         for (const [lineId, newText] of pageEdits) list.push({ lineId, newText });
 
-        const result = await applyEdits(doc, page, walk, lines, list, content.bytes, this.fontProvider);
+        const result = await applyEdits(
+          doc,
+          page,
+          walk,
+          lines,
+          list,
+          content.bytes,
+          this.fontProvider,
+          pageInsertions,
+        );
         warnings.push(...result.warnings);
       } catch (e) {
         warnings.push({

@@ -23,6 +23,10 @@ const els = {
   btnSidebar: $<HTMLButtonElement>('btnSidebar'),
   btnPanel: $<HTMLButtonElement>('btnPanel'),
   btnLocalFonts: $<HTMLButtonElement>('btnLocalFonts'),
+  btnModeEdit: $<HTMLButtonElement>('btnModeEdit'),
+  btnModeAdd: $<HTMLButtonElement>('btnModeAdd'),
+  addSize: $<HTMLSelectElement>('addSize'),
+  addColor: $<HTMLInputElement>('addColor'),
   btnPrev: $<HTMLButtonElement>('btnPrev'),
   btnNext: $<HTMLButtonElement>('btnNext'),
   zoomSelect: $<HTMLSelectElement>('zoomSelect'),
@@ -202,8 +206,8 @@ els.btnSave.addEventListener('click', async () => {
 
 /* ---------------- undo / redo ---------------- */
 
-async function applyHistory(page: number | null): Promise<void> {
-  if (page === null || !doc) return;
+async function applyHistory(changed: boolean): Promise<void> {
+  if (!changed || !doc) return;
   setBusy(true, 'Updating…');
   try {
     await doc.refresh();
@@ -216,8 +220,8 @@ async function applyHistory(page: number | null): Promise<void> {
   }
 }
 
-els.btnUndo.addEventListener('click', () => void applyHistory(doc?.undo() ?? null));
-els.btnRedo.addEventListener('click', () => void applyHistory(doc?.redo() ?? null));
+els.btnUndo.addEventListener('click', () => void applyHistory(doc?.undo() ?? false));
+els.btnRedo.addEventListener('click', () => void applyHistory(doc?.redo() ?? false));
 
 window.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
@@ -225,7 +229,7 @@ window.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
   if (key === 'z') {
     e.preventDefault();
-    void applyHistory(e.shiftKey ? (doc?.redo() ?? null) : (doc?.undo() ?? null));
+    void applyHistory(e.shiftKey ? (doc?.redo() ?? false) : (doc?.undo() ?? false));
   } else if (key === 's') {
     e.preventDefault();
     els.btnSave.click();
@@ -244,6 +248,34 @@ function syncEditState(): void {
   const n = doc?.editCount() ?? 0;
   els.editCount.textContent = n ? `${n} edit${n === 1 ? '' : 's'}` : '';
 }
+
+/* ---------------- editing mode ---------------- */
+
+function setMode(mode: 'edit' | 'add'): void {
+  viewer.setMode(mode);
+  els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
+  els.btnModeAdd.classList.toggle('tool-active', mode === 'add');
+  setStatus(
+    mode === 'add'
+      ? 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.'
+      : 'Click any line of text to edit it.',
+  );
+}
+
+els.btnModeEdit.addEventListener('click', () => setMode('edit'));
+els.btnModeAdd.addEventListener('click', () => setMode('add'));
+
+els.addSize.addEventListener('change', () => {
+  viewer.addSize = parseFloat(els.addSize.value);
+});
+els.addColor.addEventListener('change', () => {
+  const hex = els.addColor.value;
+  viewer.addColor = {
+    r: parseInt(hex.slice(1, 3), 16) / 255,
+    g: parseInt(hex.slice(3, 5), 16) / 255,
+    b: parseInt(hex.slice(5, 7), 16) / 255,
+  };
+});
 
 /* ---------------- local font matching ---------------- */
 

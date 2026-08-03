@@ -12,6 +12,9 @@
 
 import type { PageModel, VellumDocument } from './model';
 import type { TextLine } from '../pdf/content';
+import type { TextInsertion } from '../pdf/writer';
+
+export type ViewerMode = 'edit' | 'add';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -90,6 +93,12 @@ export class Viewer {
   private selectedLineId: string | null = null;
   private renderToken = 0;
   private observer: IntersectionObserver | null = null;
+  private mode: ViewerMode = 'edit';
+  /** Insertion being edited, when the active editor belongs to added text. */
+  private activeInsertion: TextInsertion | null = null;
+  /** Defaults applied to newly added text. */
+  addSize = 12;
+  addColor = { r: 0, g: 0, b: 0 };
 
   constructor(root: HTMLElement, cb: ViewerCallbacks) {
     this.root = root;
@@ -104,6 +113,12 @@ export class Viewer {
 
   get currentZoom(): number {
     return this.zoom;
+  }
+
+  setMode(mode: ViewerMode): void {
+    this.closeEditor(false);
+    this.mode = mode;
+    for (const p of this.pages) p.overlay.classList.toggle('placing', mode === 'add');
   }
 
   async load(doc: VellumDocument): Promise<void> {
@@ -129,6 +144,12 @@ export class Viewer {
       const label = document.createElement('div');
       label.className = 'page-label';
       label.textContent = String(i + 1);
+
+      overlay.addEventListener('click', (e) => {
+        if (this.mode !== 'add') return;
+        if (e.target !== overlay) return; // a click on existing text is not a placement
+        void this.placeText(this.pages[i], e as MouseEvent);
+      });
 
       container.append(canvas, overlay, label);
       strip.appendChild(container);
@@ -264,6 +285,103 @@ export class Viewer {
 
       p.overlay.appendChild(box);
     }
+
+    // Added text lives only in the edit list, not in the original document the
+    // line model is built from, so it gets its own boxes to stay editable.
+    for (const insertion of this.doc.insertionsFor(p.index)) {
+      const [ix, iy] = viewport.convertToViewportPoint(insertion.x, insertion.y);
+      const size = insertion.size * this.zoom;
+      const lineCount = insertion.text.split('\n').length;
+
+      const box = document.createElement('div');
+      box.className = 'line-box line-added';
+      box.style.left = `${ix}px`;
+      box.style.top = `${iy - size}px`;
+      box.style.width = `${Math.max(size * 3, insertion.text.length * size * 0.5)}px`;
+      box.style.height = `${size * 1.2 * lineCount}px`;
+      box.title = insertion.text;
+      box.addEventListener('mousedown', (e) => e.preventDefault());
+      box.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.openInsertionEditor(p, insertion, viewport);
+      });
+      p.overlay.appendChild(box);
+    }
+  }
+
+  /** Creates new text where the user clicked and opens it for typing. */
+  private async placeText(p: RenderedPage, event: MouseEvent): Promise<void> {
+    if (!this.doc || !this.doc.pdfjs) return;
+    const rect = p.overlay.getBoundingClientRect();
+    const jsPage = await this.doc.pdfjs.getPage(p.index + 1);
+    const viewport = jsPage.getViewport({ scale: this.zoom });
+    const [px, py] = viewport.convertToPdfPoint(event.clientX - rect.left, event.clientY - rect.top);
+
+    const insertion = this.doc.addInsertion(p.index, {
+      x: px,
+      y: py,
+      size: this.addSize,
+      color: { ...this.addColor },
+      text: '',
+      bold: false,
+      italic: false,
+    });
+    this.cb.onEdited();
+    this.openInsertionEditor(p, insertion, viewport);
+  }
+
+  private openInsertionEditor(
+    p: RenderedPage,
+    insertion: TextInsertion,
+    viewport: { convertToViewportPoint(x: number, y: number): number[] },
+  ): void {
+    if (!this.doc) return;
+    this.closeEditor(true);
+
+    const [ix, iy] = viewport.convertToViewportPoint(insertion.x, insertion.y);
+    const sizePx = insertion.size * this.zoom;
+    const cssFont = `${sizePx}px Helvetica, Arial, sans-serif`;
+    const lineHeight = sizePx * 1.2;
+
+    const editor = document.createElement('div');
+    editor.className = 'line-editor line-editor-add';
+    editor.contentEditable = 'plaintext-only';
+    editor.spellcheck = false;
+    editor.textContent = insertion.text;
+    editor.style.font = cssFont;
+    editor.style.color = `rgb(${Math.round(insertion.color.r * 255)},${Math.round(insertion.color.g * 255)},${Math.round(insertion.color.b * 255)})`;
+    editor.style.lineHeight = `${lineHeight}px`;
+    editor.style.left = `${ix}px`;
+    editor.style.top = `${iy - baselineOffset(cssFont, lineHeight)}px`;
+    editor.style.minWidth = `${sizePx * 4}px`;
+
+    p.overlay.appendChild(editor);
+    this.activeEditor = editor;
+    this.activeInsertion = insertion;
+    this.activePage = p;
+    this.activeLine = null;
+
+    editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+
+    editor.addEventListener('keydown', (e) => {
+      // Shift+Enter adds a line; Enter alone finishes, matching the line editor.
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void this.commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.closeEditor(true);
+      }
+      e.stopPropagation();
+    });
+    editor.addEventListener('blur', () => void this.commit());
+    editor.addEventListener('click', (e) => e.stopPropagation());
   }
 
   /** Converts a line's PDF-space geometry into CSS pixels, honouring rotation. */
@@ -385,16 +503,20 @@ export class Viewer {
   private async commit(): Promise<void> {
     const editor = this.activeEditor;
     const line = this.activeLine;
+    const insertion = this.activeInsertion;
     const page = this.activePage;
-    if (!editor || !line || !page || !this.doc) return;
+    if (!editor || !page || !this.doc || (!line && !insertion)) return;
 
     // Detach first so the blur handler cannot re-enter during the rebuild.
     this.activeEditor = null;
     this.activeLine = null;
+    this.activeInsertion = null;
     this.activePage = null;
 
-    const newText = (editor.textContent ?? '').replace(/\n/g, ' ');
-    const changed = this.doc.setLineText(page.index, line, newText);
+    const raw = editor.textContent ?? '';
+    const changed = insertion
+      ? this.doc.setInsertionText(page.index, insertion.id, raw)
+      : this.doc.setLineText(page.index, line!, raw.replace(/\n/g, ' '));
     editor.remove();
     page.overlay.querySelector('.edit-cover')?.remove();
 
@@ -428,6 +550,7 @@ export class Viewer {
     this.activePage?.overlay.querySelector('.edit-cover')?.remove();
     this.activeEditor = null;
     this.activeLine = null;
+    this.activeInsertion = null;
     this.activePage = null;
   }
 

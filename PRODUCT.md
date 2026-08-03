@@ -57,13 +57,20 @@ and is revisited below.
 
 ## Backlog
 
+### Done
+
+- Signed document detection and warning. A banner names the signer and the save
+  message repeats it. Certification signatures are called out separately since
+  those break on any change at all.
+- Adding text. Click anywhere in Add text mode, type, and it is written into the
+  page as real text with a standard font, chosen size and colour. Multi-line with
+  normal leading. Verified to place exactly and shift nothing already on the page.
+
 ### Now
 
-- Detect signed documents and warn before editing. We currently invalidate
-  signatures silently, and saving rewrites the whole file, which throws away the
-  incremental update history signatures depend on. Quietly breaking somebody's
-  signed contract is the kind of bug that permanently ends trust.
-- Self-signing: fill a form, place a signature, flatten. Entirely client side.
+- Self-signing: place a drawn or uploaded signature image and flatten it. The
+  remaining half of the signature story, and entirely client side.
+- Filling real form fields, which is adjacent and shares the plumbing.
 
 ### Next
 

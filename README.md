@@ -82,6 +82,20 @@ the resulting PDF. The canvas is never an approximation of the output; it is the
 output. Edits are stored as a list against the original bytes and replayed on
 every build, which keeps undo exact and saving reproducible.
 
+### Adding text
+
+Text can also be added where the page had none. It is written as real text with
+a standard font at the chosen size and colour, not as an annotation stuck on
+top, so it copies, searches and prints like the rest of the document.
+
+### Signed documents
+
+Editing a signed PDF invalidates its signature, and saving rewrites the file,
+which discards the incremental update history a signature depends on. That is
+unavoidable for an editor, so signed documents are flagged on open with the name
+the file claims, and again when saving. Nothing is verified cryptographically;
+the wording says as much.
+
 ### Permission-locked files
 
 Most "protected" PDFs are not password protected at all. They carry an owner
@@ -102,8 +116,7 @@ A file that genuinely needs a password still needs one, and says so.
 
 - **Scanned PDFs have no text to edit.** They need OCR first. Vellum detects this
   and says so rather than showing an empty page.
-- Editing is line at a time. There is no reflow across lines, and no adding or
-  deleting text boxes yet.
+- Editing existing text is line at a time, with no reflow across lines.
 - Text drawn with Type 3 fonts is read only.
 
 ## Running it

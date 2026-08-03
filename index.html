@@ -42,10 +42,23 @@
         <div class="tool-sep"></div>
 
         <div class="tool-group">
-          <span class="tool tool-active" id="modeChip" title="Click any line of text to edit it">
+          <button class="tool tool-active" id="btnModeEdit" type="button" title="Click any line of text to edit it">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h12v2" /><path d="M10 5v14" /><path d="M8 19h4" /><path d="M15.5 15.5l4-4 2.5 2.5-4 4-3 .5z" /></svg>
             <span>Edit text</span>
-          </span>
+          </button>
+          <button class="tool" id="btnModeAdd" type="button" title="Click anywhere on the page to add new text">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h12v2" /><path d="M10 5v14" /><path d="M8 19h4" /><path d="M18 13v7" /><path d="M14.5 16.5h7" /></svg>
+            <span>Add text</span>
+          </button>
+          <select class="zoom-select add-size" id="addSize" title="Size for added text">
+            <option value="8">8 pt</option>
+            <option value="10">10 pt</option>
+            <option value="12" selected>12 pt</option>
+            <option value="14">14 pt</option>
+            <option value="18">18 pt</option>
+            <option value="24">24 pt</option>
+          </select>
+          <input type="color" class="add-color" id="addColor" value="#000000" title="Colour for added text" />
         </div>
 
         <div class="tool-group">

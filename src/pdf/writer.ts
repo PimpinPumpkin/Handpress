@@ -22,6 +22,19 @@ export interface LineEdit {
   newText: string;
 }
 
+/** New text placed on a page that had none there before. */
+export interface TextInsertion {
+  id: string;
+  /** Baseline origin in PDF page coordinates, y measured upwards. */
+  x: number;
+  y: number;
+  size: number;
+  color: { r: number; g: number; b: number };
+  text: string;
+  bold: boolean;
+  italic: boolean;
+}
+
 /** Describes the typeface a substitution needs. */
 export interface FontRequest {
   /** Family name from the PDF, subset tag and style suffix removed. */
@@ -218,6 +231,46 @@ class FontResolver {
       resourceName: font.resourceName,
       substituted: false,
       encode: (text, spaceWidth) => encodeText(font, text, spaceWidth),
+    };
+  }
+
+  /**
+   * A plain standard font, for text being added rather than replaced. Nothing in
+   * the document implies a typeface for new text, so one of the built-in fonts
+   * is used and no font file has to be embedded at all.
+   */
+  async standardFont(resources: PDFDict, bold: boolean, italic: boolean): Promise<OutFont | null> {
+    const alias = `Helvetica${bold && italic ? 'BoldOblique' : bold ? 'Bold' : italic ? 'Oblique' : ''}`;
+    let embedded = this.standardCache.get(alias);
+    if (!embedded) {
+      const std = (StandardFonts as Record<string, string>)[alias];
+      if (!std) return null;
+      embedded = await this.doc.embedFont(std as never);
+      this.standardCache.set(alias, embedded);
+    }
+
+    const resKey = `${alias}@${resources.toString().length}`;
+    let resourceName = this.resourceNames.get(resKey);
+    if (!resourceName) {
+      resourceName = addFontResource(resources, embedded.ref, 'VeF');
+      this.resourceNames.set(resKey, resourceName);
+    }
+
+    const f = embedded;
+    return {
+      resourceName,
+      substituted: true,
+      encode: (text) => {
+        try {
+          return {
+            parts: [{ bytes: f.encodeText(text).asBytes() }],
+            width: f.widthOfTextAtSize(text, 1000),
+            glyphs: [...text].length,
+          };
+        } catch {
+          return null;
+        }
+      },
     };
   }
 
@@ -421,6 +474,57 @@ function neutralAdvance(op: ShowOp): Uint8Array {
   return bytes(`[${fmt((-op.advance * 1000) / (op.fontSize * th))}]TJ`);
 }
 
+/**
+ * Builds the drawing operators for inserted text.
+ *
+ * Wrapped in q/Q and appended after everything else, so it draws on top and
+ * cannot disturb the graphics state the rest of the page set up. Newlines
+ * advance the baseline by a line and a fifth, matching normal leading.
+ */
+async function buildInsertion(
+  insertion: TextInsertion,
+  resolver: FontResolver,
+  resources: PDFDict,
+  warn: (w: EditWarning) => void,
+): Promise<Uint8Array> {
+  const font = await resolver.standardFont(resources, insertion.bold, insertion.italic);
+  if (!font) {
+    warn({ lineId: insertion.id, kind: 'unencodable', detail: 'could not embed a font for the added text' });
+    return new Uint8Array(0);
+  }
+
+  const chunks: Uint8Array[] = [bytes('\nq BT ')];
+  chunks.push(bytes(`/${font.resourceName} ${fmt(insertion.size)} Tf `));
+  chunks.push(
+    bytes(`${fmt(insertion.color.r)} ${fmt(insertion.color.g)} ${fmt(insertion.color.b)} rg `),
+  );
+
+  const lines = insertion.text.split('\n');
+  const leading = insertion.size * 1.2;
+  let drew = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i];
+    if (!text) continue;
+    const encoded = font.encode(text);
+    if (!encoded) {
+      warn({
+        lineId: insertion.id,
+        kind: 'unencodable',
+        detail: 'some added characters are outside the standard font and were dropped',
+      });
+      continue;
+    }
+    chunks.push(bytes(`1 0 0 1 ${fmt(insertion.x)} ${fmt(insertion.y - i * leading)} Tm `));
+    chunks.push(tjArray(encoded.parts));
+    chunks.push(bytes(' '));
+    drew = true;
+  }
+
+  chunks.push(bytes('ET Q\n'));
+  return drew ? concatBytes(chunks) : new Uint8Array(0);
+}
+
 function applyPatches(source: Uint8Array, patches: Patch[]): Uint8Array {
   const sorted = [...patches].sort((a, b) => a.start - b.start);
   const out: Uint8Array[] = [];
@@ -452,6 +556,7 @@ export async function applyEdits(
   edits: LineEdit[],
   pageContentBytes: Uint8Array,
   fontProvider: FontProvider | null = null,
+  insertions: TextInsertion[] = [],
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
@@ -505,11 +610,30 @@ export async function applyEdits(
     editedLines++;
   }
 
-  for (const [streamId, patches] of patchesByStream) {
-    if (streamId === 'page') {
-      setPageContent(doc, page, applyPatches(pageContentBytes, patches));
-      continue;
+  // Added text is drawn after everything else so it sits on top, and it is
+  // built here so it lands in the same rewrite as any edits to the page.
+  let addedTail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  if (insertions.length) {
+    const pageResources = walk.resources.get('page') ?? null;
+    if (pageResources) {
+      const built: Uint8Array[] = [];
+      for (const insertion of insertions) {
+        if (!insertion.text.trim()) continue;
+        built.push(await buildInsertion(insertion, resolver, pageResources, warn));
+      }
+      addedTail = concatBytes(built);
+    } else {
+      warn({ lineId: 'page', kind: 'stream-missing', detail: 'page has no resource dictionary for added text' });
     }
+  }
+
+  const pagePatches = patchesByStream.get('page') ?? [];
+  if (pagePatches.length || addedTail.length) {
+    setPageContent(doc, page, concatBytes([applyPatches(pageContentBytes, pagePatches), addedTail]));
+  }
+
+  for (const [streamId, patches] of patchesByStream) {
+    if (streamId === 'page') continue; // handled above, together with added text
     const entry = walk.streams.get(streamId);
     if (!entry || !entry.ref) {
       warn({ lineId: streamId, kind: 'stream-missing', detail: 'could not write back form XObject' });
