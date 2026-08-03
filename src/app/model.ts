@@ -15,6 +15,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
 import { groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
 import { applyEdits, type EditWarning, type FontProvider, type LineEdit } from '../pdf/writer';
+import { decryptToBytes } from '../pdf/decrypt';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -34,7 +35,8 @@ export interface LoadReport {
   pageCount: number;
   /** Pages with no extractable text at all, which usually means a scan. */
   scannedPages: number[];
-  encrypted: boolean;
+  /** True when the file arrived encrypted and was unlocked on the way in. */
+  wasEncrypted: boolean;
 }
 
 export class VellumDocument {
@@ -72,20 +74,19 @@ export class VellumDocument {
     this.currentBytes = bytes;
   }
 
+  /**
+   * Opens a file, decrypting it first when necessary.
+   *
+   * Permission-locked documents are decrypted up front and then treated as
+   * ordinary ones, so nothing downstream has to know about encryption. Throws
+   * DecryptionError when the file genuinely needs a password.
+   */
   static async open(name: string, bytes: Uint8Array): Promise<{ doc: VellumDocument; report: LoadReport }> {
-    const doc = new VellumDocument(name, bytes);
+    const { bytes: plain, wasEncrypted } = await decryptToBytes(bytes);
+    const doc = new VellumDocument(name, plain);
     const report = await doc.reload();
+    report.wasEncrypted = wasEncrypted;
     return { doc, report };
-  }
-
-  /** True when the file is encrypted, which blocks writing. */
-  static async isEncrypted(bytes: Uint8Array): Promise<boolean> {
-    try {
-      await PDFDocument.load(bytes.slice(), { throwOnInvalidObject: false, updateMetadata: false });
-      return false;
-    } catch (e) {
-      return /encrypted/i.test((e as Error).message);
-    }
   }
 
   private async reload(): Promise<LoadReport> {
@@ -107,18 +108,15 @@ export class VellumDocument {
     this.pdfjsDoc = await this.loadingTask.promise;
     this.pageCount = this.pdfjsDoc.numPages;
 
-    const encrypted = await VellumDocument.isEncrypted(this.currentBytes);
     const scannedPages: number[] = [];
-    if (!encrypted) {
-      // Only the first few pages are probed up front; the rest resolve lazily.
-      const probe = Math.min(this.pageCount, 5);
-      for (let i = 0; i < probe; i++) {
-        const model = await this.getPage(i).catch(() => null);
-        if (model && model.lines.length === 0) scannedPages.push(i);
-      }
+    // Only the first few pages are probed up front; the rest resolve lazily.
+    const probe = Math.min(this.pageCount, 5);
+    for (let i = 0; i < probe; i++) {
+      const model = await this.getPage(i).catch(() => null);
+      if (model && model.lines.length === 0) scannedPages.push(i);
     }
 
-    return { pageCount: this.pageCount, scannedPages, encrypted };
+    return { pageCount: this.pageCount, scannedPages, wasEncrypted: false };
   }
 
   get pdfjs(): PDFDocumentProxy | null {

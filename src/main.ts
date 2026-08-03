@@ -6,6 +6,7 @@ import './style.css';
 import { VellumDocument, type PageModel } from './app/model';
 import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
+import { DecryptionError } from './pdf/decrypt';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -83,16 +84,6 @@ async function openFile(file: File): Promise<void> {
   setBusy(true, `Opening ${file.name}…`);
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-
-    if (await VellumDocument.isEncrypted(bytes)) {
-      setBusy(false);
-      setStatus(
-        'This PDF is password protected or permission locked. Vellum cannot edit encrypted files yet.',
-        'warn',
-      );
-      return;
-    }
-
     const { doc: opened, report } = await VellumDocument.open(file.name, bytes);
     doc = opened;
     if (localFonts.enabled) doc.fontProvider = localFonts;
@@ -116,11 +107,20 @@ async function openFile(file: File): Promise<void> {
           : `Page ${report.scannedPages[0] + 1} has no text layer and looks scanned.`,
         'warn',
       );
+    } else if (report.wasEncrypted) {
+      setStatus(
+        `Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}. This PDF was permission locked; ` +
+          'it has been unlocked and the copy you save will not be locked.',
+      );
     } else {
       setStatus(`Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}. Click any line to edit it.`);
     }
   } catch (e) {
-    setStatus(`Could not open that PDF: ${(e as Error).message}`, 'warn');
+    if (e instanceof DecryptionError) {
+      setStatus(e.message, 'warn');
+    } else {
+      setStatus(`Could not open that PDF: ${(e as Error).message}`, 'warn');
+    }
   } finally {
     setBusy(false);
   }

@@ -82,10 +82,24 @@ the resulting PDF. The canvas is never an approximation of the output; it is the
 output. Edits are stored as a list against the original bytes and replayed on
 every build, which keeps undo exact and saving reproducible.
 
+### Permission-locked files
+
+Most "protected" PDFs are not password protected at all. They carry an owner
+password restricting printing or editing while the user password is empty, which
+is why any viewer opens them without asking. Vellum unlocks those on the way in
+and the copy you save is not locked.
+
+Decryption has to happen before parsing rather than after. Objects stored inside
+object streams are extracted while the document is read, and a parser handed
+ciphertext extracts nonsense that cannot be repaired later, because the container
+it came from is consumed in the process. So the file is decrypted at the byte
+level first, and everything downstream sees an ordinary document. All four
+handler families are covered: RC4 40 and 128 bit, AES-128 and AES-256.
+
+A file that genuinely needs a password still needs one, and says so.
+
 ## Limitations
 
-- **Encrypted PDFs are not supported yet.** This includes permission-locked files
-  that open without a password, which are common for statements and forms.
 - **Scanned PDFs have no text to edit.** They need OCR first. Vellum detects this
   and says so rather than showing an empty page.
 - Editing is line at a time. There is no reflow across lines, and no adding or
@@ -121,6 +135,9 @@ Measured across roughly 3,900 PDFs from three sources: a local folder of
 everyday documents, the Mozilla pdf.js regression corpus (974 files, real-world
 edge cases attached to real bugs) and the veraPDF corpus (2,907 files, systematic
 specification tests).
+
+Edit round trips over everyday documents: 48 of 48 attempted, including four
+permission-locked files that are unlocked first.
 
 | Corpus | Text-bearing files | At least 99% editable in place |
 | --- | --- | --- |

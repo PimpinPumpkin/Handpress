@@ -88,9 +88,18 @@ font. The provider is optional everywhere, so nothing regresses when it is absen
 or the permission is declined. fontkit is imported on demand, only when a real
 font actually has to be embedded.
 
-## Open work
+## Encryption runs before parsing, not after
 
-- Encrypted PDFs. All the locked files tested so far open with an empty user
-  password, so RC4 and AES decryption plus writing out unencrypted would cover
-  them. This is the single biggest coverage gap.
+`decryptToBytes` loads the file once to read `/Encrypt` and derive the key, then
+rewrites the raw bytes with `preDecrypt`, then reloads. It cannot be done as a
+pass over an already-parsed document: pdf-lib expands object streams during
+`PDFParser.parseIndirectObject` and never assigns the container to the context,
+so objects inside them are parsed out of ciphertext and the evidence is gone. An
+earlier attempt to walk the object graph afterwards failed on exactly those files.
+
+Strings inside object streams are covered by the encryption of the stream holding
+them, so `preDecrypt` only touches strings in top-level object dictionaries, which
+is naturally what scanning the file bytes gives.
+
+## Open work
 - Reflow across lines, adding and deleting text blocks, OCR for scans.

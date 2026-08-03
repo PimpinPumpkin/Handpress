@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
+import { decryptToBytes } from '../src/pdf/decrypt';
 import { getPageContent } from '../src/pdf/page';
 import { groupLines, walkPage } from '../src/pdf/content';
 import { applyEdits, type LineEdit } from '../src/pdf/writer';
@@ -37,7 +38,9 @@ for (const file of files) {
 
   let doc: PDFDocument;
   try {
-    doc = await PDFDocument.load(src, { throwOnInvalidObject: false, updateMetadata: false });
+    // Permission-locked files are unlocked first so they are exercised too.
+    const opened = await decryptToBytes(src);
+    doc = await PDFDocument.load(opened.bytes, { throwOnInvalidObject: false, updateMetadata: false });
   } catch {
     skipped++;
     continue;
