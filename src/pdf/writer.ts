@@ -319,7 +319,9 @@ async function buildLineFragment(
     if (i > 0 && wroteAnything) {
       const prev = line.segments[i - 1];
       const scale = Math.hypot(seg.ops[0].toPage[0], seg.ops[0].toPage[1]) || 1;
-      const gapPage = seg.x0 - prev.x1;
+      // Measured along the writing direction, so this stays correct for rotated
+      // and mirrored text where a page-x difference would have the wrong sign.
+      const gapPage = seg.u0 - prev.u1;
       if (Math.abs(gapPage) > 0.01) {
         const gapText = gapPage / scale;
         chunks.push(bytes(`[${fmt((-gapText * 1000) / (currentFontSize * th))}]TJ `));
@@ -483,6 +485,22 @@ export async function applyEdits(
     for (let i = 1; i < line.ops.length; i++) {
       list.push({ start: line.ops[i].start, end: line.ops[i].end, bytes: neutralAdvance(line.ops[i]) });
     }
+
+    // Additional drawing passes of the same line get the same replacement, or
+    // the old wording would still show through from underneath.
+    for (const overlay of line.overlays) {
+      const overlayTexts = mapTextToSegments(overlay, edit.newText);
+      const overlayResources = walk.resources.get(overlay.streamId) ?? null;
+      const overlayFragment = await buildLineFragment(overlay, overlayTexts, resolver, overlayResources, warn);
+      if (!overlayFragment) continue;
+      const overlayList = overlay.streamId === line.streamId ? list : (patchesByStream.get(overlay.streamId) ?? []);
+      overlayList.push({ start: overlay.ops[0].start, end: overlay.ops[0].end, bytes: overlayFragment });
+      for (let i = 1; i < overlay.ops.length; i++) {
+        overlayList.push({ start: overlay.ops[i].start, end: overlay.ops[i].end, bytes: neutralAdvance(overlay.ops[i]) });
+      }
+      if (overlay.streamId !== line.streamId) patchesByStream.set(overlay.streamId, overlayList);
+    }
+
     patchesByStream.set(line.streamId, list);
     editedLines++;
   }

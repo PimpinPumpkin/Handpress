@@ -70,6 +70,22 @@ export interface ShowOp {
   /** Baseline origin in page space (PDF coordinates, y up). */
   x: number;
   y: number;
+  /**
+   * Unit vector of the text's writing direction in page space.
+   *
+   * Text is not always left to right along the page's x axis. Rotated pages,
+   * sideways table headers and mirrored transforms all produce runs whose
+   * advance points somewhere else entirely, and comparing raw x coordinates
+   * gets those backwards. Everything positional works along this axis instead.
+   */
+  dirX: number;
+  dirY: number;
+  /** Origin projected onto the writing direction, so it increases with reading order. */
+  u: number;
+  /** Distance this operator advances along the writing direction, in page units. */
+  uAdvance: number;
+  /** Origin projected onto the perpendicular, which identifies the baseline. */
+  v: number;
 }
 
 interface TextState {
@@ -235,6 +251,15 @@ function walkStream(
     // Effective size is the vertical scale of the rendering matrix.
     const effectiveSize = Math.hypot(trm[2], trm[3]) || gs.text.fontSize;
 
+    // The writing direction is the text-space x axis mapped into page space,
+    // signed by the direction text actually flows. A negative font size or
+    // horizontal scale is legal and makes glyphs advance backwards, so without
+    // that sign the run would be read end-first and every gap would invert.
+    const dirScale = Math.hypot(toPage[0], toPage[1]) || 1;
+    const flow = Math.sign(gs.text.fontSize * th) || 1;
+    const dirX = (toPage[0] / dirScale) * flow;
+    const dirY = (toPage[1] / dirScale) * flow;
+
     out.ops.push({
       streamId,
       index: counter.n++,
@@ -258,6 +283,11 @@ function walkStream(
       effectiveSize,
       x: trm[4],
       y: trm[5],
+      dirX,
+      dirY,
+      u: trm[4] * dirX + trm[5] * dirY,
+      uAdvance: advance * dirScale * flow,
+      v: -trm[4] * dirY + trm[5] * dirX,
     });
 
     tm = mul([1, 0, 0, 1, advance, 0] as Matrix, tm);
@@ -471,8 +501,9 @@ export interface TextSegment {
   font: LoadedFont;
   fontSize: number;
   fill: RGB;
-  x0: number;
-  x1: number;
+  /** Start and end along the line's writing direction, in page units. */
+  u0: number;
+  u1: number;
   /** Character offsets of this segment within the parent line's text. */
   start: number;
   end: number;
@@ -492,11 +523,19 @@ export interface TextLine {
   ops: ShowOp[];
   segments: TextSegment[];
   text: string;
-  /** Page-space bounding box, PDF coordinates (y up). */
+  /** Axis-aligned bounding box in page space, PDF coordinates (y up). */
   x0: number;
   y0: number;
   x1: number;
   y1: number;
+  /** Baseline start and end in page space, following the writing direction. */
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  /** Writing direction as a unit vector in page space. */
+  dirX: number;
+  dirY: number;
   baselineY: number;
   fontSize: number;
   font: LoadedFont;
@@ -509,10 +548,22 @@ export interface TextLine {
    * stored and an edit would corrupt the page.
    */
   editable: boolean;
+  /**
+   * Further copies of this same line drawn in additional passes.
+   *
+   * Outlined and shadowed type is drawn more than once at the same spot, for
+   * instance a stroke pass under a fill pass. They are one line to a reader, so
+   * they are presented as one and every pass receives the same edit; rewriting
+   * only one would leave the old wording showing through as a ghost.
+   */
+  overlays: TextLine[];
 }
 
 export function groupLines(ops: ShowOp[]): TextLine[] {
-  const visible = ops.filter((o) => o.text.trim().length > 0 && o.renderMode !== 3 && o.renderMode !== 7);
+  // Whitespace-only operators are kept: a space is frequently drawn by its own
+  // operator, and discarding it silently welds the words either side together.
+  // They simply may not begin or constitute a line, which is handled below.
+  const visible = ops.filter((o) => o.text.length > 0 && o.renderMode !== 3 && o.renderMode !== 7);
   const lines: TextLine[] = [];
 
   let current: ShowOp[] = [];
@@ -526,12 +577,15 @@ export function groupLines(ops: ShowOp[]): TextLine[] {
 
   const flush = (): void => {
     if (!current.length) return;
+    // Runs that drew nothing but whitespace are not a line of text.
+    if (current.every((o) => o.text.trim().length === 0)) {
+      current = [];
+      return;
+    }
     const first = current[0];
     const sizes = current.map((o) => o.effectiveSize);
     const fontSize = sizes.reduce((a, b) => a + b, 0) / sizes.length;
 
-    let x0 = Infinity;
-    let x1 = -Infinity;
     let text = '';
     let prev: ShowOp | null = null;
     const segments: TextSegment[] = [];
@@ -546,33 +600,30 @@ export function groupLines(ops: ShowOp[]): TextLine[] {
       gapWidths = [];
     };
 
+    let uMin = Infinity;
+    let uMax = -Infinity;
+
     for (const o of current) {
-      const scale = Math.hypot(o.toPage[0], o.toPage[1]) || 1;
-      const w = o.advance * scale;
-      x0 = Math.min(x0, o.x);
-      x1 = Math.max(x1, o.x + w);
+      const uEnd = o.u + o.uAdvance;
+      uMin = Math.min(uMin, o.u, uEnd);
+      uMax = Math.max(uMax, o.u, uEnd);
 
       // A visible gap reads as a space even when the stream never stored one.
       let lead = '';
-      if (prev) {
-        const prevScale = Math.hypot(prev.toPage[0], prev.toPage[1]) || 1;
-        const gap = o.x - (prev.x + prev.advance * prevScale);
-        if (gap > o.effectiveSize * 0.22 && !/\s$/.test(text) && !/^\s/.test(o.text)) lead = ' ';
-      }
-
-      // Record the measured width of a gap that reads as a space.
       let leadPerMille = 0;
-      if (lead && prev) {
-        const prevScale = Math.hypot(prev.toPage[0], prev.toPage[1]) || 1;
-        const gapPage = o.x - (prev.x + prev.advance * prevScale);
-        if (o.effectiveSize > 0) leadPerMille = (gapPage / o.effectiveSize) * 1000;
+      if (prev) {
+        const gap = o.u - (prev.u + prev.uAdvance);
+        if (gap > o.effectiveSize * 0.22 && !/\s$/.test(text) && !/^\s/.test(o.text)) {
+          lead = ' ';
+          if (o.effectiveSize > 0) leadPerMille = (gap / o.effectiveSize) * 1000;
+        }
       }
 
       const last = segments[segments.length - 1];
       if (last && prev && sameStyle(prev, o)) {
         last.text += lead + o.text;
         last.ops.push(o);
-        last.x1 = o.x + w;
+        last.u1 = uEnd;
         last.end = text.length + lead.length + o.text.length;
         if (leadPerMille > 0) gapWidths.push(leadPerMille);
       } else {
@@ -590,8 +641,8 @@ export function groupLines(ops: ShowOp[]): TextLine[] {
           font: o.font,
           fontSize: o.effectiveSize,
           fill: { ...o.fill },
-          x0: o.x,
-          x1: o.x + w,
+          u0: o.u,
+          u1: uEnd,
           start: text.length + lead.length,
           end: text.length + lead.length + o.text.length,
         });
@@ -606,42 +657,70 @@ export function groupLines(ops: ShowOp[]): TextLine[] {
     const ascent = (first.font.ascent / 1000) * fontSize;
     const descent = (first.font.descent / 1000) * fontSize;
 
+    // Endpoints are reconstructed along the writing direction, so they stay
+    // correct for rotated and mirrored text where page x means nothing.
+    const dirX = first.dirX;
+    const dirY = first.dirY;
+    const perpX = -dirY;
+    const perpY = dirX;
+    const startX = uMin * dirX + first.v * perpX;
+    const startY = uMin * dirY + first.v * perpY;
+    const endX = uMax * dirX + first.v * perpX;
+    const endY = uMax * dirY + first.v * perpY;
+
+    // The box spans the baseline plus the font's ascent and descent either side.
+    const corners = [
+      [startX + perpX * descent, startY + perpY * descent],
+      [startX + perpX * ascent, startY + perpY * ascent],
+      [endX + perpX * descent, endY + perpY * descent],
+      [endX + perpX * ascent, endY + perpY * ascent],
+    ];
+
     lines.push({
       id: `${first.streamId}:${first.index}`,
       streamId: first.streamId,
       ops: [...current],
       segments,
       text,
-      x0,
-      x1,
-      y0: first.y + descent,
-      y1: first.y + ascent,
-      baselineY: first.y,
+      x0: Math.min(...corners.map((c) => c[0])),
+      x1: Math.max(...corners.map((c) => c[0])),
+      y0: Math.min(...corners.map((c) => c[1])),
+      y1: Math.max(...corners.map((c) => c[1])),
+      startX,
+      startY,
+      endX,
+      endY,
+      dirX,
+      dirY,
+      baselineY: startY,
       fontSize,
       font: first.font,
       fill: first.fill,
       uniform: segments.length === 1,
       editable: segments.every((sg) => sg.font.decodeConfident),
+      overlays: [],
     });
     current = [];
   };
 
   for (const op of visible) {
     if (!current.length) {
+      // A line never starts with whitespace; that space belongs to the gap
+      // between lines, not to the text of the next one.
+      if (op.text.trim().length === 0) continue;
       current.push(op);
       continue;
     }
     const prev = current[current.length - 1];
     const sameStream = prev.streamId === op.streamId;
-    const sameBaseline = Math.abs(op.y - prev.y) <= Math.max(1.2, prev.effectiveSize * 0.28);
-    const prevScale = Math.hypot(prev.toPage[0], prev.toPage[1]) || 1;
-    const prevEnd = prev.x + prev.advance * prevScale;
-    const gap = op.x - prevEnd;
-    // Ops far apart horizontally are separate columns, not one line.
+    // Runs must share a writing direction before their positions are comparable.
+    const sameDirection = Math.abs(op.dirX - prev.dirX) < 0.01 && Math.abs(op.dirY - prev.dirY) < 0.01;
+    const sameBaseline = sameDirection && Math.abs(op.v - prev.v) <= Math.max(1.2, prev.effectiveSize * 0.28);
+    const gap = sameDirection ? op.u - (prev.u + prev.uAdvance) : Infinity;
+    // Runs far apart along the line are separate columns, not one line.
     const adjacent = gap > -prev.effectiveSize * 1.5 && gap < prev.effectiveSize * 2.2;
-    const sameRotation = Math.abs(op.toPage[1] - prev.toPage[1]) < 0.01;
 
-    if (sameStream && sameBaseline && adjacent && sameRotation) {
+    if (sameStream && sameBaseline && adjacent) {
       current.push(op);
     } else {
       flush();
@@ -650,5 +729,32 @@ export function groupLines(ops: ShowOp[]): TextLine[] {
   }
   flush();
 
-  return lines;
+  return mergeDuplicatePasses(lines);
+}
+
+/**
+ * Folds lines that draw the same text at the same place into one.
+ *
+ * Two passes over identical text is how outlined and shadowed type is made. The
+ * reader sees one line, so the editor offers one, and the extra passes ride
+ * along as overlays so an edit reaches all of them.
+ */
+function mergeDuplicatePasses(lines: TextLine[]): TextLine[] {
+  const out: TextLine[] = [];
+
+  for (const line of lines) {
+    const twin = out.find(
+      (candidate) =>
+        candidate.streamId === line.streamId &&
+        candidate.text === line.text &&
+        Math.abs(candidate.startX - line.startX) < 0.6 &&
+        Math.abs(candidate.startY - line.startY) < 0.6 &&
+        Math.abs(candidate.x1 - line.x1) < 0.6 &&
+        Math.abs(candidate.fontSize - line.fontSize) < 0.1,
+    );
+    if (twin) twin.overlays.push(line);
+    else out.push(line);
+  }
+
+  return out;
 }

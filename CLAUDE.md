@@ -46,6 +46,15 @@ the wrong glyph or nothing. `asciiFallbackAllowed` guards this.
 ToUnicode and no recognised encoding. Those lines are read only in the UI and
 refused by the writer.
 
+## Geometry is measured along the text axis, not page x
+
+`ShowOp` carries `dirX`/`dirY` (writing direction), `u` (position along it), `v`
+(perpendicular, which identifies the baseline) and `uAdvance`. Grouping,
+gap detection and the writer's inter-segment offsets all work in that frame.
+The direction is signed by `Math.sign(fontSize * horizScale)` because a negative
+font size is legal and reverses the flow. Comparing raw x coordinates instead
+reads such lines end-first and inverts every gap.
+
 ## Things already tried that did not work
 
 - Whole-line font substitution when one character is missing. It restyles text
@@ -57,6 +66,11 @@ refused by the writer.
 - Reading spaces only at operator boundaries. Word gaps inside a single `TJ`
   array are extremely common, and missing them made rewritten lines lose every
   space on reload.
+- Filtering operators whose text is only whitespace. Mixed-size type draws the
+  space between words as its own operator, so discarding it joined the words.
+- Assuming one line is drawn once. Outlined type draws a stroke pass and a fill
+  pass over the same spot; `mergeDuplicatePasses` folds them into one line with
+  `overlays`, and the writer edits every pass.
 
 ## Testing
 

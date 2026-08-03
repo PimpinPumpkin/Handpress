@@ -26,7 +26,7 @@ console.log('new:', JSON.stringify(newText));
 console.log('ops:', target.ops.length, 'segments:', target.segments.length);
 for (const s of target.segments) {
   console.log(
-    `  seg [${s.start},${s.end}) x0=${s.x0.toFixed(1)} x1=${s.x1.toFixed(1)} font=${s.font.family || s.font.baseFont} :: ${JSON.stringify(s.text)}`,
+    `  seg [${s.start},${s.end}) u0=${s.u0.toFixed(1)} u1=${s.u1.toFixed(1)} font=${s.font.family || s.font.baseFont} :: ${JSON.stringify(s.text)}`,
   );
 }
 for (const sg of target.segments) {
@@ -34,6 +34,14 @@ for (const sg of target.segments) {
     '| font has space glyph?', sg.font.fromUnicode.has(' '),
     '| widths[32]=', sg.font.widths.get(32),
     '| twoByte=', sg.font.twoByte, '| effSize=', sg.fontSize.toFixed(2));
+}
+console.log('OPS:');
+for (const o of target.ops.slice(0, 4)) {
+  console.log('  op', o.index, 'fontSize=', o.fontSize, 'horizScale=', o.horizScale,
+    'advance=', o.advance.toFixed(2), 'uAdv=', o.uAdvance.toFixed(2),
+    'dir=(' + o.dirX.toFixed(2) + ',' + o.dirY.toFixed(2) + ')',
+    'toPage=[' + o.toPage.map((n) => n.toFixed(2)).join(',') + ']',
+    'text=' + JSON.stringify(o.text.slice(0, 14)));
 }
 const mapped = mapTextToSegments(target, newText);
 console.log('mapped:', mapped.map((m) => JSON.stringify(m)).join(' | '));
@@ -64,6 +72,11 @@ for (const l of lines2) {
   }
 }
 
+console.log('lines after save (total):', lines2.length);
+console.log('any Vellum?', lines2.some((l) => l.text.includes('Vellum')));
+for (const l of lines2.filter((l) => l.text.includes('Vellum'))) {
+  console.log('  found at baselineY=', l.baselineY.toFixed(2), JSON.stringify(l.text.slice(0, 60)));
+}
 const newContent = getPageContent(doc2.getPage(0));
 const latin = Buffer.from(newContent.bytes).toString('latin1');
 const idx = latin.indexOf('ellum');

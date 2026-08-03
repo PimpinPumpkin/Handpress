@@ -62,6 +62,16 @@ Some other details that turned out to matter:
   matches greedily and longest-first.
 - Word gaps written as offsets inside a `TJ` array are recovered as spaces, which
   many producers rely on instead of drawing spaces.
+- A space is often drawn by an operator of its own, so operators that draw only
+  whitespace are kept rather than filtered out. Dropping them welds the words on
+  either side together.
+- Font size may legally be negative, which flips the glyphs and makes text
+  advance backwards. Positions are therefore measured along the direction text
+  actually flows rather than along the page's x axis, which also makes rotated
+  and sideways text work.
+- Outlined and shadowed type is drawn in more than one pass over the same spot.
+  Those passes are presented as one line and all of them receive the edit, or the
+  old wording shows through from underneath.
 - Lines whose font has no trustworthy character mapping are marked read only.
   Showing confident but wrong text and letting you edit it would corrupt the page.
 
@@ -119,9 +129,14 @@ specification tests).
 | veraPDF corpus | 747 | 747 (100%) |
 
 Text extraction sits at a median 0% deviation from pdf.js across the pdf.js
-corpus. Edit round trips pass 241 of 258 attempted on that corpus; most of the
-remainder are deliberately corrupted files, which now degrade to "nothing to
-edit here" rather than failing.
+corpus. Edit round trips pass 246 of 258 attempted there, and 11 of the 12
+remaining are deliberately corrupted files that now degrade to "nothing to edit
+here" rather than failing. The twelfth is a form whose line grouping shifts by
+one when two elements sit a single point apart vertically; it changes what counts
+as a line, not what the file contains.
+
+That corpus paid for itself. It is where the backwards-text, dropped-space and
+ghost-outline bugs below came from, none of which appear in ordinary documents.
 
 Worth being clear that no PDF equivalent of Acid3 exists. veraPDF and Isartor
 test validators against PDF/A, not editing fidelity. The closest thing to a

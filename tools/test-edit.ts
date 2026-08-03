@@ -131,15 +131,40 @@ for (const file of files) {
   const lines2 = groupLines(walk2.ops);
   const after = snapshot(lines2);
 
-  // Only the edited line is excluded from the comparison. A baseline can carry
-  // several independent lines (table columns), so the edited one is identified
-  // by its start position, not by its row.
-  const isEdited = (s: Snap): boolean =>
-    Math.abs(s.y - target.baselineY) < 0.5 && Math.abs(s.x - Math.round(target.x0 * 100) / 100) < 0.5;
-  const beforeRest = before.filter((s) => !isEdited(s));
-  const afterRest = after.filter((s) => !isEdited(s));
+  // A baseline can carry several independent lines, such as table columns, so
+  // the edited one is identified by which line overlaps the target's horizontal
+  // extent the most. Matching on a single coordinate is unreliable once a line
+  // has been rewritten and its runs merged into one operator.
+  const overlap = (a0: number, a1: number, b0: number, b1: number): number =>
+    Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
 
-  const edited = after.filter(isEdited).map((s) => s.text).join('');
+  const onRow = (y: number): boolean => Math.abs(y - target.baselineY) < 0.5;
+  let editedIdx = -1;
+  let bestOverlap = 0;
+  lines2.forEach((l, i) => {
+    if (!onRow(l.baselineY)) return;
+    const ov = overlap(l.x0, l.x1, target.x0, target.x1);
+    if (ov > bestOverlap) {
+      bestOverlap = ov;
+      editedIdx = i;
+    }
+  });
+
+  let beforeIdx = -1;
+  let bestBefore = 0;
+  lines.forEach((l, i) => {
+    if (!onRow(l.baselineY)) return;
+    const ov = overlap(l.x0, l.x1, target.x0, target.x1);
+    if (ov > bestBefore) {
+      bestBefore = ov;
+      beforeIdx = i;
+    }
+  });
+
+  const beforeRest = before.filter((_, i) => i !== beforeIdx);
+  const afterRest = after.filter((_, i) => i !== editedIdx);
+
+  const edited = editedIdx >= 0 ? after[editedIdx].text : '';
   const expected = newText;
 
   const problems: string[] = [];

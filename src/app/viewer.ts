@@ -271,8 +271,8 @@ export class Viewer {
     line: TextLine,
     viewport: { convertToViewportPoint(x: number, y: number): number[] },
   ): { left: number; top: number; width: number; height: number; angle: number; baselineLeft: number; baselineTop: number } {
-    const [bx, by] = viewport.convertToViewportPoint(line.x0, line.baselineY);
-    const [ex, ey] = viewport.convertToViewportPoint(line.x1, line.baselineY);
+    const [bx, by] = viewport.convertToViewportPoint(line.startX, line.startY);
+    const [ex, ey] = viewport.convertToViewportPoint(line.endX, line.endY);
     const dx = ex - bx;
     const dy = ey - by;
     const width = Math.hypot(dx, dy) || 1;
