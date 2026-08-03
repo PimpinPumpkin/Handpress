@@ -113,7 +113,7 @@ export class VellumDocument {
       // Only the first few pages are probed up front; the rest resolve lazily.
       const probe = Math.min(this.pageCount, 5);
       for (let i = 0; i < probe; i++) {
-        const model = await this.getPage(i);
+        const model = await this.getPage(i).catch(() => null);
         if (model && model.lines.length === 0) scannedPages.push(i);
       }
     }
@@ -212,17 +212,25 @@ export class VellumDocument {
 
     for (const [pageIndex, pageEdits] of this.edits) {
       if (!pageEdits.size) continue;
-      if (pageIndex >= doc.getPageCount()) continue;
+      try {
+        if (pageIndex >= doc.getPageCount()) continue;
 
-      const page = doc.getPage(pageIndex);
-      const content = getPageContent(page);
-      const walk = walkPage(content.bytes, content.resources);
-      const lines = groupLines(walk.ops);
-      const list: LineEdit[] = [];
-      for (const [lineId, newText] of pageEdits) list.push({ lineId, newText });
+        const page = doc.getPage(pageIndex);
+        const content = getPageContent(page);
+        const walk = walkPage(content.bytes, content.resources);
+        const lines = groupLines(walk.ops);
+        const list: LineEdit[] = [];
+        for (const [lineId, newText] of pageEdits) list.push({ lineId, newText });
 
-      const result = await applyEdits(doc, page, walk, lines, list, content.bytes, this.fontProvider);
-      warnings.push(...result.warnings);
+        const result = await applyEdits(doc, page, walk, lines, list, content.bytes, this.fontProvider);
+        warnings.push(...result.warnings);
+      } catch (e) {
+        warnings.push({
+          lineId: `page ${pageIndex + 1}`,
+          kind: 'stream-missing',
+          detail: `page ${pageIndex + 1} could not be rewritten: ${(e as Error).message}`,
+        });
+      }
     }
 
     const bytes = await doc.save({ useObjectStreams: false });
@@ -243,31 +251,47 @@ export class VellumDocument {
 
     let model = this.lineCache.get(index);
     if (!model) {
-      // pdf-lib parses the object graph for the text model; pdf.js renders pixels.
-      const libDoc = await PDFDocument.load(this.originalBytes.slice(), {
-        throwOnInvalidObject: false,
-        updateMetadata: false,
-      }).catch(() => null);
-      if (!libDoc) return null;
+      // A damaged object graph must degrade to "no editable text on this page"
+      // rather than take down the session; plenty of real files are broken.
+      try {
+        // pdf-lib parses the object graph for the text model; pdf.js renders pixels.
+        const libDoc = await PDFDocument.load(this.originalBytes.slice(), {
+          throwOnInvalidObject: false,
+          updateMetadata: false,
+        });
 
-      const page = libDoc.getPage(index);
-      const content = getPageContent(page);
-      const walk = walkPage(content.bytes, content.resources);
-      const lines = groupLines(walk.ops);
+        const page = libDoc.getPage(index);
+        const content = getPageContent(page);
+        const walk = walkPage(content.bytes, content.resources);
+        const lines = groupLines(walk.ops);
 
-      const jsPage = await this.pdfjsDoc.getPage(index + 1);
-      const viewport = jsPage.getViewport({ scale: 1 });
+        const jsPage = await this.pdfjsDoc.getPage(index + 1);
+        const viewport = jsPage.getViewport({ scale: 1 });
 
-      model = {
-        index,
-        width: viewport.width,
-        height: viewport.height,
-        rotation: content.rotation,
-        lines,
-        walk,
-        contentBytes: content.bytes,
-        cssFonts: new Map(),
-      };
+        model = {
+          index,
+          width: viewport.width,
+          height: viewport.height,
+          rotation: content.rotation,
+          lines,
+          walk,
+          contentBytes: content.bytes,
+          cssFonts: new Map(),
+        };
+      } catch {
+        const jsPage = await this.pdfjsDoc.getPage(index + 1).catch(() => null);
+        const viewport = jsPage?.getViewport({ scale: 1 });
+        model = {
+          index,
+          width: viewport?.width ?? 612,
+          height: viewport?.height ?? 792,
+          rotation: 0,
+          lines: [],
+          walk: { ops: [], streams: new Map(), fonts: new Map(), resources: new Map() },
+          contentBytes: new Uint8Array(0),
+          cssFonts: new Map(),
+        };
+      }
       this.lineCache.set(index, model);
     }
 

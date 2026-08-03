@@ -58,15 +58,28 @@ for (const file of files) {
     continue;
   }
 
-  if (doc.getPageCount() === 0) {
-    skipped++;
+  try {
+    if (doc.getPageCount() === 0) {
+      skipped++;
+      continue;
+    }
+  } catch {
+    console.log(`FAIL ${label}: unreadable page tree`);
+    fail++;
     continue;
   }
 
-  const page = doc.getPage(0);
-  const content = getPageContent(page);
-  const walk = walkPage(content.bytes, content.resources);
-  const lines = groupLines(walk.ops);
+  let page, content, walk, lines;
+  try {
+    page = doc.getPage(0);
+    content = getPageContent(page);
+    walk = walkPage(content.bytes, content.resources);
+    lines = groupLines(walk.ops);
+  } catch (e) {
+    console.log(`FAIL ${label}: page walk threw: ${(e as Error).message}`);
+    fail++;
+    continue;
+  }
 
   // Pick a substantial line so the test exercises real text.
   const candidates = lines.filter((l) => l.text.trim().length >= 12 && mutate(l.text));

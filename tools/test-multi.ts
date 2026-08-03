@@ -42,15 +42,28 @@ for (const file of files) {
     skipped++;
     continue;
   }
-  if (doc.getPageCount() === 0) {
-    skipped++;
+  try {
+    if (doc.getPageCount() === 0) {
+      skipped++;
+      continue;
+    }
+  } catch {
+    console.log(`FAIL ${label}: unreadable page tree`);
+    fail++;
     continue;
   }
 
-  const page = doc.getPage(0);
-  const content = getPageContent(page);
-  const walk = walkPage(content.bytes, content.resources);
-  const lines = groupLines(walk.ops);
+  let page, content, walk, lines;
+  try {
+    page = doc.getPage(0);
+    content = getPageContent(page);
+    walk = walkPage(content.bytes, content.resources);
+    lines = groupLines(walk.ops);
+  } catch (e) {
+    console.log(`FAIL ${label}: page walk threw: ${(e as Error).message}`);
+    fail++;
+    continue;
+  }
 
   // Edit several well-separated lines at once. Digits are appended because they
   // are the characters a subset font is most likely to already carry.

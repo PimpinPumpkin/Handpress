@@ -44,7 +44,13 @@ for (const file of files) {
     continue;
   }
 
-  const pageCount = doc.getPageCount();
+  let pageCount: number;
+  try {
+    pageCount = doc.getPageCount();
+  } catch {
+    console.log(`FAIL ${label}: unreadable page tree`);
+    continue;
+  }
   const pagesToCheck = Math.min(pageCount, 3);
 
   let totalOps = 0;
@@ -56,13 +62,24 @@ for (const file of files) {
   let jsChars = 0;
   let myChars = 0;
 
-  const jsDoc = await pdfjs.getDocument({ data: bytes.slice(), useSystemFonts: false, disableFontFace: true }).promise;
+  let jsDoc;
+  try {
+    jsDoc = await pdfjs.getDocument({ data: bytes.slice(), useSystemFonts: false, disableFontFace: true }).promise;
+  } catch {
+    console.log(`SKIP ${label}: pdf.js could not open it`);
+    continue;
+  }
 
   for (let p = 0; p < pagesToCheck; p++) {
-    const page = doc.getPage(p);
-    const content = getPageContent(page);
-    const walk = walkPage(content.bytes, content.resources);
-    const lines = groupLines(walk.ops);
+    let page, content, walk, lines;
+    try {
+      page = doc.getPage(p);
+      content = getPageContent(page);
+      walk = walkPage(content.bytes, content.resources);
+      lines = groupLines(walk.ops);
+    } catch {
+      continue; // a page that will not parse is reported as contributing nothing
+    }
     totalOps += walk.ops.length;
     totalLines += lines.length;
 
@@ -84,9 +101,14 @@ for (const file of files) {
       else notEncodable++;
     }
 
-    const jsPage = await jsDoc.getPage(p + 1);
-    const tc = await jsPage.getTextContent({ includeMarkedContent: false, disableNormalization: true });
-    const jsText = norm((tc.items as Array<{ str?: string }>).map((i) => i.str ?? '').join(''));
+    let jsText = '';
+    try {
+      const jsPage = await jsDoc.getPage(p + 1);
+      const tc = await jsPage.getTextContent({ includeMarkedContent: false, disableNormalization: true });
+      jsText = norm((tc.items as Array<{ str?: string }>).map((i) => i.str ?? '').join(''));
+    } catch {
+      jsText = '';
+    }
     const myText = norm(walk.ops.map((o) => o.text).join(''));
     jsChars += jsText.length;
     myChars += myText.length;
