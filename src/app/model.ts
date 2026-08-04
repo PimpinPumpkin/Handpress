@@ -8,7 +8,7 @@
  * alone.
  */
 
-import { PDFDocument } from 'pdf-lib';
+import { degrees, PDFDocument } from 'pdf-lib';
 import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -48,6 +48,22 @@ interface EditState {
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
   formValues: Map<string, string>;
+  /** Page order and rotation, as a list of operations against the original. */
+  pagePlan: PagePlanEntry[];
+}
+
+/**
+ * One page of the output, naming which original page it comes from.
+ *
+ * Page operations are held as a plan rather than applied eagerly, so they
+ * compose with every other edit and undo the same way. Deleting a page removes
+ * its entry; reordering moves entries; rotating changes one field.
+ */
+export interface PagePlanEntry {
+  /** Index of the page in the original document. */
+  source: number;
+  /** Extra rotation in degrees, added to whatever the page already had. */
+  rotate: number;
 }
 
 export interface LoadReport {
@@ -69,6 +85,8 @@ export class VellumDocument {
   private edits = new Map<number, Map<string, string>>();
   /** pageIndex -> lineId -> how far that line has been dragged, in page units. */
   private lineOffsets = new Map<number, Map<string, { dx: number; dy: number }>>();
+  /** The output's page list. Empty until a page operation is performed. */
+  private pagePlan: PagePlanEntry[] | null = null;
   /** pageIndex -> image id -> how that image has been moved, resized or removed. */
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
@@ -108,6 +126,8 @@ export class VellumDocument {
   private currentBytes: Uint8Array;
 
   pageCount = 0;
+  /** Page count of the file as opened, which the plan is expressed against. */
+  private originalPageCount = 0;
   lastWarnings: EditWarning[] = [];
   /** Optional source of real typefaces for substitutions. */
   fontProvider: FontProvider | null = null;
@@ -151,6 +171,7 @@ export class VellumDocument {
     });
     this.pdfjsDoc = await this.loadingTask.promise;
     this.pageCount = this.pdfjsDoc.numPages;
+    if (!this.pagePlan) this.originalPageCount = this.pageCount;
 
     const scannedPages: number[] = [];
     // Only the first few pages are probed up front; the rest resolve lazily.
@@ -195,6 +216,7 @@ export class VellumDocument {
     for (const m of this.edits.values()) if (m.size) return true;
     for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.imageEdits.values()) if (m.size) return true;
+    if (this.hasPageChanges()) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
     return this.formValues.size > 0;
@@ -213,6 +235,9 @@ export class VellumDocument {
     for (const m of this.edits.values()) n += m.size;
     for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.imageEdits.values()) n += m.size;
+    // Page operations count as one change however many pages they touched,
+    // since they are performed and undone as single actions.
+    if (this.hasPageChanges()) n += 1;
     for (const m of this.insertions.values()) n += m.size;
     for (const m of this.stamps.values()) n += m.size;
     return n + this.formValues.size;
@@ -235,6 +260,7 @@ export class VellumDocument {
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
+      pagePlan: (this.pagePlan ?? []).map((e) => ({ ...e })),
     };
   }
 
@@ -245,6 +271,7 @@ export class VellumDocument {
     this.insertions = state.insertions;
     this.stamps = state.stamps;
     this.formValues = state.formValues;
+    this.pagePlan = state.pagePlan.length ? state.pagePlan : null;
   }
 
   /** Records an edit. Returns false when the text is unchanged. */
@@ -279,6 +306,60 @@ export class VellumDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return created;
+  }
+
+  /* ---------------- page operations ---------------- */
+
+  private plan(): PagePlanEntry[] {
+    if (!this.pagePlan) {
+      this.pagePlan = Array.from({ length: this.originalPageCount }, (_, i) => ({ source: i, rotate: 0 }));
+    }
+    return this.pagePlan;
+  }
+
+  /** The output's pages, in order, naming where each came from. */
+  pages(): PagePlanEntry[] {
+    return this.plan().map((e) => ({ ...e }));
+  }
+
+  hasPageChanges(): boolean {
+    if (!this.pagePlan) return false;
+    if (this.pagePlan.length !== this.originalPageCount) return true;
+    return this.pagePlan.some((e, i) => e.source !== i || e.rotate !== 0);
+  }
+
+  /** Turns a page by a quarter turn, positive being clockwise. */
+  rotatePage(position: number, degrees: number): boolean {
+    const plan = this.plan();
+    if (position < 0 || position >= plan.length) return false;
+    const before = this.snapshot();
+    plan[position] = { ...plan[position], rotate: (((plan[position].rotate + degrees) % 360) + 360) % 360 };
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** Removes a page. The last remaining page cannot be removed. */
+  deletePage(position: number): boolean {
+    const plan = this.plan();
+    if (plan.length <= 1 || position < 0 || position >= plan.length) return false;
+    const before = this.snapshot();
+    plan.splice(position, 1);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** Moves a page to a new position in the output. */
+  movePage(from: number, to: number): boolean {
+    const plan = this.plan();
+    if (from === to || from < 0 || to < 0 || from >= plan.length || to >= plan.length) return false;
+    const before = this.snapshot();
+    const [entry] = plan.splice(from, 1);
+    plan.splice(to, 0, entry);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
   }
 
   /** Current move, scale and removal state for an image already on the page. */
@@ -522,6 +603,32 @@ export class VellumDocument {
           lineId: `page ${pageIndex + 1}`,
           kind: 'stream-missing',
           detail: `page ${pageIndex + 1} could not be rewritten: ${(e as Error).message}`,
+        });
+      }
+    }
+
+    // Page operations come after content edits, because those are addressed by
+    // the page's position in the original file. Rebuilding the page list first
+    // would move the ground out from under them.
+    if (this.pagePlan) {
+      try {
+        const originals = doc.getPages();
+        const chosen = this.pagePlan
+          .map((entry) => ({ page: originals[entry.source], rotate: entry.rotate }))
+          .filter((x) => x.page);
+
+        if (chosen.length) {
+          for (let i = doc.getPageCount() - 1; i >= 0; i--) doc.removePage(i);
+          for (const { page, rotate } of chosen) {
+            if (rotate) page.setRotation(degrees((page.getRotation().angle + rotate) % 360));
+            doc.addPage(page);
+          }
+        }
+      } catch (e) {
+        warnings.push({
+          lineId: '(pages)',
+          kind: 'stream-missing',
+          detail: `page rearrangement failed: ${(e as Error).message}`,
         });
       }
     }

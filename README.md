@@ -82,6 +82,17 @@ the resulting PDF. The canvas is never an approximation of the output; it is the
 output. Edits are stored as a list against the original bytes and replayed on
 every build, which keeps undo exact and saving reproducible.
 
+### Page operations
+
+Pages can be rotated, deleted and reordered from the thumbnail rail, by dragging
+one thumbnail onto another.
+
+These are held as a plan against the original document rather than applied as
+they are made. That matters because every other edit is addressed by a page's
+position in the original file, so rebuilding the page list eagerly would move
+the ground out from under them. The plan is applied last, after all content
+edits, and undoes like anything else.
+
 ### Moving things
 
 Text and images already in the document can be dragged to a new place, as can

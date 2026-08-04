@@ -77,6 +77,9 @@ and is revisited below.
   Values are written through the field itself rather than painted over the top,
   and appearance streams are regenerated so the result is not blank elsewhere.
 
+- Page operations: rotate, delete and reorder from the thumbnail rail. Held as a
+  plan against the original rather than applied eagerly, so they compose with
+  content edits and undo like everything else.
 - Images already in the document can be dragged, resized from a corner handle,
   and removed. Placement is entirely the transformation matrix, so the wanted
   page-space shift is carried back through the inverse of that matrix.
@@ -90,17 +93,15 @@ and is revisited below.
 Ordered by how often an ordinary person hits the gap, weighted by how well it
 fits an engine that already understands content streams.
 
-1. **Page operations**: rotate, delete, reorder, extract, insert blank. Probably
-   the most common thing anyone does to a PDF after reading it, and cheap for us.
-2. **Combining files**: open several and append, or split one apart. "Merge PDF"
+1. **Combining files**: open several and append, or split one apart. "Merge PDF"
    is one of the highest intent search phrases in the category.
-3. **Find text**: we already have every line with its position, so this is mostly
+2. **Find text**: we already have every line with its position, so this is mostly
    interface work.
-4. **Erase**: cover a region with the page colour. What most people actually mean
+3. **Erase**: cover a region with the page colour. What most people actually mean
    when they say redact, and worth distinguishing from real redaction.
-5. **Highlight and note annotations**: the everyday markup people expect.
-6. **OCR** for scans, the paid tier's natural anchor.
-7. **Real redaction** that removes the underlying characters, for the
+4. **Highlight and note annotations**: the everyday markup people expect.
+5. **OCR** for scans, the paid tier's natural anchor.
+6. **Real redaction** that removes the underlying characters, for the
    professional tier.
 
 ### Next

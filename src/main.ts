@@ -231,8 +231,16 @@ async function applyHistory(changed: boolean): Promise<void> {
   if (!changed || !doc) return;
   setBusy(true, 'Updating…');
   try {
+    const pagesBefore = doc.pageCount;
     await doc.refresh();
-    await viewer.refreshRendered();
+    // A page operation changes how many pages exist, so the viewer is rebuilt.
+    if (doc.pageCount !== pagesBefore) {
+      await viewer.load(doc);
+      await applyZoomChoice();
+      els.pageTotal.textContent = `/ ${doc.pageCount}`;
+    } else {
+      await viewer.refreshRendered();
+    }
     await renderThumbs();
     syncEditState();
 
@@ -508,13 +516,60 @@ async function renderThumbs(): Promise<void> {
     const wrap = document.createElement('div');
     wrap.className = 'thumb';
     wrap.dataset.page = String(i);
+    wrap.draggable = true;
     if (i === viewer.currentPageIndex()) wrap.classList.add('current');
     const canvas = document.createElement('canvas');
     const num = document.createElement('span');
     num.className = 'thumb-num';
     num.textContent = String(i + 1);
-    wrap.append(canvas, num);
+
+    // Page controls live on the thumbnail, which is where people look for them.
+    const tools = document.createElement('div');
+    tools.className = 'thumb-tools';
+    const button = (label: string, title: string, run: () => boolean): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = title;
+      b.textContent = label;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        void applyPageChange(run());
+      });
+      return b;
+    };
+    tools.append(
+      button('\u21ba', 'Rotate left', () => doc!.rotatePage(i, -90)),
+      button('\u21bb', 'Rotate right', () => doc!.rotatePage(i, 90)),
+      button('\u00d7', 'Delete this page', () => {
+        if (doc!.pageCount <= 1) {
+          setStatus('A document needs at least one page.', 'warn');
+          return false;
+        }
+        return doc!.deletePage(i);
+      }),
+    );
+
+    wrap.append(canvas, num, tools);
     wrap.addEventListener('click', () => viewer.scrollToPage(i));
+
+    // Reordering by dragging one thumbnail onto another.
+    wrap.addEventListener('dragstart', (e) => {
+      e.dataTransfer?.setData('text/plain', String(i));
+      wrap.classList.add('thumb-dragging');
+    });
+    wrap.addEventListener('dragend', () => wrap.classList.remove('thumb-dragging'));
+    wrap.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      wrap.classList.add('thumb-over');
+    });
+    wrap.addEventListener('dragleave', () => wrap.classList.remove('thumb-over'));
+    wrap.addEventListener('drop', (e) => {
+      e.preventDefault();
+      wrap.classList.remove('thumb-over');
+      const from = Number(e.dataTransfer?.getData('text/plain'));
+      if (Number.isFinite(from) && doc) void applyPageChange(doc.movePage(from, i));
+    });
+
     els.thumbs.appendChild(wrap);
   }
 
@@ -534,6 +589,29 @@ async function renderThumbs(): Promise<void> {
     } catch {
       // A thumbnail that will not render is not worth failing the session over.
     }
+  }
+}
+
+/**
+ * Applies a page operation. The page count can change, so the viewer is rebuilt
+ * rather than merely repainted.
+ */
+async function applyPageChange(changed: boolean): Promise<void> {
+  if (!changed || !doc) return;
+  setBusy(true, 'Updating pages…');
+  try {
+    await doc.refresh();
+    await viewer.load(doc);
+    await applyZoomChoice();
+    await renderThumbs();
+    syncEditState();
+    els.pageTotal.textContent = `/ ${doc.pageCount}`;
+    els.pageInput.value = String(Math.min(Number(els.pageInput.value) || 1, doc.pageCount));
+    setStatus(`Document now has ${doc.pageCount} page${doc.pageCount === 1 ? '' : 's'}.`);
+  } catch (e) {
+    setStatus(`Could not update pages: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
   }
 }
 
