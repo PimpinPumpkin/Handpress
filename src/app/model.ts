@@ -24,6 +24,7 @@ import {
 } from '../pdf/writer';
 import { decryptToBytes } from '../pdf/decrypt';
 import { describeSignatures, findSignatures, type SignatureReport } from '../pdf/signatures';
+import { applyFormValues, readForm, type FormField } from '../pdf/forms';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -43,6 +44,7 @@ interface EditState {
   edits: Map<number, Map<string, string>>;
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
+  formValues: Map<string, string>;
 }
 
 export interface LoadReport {
@@ -66,6 +68,10 @@ export class VellumDocument {
   private insertions = new Map<number, Map<string, TextInsertion>>();
   /** pageIndex -> stamp id -> image placed on the page, such as a signature. */
   private stamps = new Map<number, Map<string, ImageStamp>>();
+  /** Interactive form field values, keyed by the field's own name. */
+  private formValues = new Map<string, string>();
+  /** Fields as the original document declares them, read once. */
+  private formFields: FormField[] = [];
   /**
    * History as whole-state snapshots rather than per-change deltas.
    *
@@ -156,6 +162,7 @@ export class VellumDocument {
         updateMetadata: false,
       });
       signatures = findSignatures(libDoc);
+      this.formFields = readForm(libDoc).fields;
     } catch {
       // An unreadable object graph simply reports no signatures.
     }
@@ -181,7 +188,7 @@ export class VellumDocument {
     for (const m of this.edits.values()) if (m.size) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
-    return false;
+    return this.formValues.size > 0;
   }
 
   canUndo(): boolean {
@@ -197,7 +204,7 @@ export class VellumDocument {
     for (const m of this.edits.values()) n += m.size;
     for (const m of this.insertions.values()) n += m.size;
     for (const m of this.stamps.values()) n += m.size;
-    return n;
+    return n + this.formValues.size;
   }
 
   /** Text currently shown for a line, which may differ from the file's text. */
@@ -214,6 +221,7 @@ export class VellumDocument {
       edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
+      formValues: new Map(this.formValues),
     };
   }
 
@@ -221,6 +229,7 @@ export class VellumDocument {
     this.edits = state.edits;
     this.insertions = state.insertions;
     this.stamps = state.stamps;
+    this.formValues = state.formValues;
   }
 
   /** Records an edit. Returns false when the text is unchanged. */
@@ -304,6 +313,31 @@ export class VellumDocument {
     return [...(this.stamps.get(pageIndex)?.values() ?? [])];
   }
 
+  /** Fillable fields on a page, with any pending value already applied. */
+  fieldsFor(pageIndex: number): FormField[] {
+    return this.formFields
+      .filter((f) => f.pageIndex === pageIndex)
+      .map((f) => ({ ...f, value: this.formValues.get(f.name) ?? f.value }));
+  }
+
+  hasForm(): boolean {
+    return this.formFields.length > 0;
+  }
+
+  setFieldValue(name: string, value: string): boolean {
+    const current = this.formFields.find((f) => f.name === name);
+    if (!current) return false;
+    if ((this.formValues.get(name) ?? current.value) === value) return false;
+
+    const before = this.snapshot();
+    // Matching the document's own value again means there is nothing to write.
+    if (value === current.value) this.formValues.delete(name);
+    else this.formValues.set(name, value);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
   undo(): boolean {
     const previous = this.undoStack.pop();
     if (!previous) return false;
@@ -370,6 +404,12 @@ export class VellumDocument {
           detail: `page ${pageIndex + 1} could not be rewritten: ${(e as Error).message}`,
         });
       }
+    }
+
+    // Field values are written last, so appearance regeneration sees the final
+    // state of the page rather than something a later edit would change.
+    for (const w of applyFormValues(doc, this.formValues)) {
+      warnings.push({ lineId: w.field, kind: 'unencodable', detail: w.detail });
     }
 
     const bytes = await doc.save({ useObjectStreams: false });

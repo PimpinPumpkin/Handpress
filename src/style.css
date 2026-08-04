@@ -905,3 +905,64 @@ body {
   color: var(--ink-faint);
   font-size: 12px;
 }
+
+/* ---------- form fields ---------- */
+
+/* Tinted so a fillable form is visibly fillable, which is most of the value.
+   Opaque rather than translucent, because the control is the only place a value
+   should appear; anything the page itself drew there must not show through. */
+.field-box {
+  position: absolute;
+  background: #e9f1ff;
+  border: 1px solid rgba(61, 139, 253, 0.45);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.field-box:hover {
+  background: #dbe8ff;
+  border-color: var(--accent);
+}
+
+.field-box.field-required {
+  border-color: rgba(240, 165, 58, 0.7);
+}
+
+.field-box.field-readonly {
+  background: #f0f0f0;
+  border-style: dashed;
+  border-color: rgba(180, 180, 180, 0.5);
+  pointer-events: none;
+}
+
+.field-control {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: #111;
+  background: transparent;
+  font-family: Helvetica, Arial, sans-serif;
+  padding: 0 3px;
+  outline: none;
+  resize: none;
+}
+
+.field-control:focus {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.field-box input[type='checkbox'] {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.field-box select {
+  font-size: 12px;
+  cursor: pointer;
+}

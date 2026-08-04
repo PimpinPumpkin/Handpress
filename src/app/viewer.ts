@@ -15,6 +15,7 @@ import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
 
 import type { CapturedSignature } from './signature';
+import type { FormField } from '../pdf/forms';
 
 export type ViewerMode = 'edit' | 'add' | 'sign';
 
@@ -320,6 +321,11 @@ export class Viewer {
       p.overlay.appendChild(box);
     }
 
+    // Interactive fields come first so their controls sit under nothing else.
+    for (const field of this.doc.fieldsFor(p.index)) {
+      this.addFieldControl(p, field, viewport);
+    }
+
     // Placed images are not text, so they need their own hit target to be
     // removable; there is nothing in the line model that corresponds to them.
     for (const stamp of this.doc.stampsFor(p.index)) {
@@ -369,6 +375,101 @@ export class Viewer {
   }
 
   /**
+   * Renders one form field as a real control.
+   *
+   * A fillable PDF already knows what belongs in each box, so the field is
+   * offered as the input it actually is rather than as free text: a tick box
+   * toggles, a list offers its own options, and a length limit is enforced by
+   * the control itself.
+   */
+  private addFieldControl(
+    p: RenderedPage,
+    field: FormField,
+    viewport: { convertToViewportPoint(x: number, y: number): number[] },
+  ): void {
+    const [x0, y0] = viewport.convertToViewportPoint(field.rect.x, field.rect.y + field.rect.height);
+    const [x1, y1] = viewport.convertToViewportPoint(field.rect.x + field.rect.width, field.rect.y);
+    const left = Math.min(x0, x1);
+    const top = Math.min(y0, y1);
+    const width = Math.abs(x1 - x0);
+    const height = Math.abs(y1 - y0);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'field-box';
+    if (field.readOnly) wrap.classList.add('field-readonly');
+    if (field.required) wrap.classList.add('field-required');
+    wrap.style.left = `${left}px`;
+    wrap.style.top = `${top}px`;
+    wrap.style.width = `${width}px`;
+    wrap.style.height = `${height}px`;
+    wrap.title = `${field.name}${field.required ? ' (required)' : ''}${field.readOnly ? ' (read only)' : ''}`;
+
+    if (field.readOnly) {
+      p.overlay.appendChild(wrap);
+      return;
+    }
+
+    // Field values are recorded but the document is deliberately not rebuilt.
+    // The control itself is the preview, exactly as every PDF viewer does it,
+    // and it covers the widget completely. Rebuilding here would draw the value
+    // a second time underneath, and would cancel renders already in progress.
+    const commit = (value: string): void => {
+      if (!this.doc) return;
+      if (!this.doc.setFieldValue(field.name, value)) return;
+      this.cb.onEdited();
+    };
+
+    let control: HTMLElement;
+    if (field.type === 'checkbox') {
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = field.value === 'on';
+      box.addEventListener('change', () => commit(box.checked ? 'on' : ''));
+      control = box;
+    } else if ((field.type === 'dropdown' || field.type === 'radio' || field.type === 'optionlist') && field.options.length) {
+      const select = document.createElement('select');
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = field.type === 'radio' ? '(none)' : '';
+      select.appendChild(blank);
+      for (const option of field.options) {
+        const el = document.createElement('option');
+        el.value = option;
+        el.textContent = option;
+        select.appendChild(el);
+      }
+      select.value = field.value;
+      select.addEventListener('change', () => commit(select.value));
+      control = select;
+    } else {
+      const input = field.multiline ? document.createElement('textarea') : document.createElement('input');
+      if (input instanceof HTMLInputElement) input.type = 'text';
+      input.value = field.value;
+      if (field.maxLength) input.maxLength = field.maxLength;
+      // Committing on change rather than on every keystroke, since each commit
+      // rebuilds and repaints the whole page.
+      input.addEventListener('change', () => commit(input.value));
+      input.addEventListener('blur', () => commit(input.value));
+      input.addEventListener('keydown', (e) => {
+        const key = (e as KeyboardEvent).key;
+        if (key === 'Enter' && !field.multiline) {
+          e.preventDefault();
+          input.blur();
+        }
+        e.stopPropagation();
+      });
+      // A field is usually set in a size that suits the box it sits in.
+      input.style.fontSize = `${Math.max(8, Math.min(height * 0.62, 18))}px`;
+      control = input;
+    }
+
+    control.classList.add('field-control');
+    control.addEventListener('click', (e) => e.stopPropagation());
+    wrap.appendChild(control);
+    p.overlay.appendChild(wrap);
+  }
+
+  /**
    * Places the pending signature centred on the click.
    *
    * Centring matters because people aim at the line they want to sign on rather
@@ -409,7 +510,10 @@ export class Viewer {
       await this.doc.refresh();
       await this.refreshRendered();
     } catch (e) {
-      this.cb.onStatus(`Could not apply that: ${(e as Error).message}`, 'warn');
+      // A render cancelled because a newer one superseded it is normal.
+      const message = (e as Error).message ?? '';
+      if (/cancel/i.test(message) || (e as { name?: string }).name === 'RenderingCancelledException') return;
+      this.cb.onStatus(`Could not apply that: ${message}`, 'warn');
     }
   }
 

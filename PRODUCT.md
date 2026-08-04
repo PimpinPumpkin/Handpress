@@ -71,15 +71,18 @@ and is revisited below.
   an annotation. Paper backgrounds are turned transparent so the page shows
   through the strokes.
 
+- Filling interactive form fields. Fillable PDFs show their real fields as real
+  controls: text boxes honour length limits, tick boxes toggle, dropdowns and
+  radio groups offer their own options, and read-only fields are left alone.
+  Values are written through the field itself rather than painted over the top,
+  and appearance streams are regenerated so the result is not blank elsewhere.
+
 ### Now
 
-- Filling real form fields, which is adjacent and shares the plumbing.
+- OCR for scanned documents.
 
 ### Next
 
-- OCR for scanned documents. The last big category of files we cannot touch, and
-  the only feature with real marginal cost, which makes it the natural thing to
-  gate behind the paid tier.
 - Font matching ladder: look the document's font up by name, then verify the
   candidate by comparing outlines against the glyphs the embedded subset already
   contains. That verification step is what makes it objective rather than a

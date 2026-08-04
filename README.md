@@ -88,6 +88,19 @@ Text can also be added where the page had none. It is written as real text with
 a standard font at the chosen size and colour, not as an annotation stuck on
 top, so it copies, searches and prints like the rest of the document.
 
+### Filling forms
+
+A fillable PDF already knows where its boxes are, what they are called and what
+belongs in them, so those fields are offered as real controls rather than as
+free text. Text boxes honour their length limits, tick boxes toggle, dropdowns
+and radio groups offer their own options, and fields the form marks read-only
+are left alone.
+
+The value goes into the field itself, not on top of it, so whoever sent the form
+can read the answers back. Each field's appearance stream is regenerated on save,
+which is the step most tools skip and the reason filled forms so often open
+blank somewhere else.
+
 ### Signing
 
 A signature can be drawn with a mouse, pen or finger, or taken from a photograph
@@ -172,6 +185,9 @@ permission-locked files that are unlocked first.
 | Everyday documents | 47 | 47 (100%) |
 | pdf.js regression corpus | 500 | 492 (98%) |
 | veraPDF corpus | 747 | 747 (100%) |
+
+Of 97 documents in the pdf.js corpus carrying interactive forms, 89 fill and read
+back correctly, covering text, tick box, radio, dropdown and list fields.
 
 Text extraction sits at a median 0% deviation from pdf.js across the pdf.js
 corpus. Edit round trips pass 246 of 258 attempted there, and 11 of the 12

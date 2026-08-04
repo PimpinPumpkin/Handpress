@@ -148,6 +148,11 @@ async function openFile(file: File): Promise<void> {
         `Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}. This PDF was permission locked; ` +
           'it has been unlocked and the copy you save will not be locked.',
       );
+    } else if (doc.hasForm()) {
+      setStatus(
+        `Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}. ` +
+          'This is a fillable form, so its fields are highlighted and ready to type into.',
+      );
     } else {
       setStatus(`Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}. Click any line to edit it.`);
     }
