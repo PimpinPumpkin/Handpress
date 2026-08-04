@@ -7,6 +7,7 @@ import { VellumDocument, type PageModel } from './app/model';
 import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import { DecryptionError } from './pdf/decrypt';
+import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/signature';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -27,6 +28,21 @@ const els = {
   btnModeAdd: $<HTMLButtonElement>('btnModeAdd'),
   addSize: $<HTMLSelectElement>('addSize'),
   addColor: $<HTMLInputElement>('addColor'),
+  btnSign: $<HTMLButtonElement>('btnSign'),
+  sigModal: $('sigModal'),
+  sigPad: $<HTMLCanvasElement>('sigPad'),
+  sigTabDraw: $<HTMLButtonElement>('sigTabDraw'),
+  sigTabUpload: $<HTMLButtonElement>('sigTabUpload'),
+  sigDrawPanel: $('sigDrawPanel'),
+  sigUploadPanel: $('sigUploadPanel'),
+  sigChoose: $<HTMLButtonElement>('sigChoose'),
+  sigRemoveBg: $<HTMLInputElement>('sigRemoveBg'),
+  sigPreview: $('sigPreview'),
+  sigFileInput: $<HTMLInputElement>('sigFileInput'),
+  sigWidth: $<HTMLSelectElement>('sigWidth'),
+  sigClear: $<HTMLButtonElement>('sigClear'),
+  sigCancel: $<HTMLButtonElement>('sigCancel'),
+  sigUse: $<HTMLButtonElement>('sigUse'),
   btnPrev: $<HTMLButtonElement>('btnPrev'),
   btnNext: $<HTMLButtonElement>('btnNext'),
   zoomSelect: $<HTMLSelectElement>('zoomSelect'),
@@ -251,15 +267,17 @@ function syncEditState(): void {
 
 /* ---------------- editing mode ---------------- */
 
-function setMode(mode: 'edit' | 'add'): void {
+function setMode(mode: 'edit' | 'add' | 'sign'): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
   els.btnModeAdd.classList.toggle('tool-active', mode === 'add');
-  setStatus(
-    mode === 'add'
-      ? 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.'
-      : 'Click any line of text to edit it.',
-  );
+  els.btnSign.classList.toggle('tool-active', mode === 'sign');
+  const messages = {
+    edit: 'Click any line of text to edit it.',
+    add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
+    sign: 'Click where the signature should go. Click a placed signature to remove it.',
+  };
+  setStatus(messages[mode]);
 }
 
 els.btnModeEdit.addEventListener('click', () => setMode('edit'));
@@ -275,6 +293,85 @@ els.addColor.addEventListener('change', () => {
     g: parseInt(hex.slice(3, 5), 16) / 255,
     b: parseInt(hex.slice(5, 7), 16) / 255,
   };
+});
+
+/* ---------------- signature ---------------- */
+
+let pad: SignaturePad | null = null;
+let uploaded: CapturedSignature | null = null;
+
+function openSignatureDialog(): void {
+  els.sigModal.hidden = false;
+  showSignatureTab('draw');
+  // The pad can only size itself once it is actually laid out.
+  if (!pad) pad = new SignaturePad(els.sigPad);
+  pad.resize();
+}
+
+function closeSignatureDialog(): void {
+  els.sigModal.hidden = true;
+}
+
+function showSignatureTab(which: 'draw' | 'upload'): void {
+  const drawing = which === 'draw';
+  els.sigDrawPanel.hidden = !drawing;
+  els.sigUploadPanel.hidden = drawing;
+  els.sigTabDraw.classList.toggle('modal-tab-active', drawing);
+  els.sigTabUpload.classList.toggle('modal-tab-active', !drawing);
+  els.sigClear.hidden = !drawing;
+  if (drawing) pad?.resize();
+}
+
+els.btnSign.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  openSignatureDialog();
+});
+
+els.sigTabDraw.addEventListener('click', () => showSignatureTab('draw'));
+els.sigTabUpload.addEventListener('click', () => showSignatureTab('upload'));
+els.sigClear.addEventListener('click', () => pad?.clear());
+els.sigCancel.addEventListener('click', closeSignatureDialog);
+els.sigModal.addEventListener('click', (e) => {
+  if (e.target === els.sigModal) closeSignatureDialog();
+});
+
+els.sigChoose.addEventListener('click', () => els.sigFileInput.click());
+els.sigFileInput.addEventListener('change', async () => {
+  const file = els.sigFileInput.files?.[0];
+  els.sigFileInput.value = '';
+  if (!file) return;
+  try {
+    uploaded = await signatureFromFile(file, els.sigRemoveBg.checked);
+    const blob = new Blob([uploaded.png.slice()], { type: 'image/png' });
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(blob);
+    img.alt = 'Signature preview';
+    els.sigPreview.replaceChildren(img);
+  } catch (e) {
+    setStatus(`Could not read that image: ${(e as Error).message}`, 'warn');
+  }
+});
+
+// Re-running the background removal on the same file needs the file again, so
+// the checkbox only takes effect on the next choice; say so rather than lie.
+els.sigRemoveBg.addEventListener('change', () => {
+  if (uploaded) setStatus('Choose the image again to apply that change.');
+});
+
+els.sigUse.addEventListener('click', async () => {
+  const drawn = els.sigDrawPanel.hidden ? null : await pad?.capture();
+  const signature = drawn ?? (els.sigDrawPanel.hidden ? uploaded : null);
+  if (!signature) {
+    setStatus(els.sigDrawPanel.hidden ? 'Choose an image first.' : 'Draw your signature first.', 'warn');
+    return;
+  }
+  viewer.pendingSignature = signature;
+  viewer.signatureWidth = parseFloat(els.sigWidth.value);
+  closeSignatureDialog();
+  setMode('sign');
 });
 
 /* ---------------- local font matching ---------------- */

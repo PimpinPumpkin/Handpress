@@ -14,7 +14,14 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
 import { groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
-import { applyEdits, type EditWarning, type FontProvider, type LineEdit, type TextInsertion } from '../pdf/writer';
+import {
+  applyEdits,
+  type EditWarning,
+  type FontProvider,
+  type ImageStamp,
+  type LineEdit,
+  type TextInsertion,
+} from '../pdf/writer';
 import { decryptToBytes } from '../pdf/decrypt';
 import { describeSignatures, findSignatures, type SignatureReport } from '../pdf/signatures';
 
@@ -35,6 +42,7 @@ export interface PageModel {
 interface EditState {
   edits: Map<number, Map<string, string>>;
   insertions: Map<number, Map<string, TextInsertion>>;
+  stamps: Map<number, Map<string, ImageStamp>>;
 }
 
 export interface LoadReport {
@@ -56,6 +64,8 @@ export class VellumDocument {
   private edits = new Map<number, Map<string, string>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
   private insertions = new Map<number, Map<string, TextInsertion>>();
+  /** pageIndex -> stamp id -> image placed on the page, such as a signature. */
+  private stamps = new Map<number, Map<string, ImageStamp>>();
   /**
    * History as whole-state snapshots rather than per-change deltas.
    *
@@ -66,6 +76,7 @@ export class VellumDocument {
   private undoStack: EditState[] = [];
   private redoStack: EditState[] = [];
   private nextInsertionId = 1;
+  private nextStampId = 1;
 
   private pdfjsDoc: PDFDocumentProxy | null = null;
   private loadingTask: PDFDocumentLoadingTask | null = null;
@@ -169,6 +180,7 @@ export class VellumDocument {
   hasEdits(): boolean {
     for (const m of this.edits.values()) if (m.size) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
+    for (const m of this.stamps.values()) if (m.size) return true;
     return false;
   }
 
@@ -184,6 +196,7 @@ export class VellumDocument {
     let n = 0;
     for (const m of this.edits.values()) n += m.size;
     for (const m of this.insertions.values()) n += m.size;
+    for (const m of this.stamps.values()) n += m.size;
     return n;
   }
 
@@ -200,12 +213,14 @@ export class VellumDocument {
     return {
       edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
+      stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
     };
   }
 
   private restore(state: EditState): void {
     this.edits = state.edits;
     this.insertions = state.insertions;
+    this.stamps = state.stamps;
   }
 
   /** Records an edit. Returns false when the text is unchanged. */
@@ -260,6 +275,35 @@ export class VellumDocument {
     return [...(this.insertions.get(pageIndex)?.values() ?? [])];
   }
 
+  /** Places an image on a page and returns it. */
+  addStamp(pageIndex: number, stamp: Omit<ImageStamp, 'id'>): ImageStamp {
+    const before = this.snapshot();
+    const created: ImageStamp = { ...stamp, id: `stamp${this.nextStampId++}` };
+    let page = this.stamps.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.stamps.set(pageIndex, page);
+    }
+    page.set(created.id, created);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return created;
+  }
+
+  removeStamp(pageIndex: number, id: string): boolean {
+    const page = this.stamps.get(pageIndex);
+    if (!page?.has(id)) return false;
+    const before = this.snapshot();
+    page.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  stampsFor(pageIndex: number): ImageStamp[] {
+    return [...(this.stamps.get(pageIndex)?.values() ?? [])];
+  }
+
   undo(): boolean {
     const previous = this.undoStack.pop();
     if (!previous) return false;
@@ -287,11 +331,16 @@ export class VellumDocument {
     });
     const warnings: EditWarning[] = [];
 
-    const touchedPages = new Set<number>([...this.edits.keys(), ...this.insertions.keys()]);
+    const touchedPages = new Set<number>([
+      ...this.edits.keys(),
+      ...this.insertions.keys(),
+      ...this.stamps.keys(),
+    ]);
     for (const pageIndex of touchedPages) {
       const pageEdits = this.edits.get(pageIndex) ?? new Map<string, string>();
       const pageInsertions = [...(this.insertions.get(pageIndex)?.values() ?? [])];
-      if (!pageEdits.size && !pageInsertions.length) continue;
+      const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
+      if (!pageEdits.size && !pageInsertions.length && !pageStamps.length) continue;
       try {
         if (pageIndex >= doc.getPageCount()) continue;
 
@@ -311,6 +360,7 @@ export class VellumDocument {
           content.bytes,
           this.fontProvider,
           pageInsertions,
+          pageStamps,
         );
         warnings.push(...result.warnings);
       } catch (e) {

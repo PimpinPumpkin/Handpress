@@ -59,6 +59,10 @@
             <option value="24">24 pt</option>
           </select>
           <input type="color" class="add-color" id="addColor" value="#000000" title="Colour for added text" />
+          <button class="tool" id="btnSign" type="button" title="Create a signature and place it on the page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17c3 0 3-9 6-9s3 9 6 9 3-4 6-4" /><path d="M3 21h18" /></svg>
+            <span>Sign</span>
+          </button>
         </div>
 
         <div class="tool-group">
@@ -162,6 +166,44 @@
     </div>
 
     <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+    <input type="file" id="sigFileInput" accept="image/*" hidden />
+
+    <div class="modal" id="sigModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sigTitle">
+        <h2 id="sigTitle">Your signature</h2>
+        <p class="modal-sub">Drawn or photographed, it stays on this device and is drawn straight into the page.</p>
+
+        <div class="modal-tabs">
+          <button class="modal-tab modal-tab-active" id="sigTabDraw" type="button">Draw it</button>
+          <button class="modal-tab" id="sigTabUpload" type="button">Use a photo</button>
+        </div>
+
+        <div class="sig-panel" id="sigDrawPanel">
+          <canvas class="sig-pad" id="sigPad"></canvas>
+          <p class="sig-hint">Sign above using a mouse, trackpad or finger.</p>
+        </div>
+
+        <div class="sig-panel" id="sigUploadPanel" hidden>
+          <button class="btn" id="sigChoose" type="button">Choose an image</button>
+          <label class="sig-check"><input type="checkbox" id="sigRemoveBg" checked /> Remove the paper background</label>
+          <div class="sig-preview" id="sigPreview"></div>
+        </div>
+
+        <div class="modal-actions">
+          <label class="sig-size">Width
+            <select class="zoom-select" id="sigWidth">
+              <option value="100">Small</option>
+              <option value="150" selected>Medium</option>
+              <option value="220">Large</option>
+            </select>
+          </label>
+          <span class="modal-spacer"></span>
+          <button class="btn" id="sigClear" type="button">Clear</button>
+          <button class="btn" id="sigCancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="sigUse" type="button">Use it</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

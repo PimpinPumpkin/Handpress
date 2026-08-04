@@ -22,6 +22,24 @@ export interface LineEdit {
   newText: string;
 }
 
+/**
+ * An image stamped onto a page, which is how a signature is applied.
+ *
+ * Drawn into the page content rather than added as an annotation, so it is
+ * flattened from the start: it cannot be moved or deleted by a reader, and it
+ * survives printing and flattening by other software.
+ */
+export interface ImageStamp {
+  id: string;
+  /** PNG bytes, with transparency where the paper should show through. */
+  png: Uint8Array;
+  /** Bottom left corner in PDF page coordinates, y measured upwards. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /** New text placed on a page that had none there before. */
 export interface TextInsertion {
   id: string;
@@ -156,6 +174,56 @@ export function mapTextToSegments(line: TextLine, newText: string): string[] {
     out.push(text);
   }
   return out;
+}
+
+/** Adds an image to a resource dictionary's XObject entry, returning its name. */
+function addXObjectResource(resources: PDFDict, ref: PDFRef, preferred: string): string {
+  let xobjects = resources.lookup(PDFName.of('XObject'));
+  if (!(xobjects instanceof PDFDict)) {
+    xobjects = resources.context.obj({}) as PDFDict;
+    resources.set(PDFName.of('XObject'), xobjects);
+  }
+  const dict = xobjects as PDFDict;
+
+  for (const [key, value] of dict.entries()) {
+    if (value instanceof PDFRef && value === ref) return key.asString().replace(/^\//, '');
+  }
+
+  let name = preferred;
+  let n = 0;
+  while (dict.has(PDFName.of(name))) name = `${preferred}${++n}`;
+  dict.set(PDFName.of(name), ref);
+  return name;
+}
+
+/**
+ * Builds the drawing operators for a stamped image.
+ *
+ * The transformation matrix carries the size, since an image XObject is always
+ * drawn into the unit square. Wrapped in q/Q so it cannot leak that matrix into
+ * whatever the page draws afterwards.
+ */
+async function buildStamp(
+  stamp: ImageStamp,
+  doc: PDFDocument,
+  resources: PDFDict,
+  cache: Map<string, string>,
+  warn: (w: EditWarning) => void,
+): Promise<Uint8Array> {
+  let name = cache.get(stamp.id);
+  if (!name) {
+    try {
+      const image = await doc.embedPng(stamp.png);
+      name = addXObjectResource(resources, image.ref, 'VeIm');
+      cache.set(stamp.id, name);
+    } catch (e) {
+      warn({ lineId: stamp.id, kind: 'stream-missing', detail: `could not embed the image: ${(e as Error).message}` });
+      return new Uint8Array(0);
+    }
+  }
+  return bytes(
+    `\nq ${fmt(stamp.width)} 0 0 ${fmt(stamp.height)} ${fmt(stamp.x)} ${fmt(stamp.y)} cm /${name} Do Q\n`,
+  );
 }
 
 /** Adds a standard font to a resource dictionary and returns its new resource name. */
@@ -557,6 +625,7 @@ export async function applyEdits(
   pageContentBytes: Uint8Array,
   fontProvider: FontProvider | null = null,
   insertions: TextInsertion[] = [],
+  stamps: ImageStamp[] = [],
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
@@ -613,17 +682,22 @@ export async function applyEdits(
   // Added text is drawn after everything else so it sits on top, and it is
   // built here so it lands in the same rewrite as any edits to the page.
   let addedTail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
-  if (insertions.length) {
+  if (insertions.length || stamps.length) {
     const pageResources = walk.resources.get('page') ?? null;
     if (pageResources) {
       const built: Uint8Array[] = [];
+      // Images go down first so text placed afterwards is never hidden by one.
+      const imageCache = new Map<string, string>();
+      for (const stamp of stamps) {
+        built.push(await buildStamp(stamp, doc, pageResources, imageCache, warn));
+      }
       for (const insertion of insertions) {
         if (!insertion.text.trim()) continue;
         built.push(await buildInsertion(insertion, resolver, pageResources, warn));
       }
       addedTail = concatBytes(built);
     } else {
-      warn({ lineId: 'page', kind: 'stream-missing', detail: 'page has no resource dictionary for added text' });
+      warn({ lineId: 'page', kind: 'stream-missing', detail: 'page has no resource dictionary for added content' });
     }
   }
 

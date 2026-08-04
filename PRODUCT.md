@@ -66,10 +66,13 @@ and is revisited below.
   page as real text with a standard font, chosen size and colour. Multi-line with
   normal leading. Verified to place exactly and shift nothing already on the page.
 
+- Self-signing. Draw a signature or use a photograph of one, place it on the
+  page, and it is flattened into the content stream as a real image rather than
+  an annotation. Paper backgrounds are turned transparent so the page shows
+  through the strokes.
+
 ### Now
 
-- Self-signing: place a drawn or uploaded signature image and flatten it. The
-  remaining half of the signature story, and entirely client side.
 - Filling real form fields, which is adjacent and shares the plumbing.
 
 ### Next

@@ -88,6 +88,21 @@ Text can also be added where the page had none. It is written as real text with
 a standard font at the chosen size and colour, not as an annotation stuck on
 top, so it copies, searches and prints like the rest of the document.
 
+### Signing
+
+A signature can be drawn with a mouse, pen or finger, or taken from a photograph
+of one on paper. Either way it is trimmed to the ink and given a transparent
+background, so what lands on the page is the handwriting rather than a white box.
+
+It is drawn into the page content rather than attached as an annotation, which
+means it is flattened from the start: a reader cannot drag it off or delete it,
+and it survives printing and any later flattening.
+
+This is signing in the everyday sense of putting your name on a form. It is not
+an e-signature service, and it makes no claim to be. There is no audit trail, no
+identity check and no certificate, because all of those need a server and a
+trusted third party.
+
 ### Signed documents
 
 Editing a signed PDF invalidates its signature, and saving rewrites the file,

@@ -14,7 +14,9 @@ import type { PageModel, VellumDocument } from './model';
 import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
 
-export type ViewerMode = 'edit' | 'add';
+import type { CapturedSignature } from './signature';
+
+export type ViewerMode = 'edit' | 'add' | 'sign';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -29,6 +31,16 @@ interface RenderedPage {
   overlay: HTMLElement;
   model: PageModel | null;
   renderedZoom: number;
+  /**
+   * In-flight render for this page.
+   *
+   * A page can be asked to render from several places at once, notably the
+   * initial load and the visibility observer firing for the same page. Two
+   * concurrent renders share one canvas context, and their save and restore
+   * pairs interleave, which leaves a stray transform behind and draws the page
+   * upside down. Rendering is therefore serialised per page.
+   */
+  rendering: Promise<void> | null;
 }
 
 const measureCanvas = document.createElement('canvas');
@@ -99,6 +111,9 @@ export class Viewer {
   /** Defaults applied to newly added text. */
   addSize = 12;
   addColor = { r: 0, g: 0, b: 0 };
+  /** Signature waiting to be placed, and the width it is placed at, in points. */
+  pendingSignature: CapturedSignature | null = null;
+  signatureWidth = 150;
 
   constructor(root: HTMLElement, cb: ViewerCallbacks) {
     this.root = root;
@@ -118,7 +133,7 @@ export class Viewer {
   setMode(mode: ViewerMode): void {
     this.closeEditor(false);
     this.mode = mode;
-    for (const p of this.pages) p.overlay.classList.toggle('placing', mode === 'add');
+    for (const p of this.pages) p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign');
   }
 
   async load(doc: VellumDocument): Promise<void> {
@@ -146,14 +161,14 @@ export class Viewer {
       label.textContent = String(i + 1);
 
       overlay.addEventListener('click', (e) => {
-        if (this.mode !== 'add') return;
-        if (e.target !== overlay) return; // a click on existing text is not a placement
-        void this.placeText(this.pages[i], e as MouseEvent);
+        if (e.target !== overlay) return; // a click on existing content is not a placement
+        if (this.mode === 'add') void this.placeText(this.pages[i], e as MouseEvent);
+        else if (this.mode === 'sign') void this.placeSignature(this.pages[i], e as MouseEvent);
       });
 
       container.append(canvas, overlay, label);
       strip.appendChild(container);
-      this.pages.push({ index: i, container, canvas, overlay, model: null, renderedZoom: 0 });
+      this.pages.push({ index: i, container, canvas, overlay, model: null, renderedZoom: 0, rendering: null });
     }
 
     // Pages render as they approach the viewport, which keeps large files usable.
@@ -222,13 +237,39 @@ export class Viewer {
     if (!p || !this.doc?.pdfjs) return;
     if (p.renderedZoom === this.zoom && p.model) return;
 
+    // Wait for any render already under way, then reconsider: it may have
+    // produced exactly what this call wanted.
+    if (p.rendering) {
+      await p.rendering;
+      if (p.renderedZoom === this.zoom && p.model) return;
+    }
+
+    p.rendering = this.drawPage(p, index);
+    try {
+      await p.rendering;
+    } finally {
+      p.rendering = null;
+    }
+  }
+
+  private async drawPage(p: RenderedPage, index: number): Promise<void> {
+    if (!this.doc?.pdfjs) return;
     const token = this.renderToken;
+    // Captured now, because the zoom can change while this render is running and
+    // the page must be recorded at the scale it was actually drawn at.
+    const drawnZoom = this.zoom;
     const jsPage = await this.doc.pdfjs.getPage(index + 1);
-    const viewport = jsPage.getViewport({ scale: this.zoom });
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-    p.canvas.width = Math.floor(viewport.width * dpr);
-    p.canvas.height = Math.floor(viewport.height * dpr);
+    // Two viewports: one at device resolution that the canvas matches exactly,
+    // and one at CSS resolution for layout and for placing the overlay. Letting
+    // pdf.js render into a canvas the same size as its own viewport is simpler
+    // than composing a device-pixel transform with the viewport's own.
+    const renderViewport = jsPage.getViewport({ scale: drawnZoom * dpr });
+    const viewport = jsPage.getViewport({ scale: drawnZoom });
+
+    p.canvas.width = Math.floor(renderViewport.width);
+    p.canvas.height = Math.floor(renderViewport.height);
     p.canvas.style.width = `${Math.floor(viewport.width)}px`;
     p.canvas.style.height = `${Math.floor(viewport.height)}px`;
     p.container.style.width = `${Math.floor(viewport.width)}px`;
@@ -238,18 +279,11 @@ export class Viewer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
 
-    // Device pixel scaling goes through pdf.js's own transform hook rather than
-    // a pre-set canvas transform, which it would otherwise compose incorrectly.
-    await jsPage.render({
-      canvasContext: ctx,
-      viewport,
-      canvas: p.canvas,
-      transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0],
-    }).promise;
+    await jsPage.render({ canvasContext: ctx, viewport: renderViewport, canvas: p.canvas }).promise;
     if (token !== this.renderToken) return;
 
     p.model = await this.doc.getPage(index);
-    p.renderedZoom = this.zoom;
+    p.renderedZoom = drawnZoom;
     this.buildOverlay(p, viewport);
   }
 
@@ -286,6 +320,31 @@ export class Viewer {
       p.overlay.appendChild(box);
     }
 
+    // Placed images are not text, so they need their own hit target to be
+    // removable; there is nothing in the line model that corresponds to them.
+    for (const stamp of this.doc.stampsFor(p.index)) {
+      const [sx, sy] = viewport.convertToViewportPoint(stamp.x, stamp.y + stamp.height);
+      const box = document.createElement('div');
+      box.className = 'line-box line-stamp';
+      box.style.left = `${sx}px`;
+      box.style.top = `${sy}px`;
+      box.style.width = `${stamp.width * this.zoom}px`;
+      box.style.height = `${stamp.height * this.zoom}px`;
+      box.title = 'Placed signature. Click to remove it.';
+      box.addEventListener('mousedown', (e) => e.preventDefault());
+      box.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!this.doc) return;
+        if (this.doc.removeStamp(p.index, stamp.id)) {
+          void this.rebuild().then(() => {
+            this.cb.onStatus('Signature removed.');
+            this.cb.onEdited();
+          });
+        }
+      });
+      p.overlay.appendChild(box);
+    }
+
     // Added text lives only in the edit list, not in the original document the
     // line model is built from, so it gets its own boxes to stay editable.
     for (const insertion of this.doc.insertionsFor(p.index)) {
@@ -306,6 +365,51 @@ export class Viewer {
         this.openInsertionEditor(p, insertion, viewport);
       });
       p.overlay.appendChild(box);
+    }
+  }
+
+  /**
+   * Places the pending signature centred on the click.
+   *
+   * Centring matters because people aim at the line they want to sign on rather
+   * than at a corner, and the height follows from the captured aspect ratio so
+   * the handwriting is never stretched.
+   */
+  private async placeSignature(p: RenderedPage, event: MouseEvent): Promise<void> {
+    if (!this.doc?.pdfjs || !this.pendingSignature) return;
+    const signature = this.pendingSignature;
+
+    const rect = p.overlay.getBoundingClientRect();
+    const jsPage = await this.doc.pdfjs.getPage(p.index + 1);
+    const viewport = jsPage.getViewport({ scale: this.zoom });
+    const [px, py] = viewport.convertToPdfPoint(event.clientX - rect.left, event.clientY - rect.top);
+
+    const width = this.signatureWidth;
+    const height = (signature.height / signature.width) * width;
+
+    this.doc.addStamp(p.index, {
+      png: signature.png,
+      x: px - width / 2,
+      y: py - height / 2,
+      width,
+      height,
+    });
+
+    // Rebuild before announcing the change: the callback repaints thumbnails,
+    // and pdf.js cannot draw the same page into two canvases at once.
+    await this.rebuild();
+    this.cb.onStatus('Signature placed. Click again to place another, or switch tools when you are done.');
+    this.cb.onEdited();
+  }
+
+  /** Rebuilds the document and repaints, shared by anything that adds content. */
+  private async rebuild(): Promise<void> {
+    if (!this.doc) return;
+    try {
+      await this.doc.refresh();
+      await this.refreshRendered();
+    } catch (e) {
+      this.cb.onStatus(`Could not apply that: ${(e as Error).message}`, 'warn');
     }
   }
 
@@ -447,7 +551,8 @@ export class Viewer {
     const cover = document.createElement('div');
     cover.className = 'edit-cover';
     const rect = new DOMRect(geo.left, geo.top, geo.width, geo.height);
-    cover.style.background = sampleBackground(p.canvas, rect, Math.min(window.devicePixelRatio || 1, 2));
+    const backingScale = p.canvas.width / Math.max(1, parseFloat(p.canvas.style.width));
+    cover.style.background = sampleBackground(p.canvas, rect, backingScale);
     cover.style.left = `${geo.left - 1}px`;
     cover.style.top = `${geo.top}px`;
     cover.style.width = `${geo.width + 4}px`;
