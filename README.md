@@ -82,6 +82,18 @@ the resulting PDF. The canvas is never an approximation of the output; it is the
 output. Edits are stored as a list against the original bytes and replayed on
 every build, which keeps undo exact and saving reproducible.
 
+### Finding text
+
+Cmd+F, or the box in the toolbar. Every hit is highlighted at once, Enter and
+Shift+Enter step through them, and the count shows where you are.
+
+Search runs against the text as it currently reads rather than as the file was
+opened, so a word typed a moment ago is findable and one typed out is not. A hit
+is placed by walking the line's styled runs and interpolating within whichever
+ones it covers; a line that mixes a bold label with body text is not evenly
+spaced, so interpolating across the whole line would put the highlight in the
+wrong place.
+
 ### Page operations
 
 Pages can be rotated, deleted and reordered from the thumbnail rail, by dragging

@@ -15,6 +15,7 @@ import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
 import type { ImageOp } from '../pdf/content';
 
+import type { SearchMatch } from './model';
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
 
@@ -43,6 +44,12 @@ interface RenderedPage {
    * upside down. Rendering is therefore serialised per page.
    */
   rendering: Promise<void> | null;
+  /**
+   * Viewport of this page's last render, kept so highlights can be repainted
+   * without rendering again. Pages differ in size and rotation, so this cannot
+   * be shared between them.
+   */
+  viewport: { convertToViewportPoint(x: number, y: number): number[] } | null;
 }
 
 const measureCanvas = document.createElement('canvas');
@@ -116,6 +123,9 @@ export class Viewer {
   /** Signature waiting to be placed, and the width it is placed at, in points. */
   pendingSignature: CapturedSignature | null = null;
   signatureWidth = 150;
+  private matches: SearchMatch[] = [];
+  private currentMatch = -1;
+
 
   constructor(root: HTMLElement, cb: ViewerCallbacks) {
     this.root = root;
@@ -170,7 +180,16 @@ export class Viewer {
 
       container.append(canvas, overlay, label);
       strip.appendChild(container);
-      this.pages.push({ index: i, container, canvas, overlay, model: null, renderedZoom: 0, rendering: null });
+      this.pages.push({
+        index: i,
+        container,
+        canvas,
+        overlay,
+        model: null,
+        renderedZoom: 0,
+        rendering: null,
+        viewport: null,
+      });
     }
 
     // Pages render as they approach the viewport, which keeps large files usable.
@@ -286,7 +305,9 @@ export class Viewer {
 
     p.model = await this.doc.getPage(index);
     p.renderedZoom = drawnZoom;
+    p.viewport = viewport;
     this.buildOverlay(p, viewport);
+    this.paintMatches(p);
   }
 
   private buildOverlay(p: RenderedPage, viewport: { convertToViewportPoint(x: number, y: number): number[] }): void {
@@ -414,6 +435,109 @@ export class Viewer {
         },
         () => this.openInsertionEditor(p, insertion, viewport),
       );
+      p.overlay.appendChild(box);
+    }
+  }
+
+  /** Replaces the highlighted search hits and repaints the overlays. */
+  setMatches(matches: SearchMatch[], current = -1): void {
+    this.matches = matches;
+    this.currentMatch = current;
+    for (const p of this.pages) {
+      if (p.model) this.paintMatches(p);
+    }
+  }
+
+  /** Scrolls a hit into view and marks it as the current one. */
+  async revealMatch(index: number): Promise<void> {
+    const match = this.matches[index];
+    if (!match) return;
+    this.currentMatch = index;
+
+    const p = this.pages[match.pageIndex];
+    if (!p) return;
+    await this.renderPage(match.pageIndex);
+    this.paintMatches(p);
+
+    const box = p.overlay.querySelector<HTMLElement>(`.match-box[data-match="${index}"]`);
+    (box ?? p.container).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    for (const other of this.pages) {
+      if (other !== p && other.model) this.paintMatches(other);
+    }
+  }
+
+  /**
+   * Draws a highlight over each hit on a page.
+   *
+   * The span of characters is turned into a position by walking the line's
+   * styled segments and interpolating within whichever ones the hit covers,
+   * rather than across the line as a whole. A line that mixes a bold label with
+   * body text is not evenly spaced, and interpolating over the whole thing puts
+   * the highlight in the wrong place.
+   */
+  private paintMatches(p: RenderedPage): void {
+    for (const old of Array.from(p.overlay.querySelectorAll('.match-box'))) old.remove();
+    if (!p.model || !this.matches.length || !this.doc?.pdfjs) return;
+
+    const mine = this.matches
+      .map((m, i) => ({ m, i }))
+      .filter(({ m }) => m.pageIndex === p.index);
+    if (!mine.length) return;
+
+    const byId = new Map(p.model.lines.map((l) => [l.id, l]));
+
+    for (const { m, i } of mine) {
+      const line = byId.get(m.lineId);
+      if (!line) continue;
+
+      // Where along the line the hit starts and ends, in page units.
+      const locate = (charIndex: number): number => {
+        for (const seg of line.segments) {
+          if (charIndex <= seg.start) return seg.u0;
+          if (charIndex <= seg.end) {
+            const span = Math.max(1, seg.end - seg.start);
+            return seg.u0 + ((seg.u1 - seg.u0) * (charIndex - seg.start)) / span;
+          }
+        }
+        const last = line.segments[line.segments.length - 1];
+        return last ? last.u1 : 0;
+      };
+
+      const uStart = locate(m.start);
+      const uEnd = locate(m.end);
+      const perpX = -line.dirY;
+      const perpY = line.dirX;
+      const descent = (Math.abs(line.font.descent) / 1000) * line.fontSize;
+      const ascent = (line.font.ascent / 1000) * line.fontSize;
+
+      // A point in the line's frame, back in page coordinates.
+      const at = (u: number, v: number): [number, number] => [
+        u * line.dirX + v * perpX,
+        u * line.dirY + v * perpY,
+      ];
+      // The line's perpendicular coordinate, recovered from its start point.
+      const vBase = -line.startX * line.dirY + line.startY * line.dirX;
+      const pts = [
+        at(uStart, vBase - descent),
+        at(uEnd, vBase - descent),
+        at(uEnd, vBase + ascent),
+        at(uStart, vBase + ascent),
+      ];
+
+      const viewport = p.viewport;
+      if (!viewport) continue;
+      const screen = pts.map(([x, y]) => viewport.convertToViewportPoint(x, y));
+      const xs = screen.map((s) => s[0]);
+      const ys = screen.map((s) => s[1]);
+
+      const box = document.createElement('div');
+      box.className = 'match-box';
+      if (i === this.currentMatch) box.classList.add('match-current');
+      box.dataset.match = String(i);
+      box.style.left = `${Math.min(...xs)}px`;
+      box.style.top = `${Math.min(...ys)}px`;
+      box.style.width = `${Math.max(2, Math.max(...xs) - Math.min(...xs))}px`;
+      box.style.height = `${Math.max(2, Math.max(...ys) - Math.min(...ys))}px`;
       p.overlay.appendChild(box);
     }
   }

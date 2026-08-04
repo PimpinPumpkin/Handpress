@@ -77,6 +77,9 @@ and is revisited below.
   Values are written through the field itself rather than painted over the top,
   and appearance streams are regenerated so the result is not blank elsewhere.
 
+- Find in document, with every hit highlighted, next and previous, and Cmd+F.
+  Searches the text as it currently reads, so a word typed a moment ago is
+  findable and one typed out is not.
 - Combining and splitting. Add pages appends other files, and Extract saves a
   page range as a new PDF without touching the open document. A merged page is
   just a plan entry naming a different source file, so it reorders, rotates and
@@ -97,13 +100,11 @@ and is revisited below.
 Ordered by how often an ordinary person hits the gap, weighted by how well it
 fits an engine that already understands content streams.
 
-1. **Find text**: we already have every line with its position, so this is mostly
-   interface work.
-2. **Erase**: cover a region with the page colour. What most people actually mean
+1. **Erase**: cover a region with the page colour. What most people actually mean
    when they say redact, and worth distinguishing from real redaction.
-3. **Highlight and note annotations**: the everyday markup people expect.
-4. **OCR** for scans, the paid tier's natural anchor.
-5. **Real redaction** that removes the underlying characters, for the
+2. **Highlight and note annotations**: the everyday markup people expect.
+3. **OCR** for scans, the paid tier's natural anchor.
+4. **Real redaction** that removes the underlying characters, for the
    professional tier.
 
 ### Next

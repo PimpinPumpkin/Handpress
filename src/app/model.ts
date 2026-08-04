@@ -72,6 +72,15 @@ export interface PagePlanEntry {
   rotate: number;
 }
 
+export interface SearchMatch {
+  pageIndex: number;
+  lineId: string;
+  /** Character range of the hit within the line's current text. */
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface LoadReport {
   pageCount: number;
   /** Pages with no extractable text at all, which usually means a scan. */
@@ -132,6 +141,14 @@ export class VellumDocument {
   private cssFontCache = new Map<number, Map<string, string>>();
   /** Bytes currently rendered, which include all committed edits. */
   private currentBytes: Uint8Array;
+  /**
+   * The original parsed once and kept.
+   *
+   * Page models are built from the original file, and building one used to
+   * reparse the whole document. That is fine for a page or two and quadratic
+   * for anything longer, which searching across every page immediately exposes.
+   */
+  private originalDoc: Promise<PDFDocument> | null = null;
 
   pageCount = 0;
   /** Page count of the file as opened, which the plan is expressed against. */
@@ -316,6 +333,39 @@ export class VellumDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return created;
+  }
+
+  /* ---------------- searching ---------------- */
+
+  /**
+   * Finds every occurrence across the document.
+   *
+   * Searches the text as it currently reads, so a word that was typed in a
+   * moment ago is findable and one that was typed out is not.
+   */
+  async search(query: string, caseSensitive = false): Promise<SearchMatch[]> {
+    const needle = caseSensitive ? query : query.toLowerCase();
+    if (!needle.trim()) return [];
+
+    const matches: SearchMatch[] = [];
+    for (let pageIndex = 0; pageIndex < this.pageCount; pageIndex++) {
+      const page = await this.getPage(pageIndex).catch(() => null);
+      if (!page) continue;
+
+      for (const line of page.lines) {
+        const text = this.textFor(pageIndex, line);
+        const haystack = caseSensitive ? text : text.toLowerCase();
+        let from = 0;
+        for (;;) {
+          const at = haystack.indexOf(needle, from);
+          if (at < 0) break;
+          matches.push({ pageIndex, lineId: line.id, start: at, end: at + needle.length, text });
+          // Overlapping hits are not useful, so the scan resumes after this one.
+          from = at + Math.max(1, needle.length);
+        }
+      }
+    }
+    return matches;
   }
 
   /* ---------------- page operations ---------------- */
@@ -731,10 +781,13 @@ export class VellumDocument {
       // rather than take down the session; plenty of real files are broken.
       try {
         // pdf-lib parses the object graph for the text model; pdf.js renders pixels.
-        const libDoc = await PDFDocument.load(this.originalBytes.slice(), {
-          throwOnInvalidObject: false,
-          updateMetadata: false,
-        });
+        if (!this.originalDoc) {
+          this.originalDoc = PDFDocument.load(this.originalBytes.slice(), {
+            throwOnInvalidObject: false,
+            updateMetadata: false,
+          });
+        }
+        const libDoc = await this.originalDoc;
 
         const page = libDoc.getPage(index);
         const content = getPageContent(page);

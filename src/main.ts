@@ -3,7 +3,7 @@
  */
 
 import './style.css';
-import { VellumDocument, type PageModel } from './app/model';
+import { VellumDocument, type PageModel, type SearchMatch } from './app/model';
 import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import { DecryptionError } from './pdf/decrypt';
@@ -30,6 +30,10 @@ const els = {
   addColor: $<HTMLInputElement>('addColor'),
   btnSign: $<HTMLButtonElement>('btnSign'),
   btnAddPages: $<HTMLButtonElement>('btnAddPages'),
+  searchInput: $<HTMLInputElement>('searchInput'),
+  searchCount: $('searchCount'),
+  searchPrev: $<HTMLButtonElement>('searchPrev'),
+  searchNext: $<HTMLButtonElement>('searchNext'),
   btnExtract: $<HTMLButtonElement>('btnExtract'),
   mergeFileInput: $<HTMLInputElement>('mergeFileInput'),
   extractModal: $('extractModal'),
@@ -109,6 +113,7 @@ const viewer = new Viewer(els.viewer, {
   onSelect: showProperties,
   onEdited: () => {
     syncEditState();
+    if (matches.length) void runSearch();
 
     void renderThumbs();
   },
@@ -273,6 +278,13 @@ window.addEventListener('keydown', (e) => {
   } else if (key === 'o') {
     e.preventDefault();
     els.fileInput.click();
+  } else if (key === 'f') {
+    e.preventDefault();
+    els.searchInput.focus();
+    els.searchInput.select();
+  } else if (key === 'g') {
+    e.preventDefault();
+    void step(e.shiftKey ? -1 : 1);
   }
 });
 
@@ -623,6 +635,76 @@ async function applyPageChange(changed: boolean): Promise<void> {
     setBusy(false);
   }
 }
+
+/* ---------------- find ---------------- */
+
+let matches: SearchMatch[] = [];
+let matchIndex = -1;
+let searchTimer: number | undefined;
+let searchToken = 0;
+
+function updateSearchUi(): void {
+  const has = matches.length > 0;
+  els.searchPrev.disabled = !has;
+  els.searchNext.disabled = !has;
+  els.searchCount.textContent = els.searchInput.value.trim()
+    ? has
+      ? `${matchIndex + 1} of ${matches.length}`
+      : 'none'
+    : '';
+}
+
+async function runSearch(): Promise<void> {
+  const query = els.searchInput.value;
+  const token = ++searchToken;
+
+  if (!doc || !query.trim()) {
+    matches = [];
+    matchIndex = -1;
+    viewer.setMatches([]);
+    updateSearchUi();
+    return;
+  }
+
+  els.searchCount.textContent = 'searching…';
+  const found = await doc.search(query);
+  // A newer keystroke has already superseded this search.
+  if (token !== searchToken) return;
+
+  matches = found;
+  matchIndex = found.length ? 0 : -1;
+  viewer.setMatches(matches, matchIndex);
+  updateSearchUi();
+  if (matchIndex >= 0) await viewer.revealMatch(matchIndex);
+  if (!found.length) setStatus(`No match for ${JSON.stringify(query)}.`);
+}
+
+async function step(delta: number): Promise<void> {
+  if (!matches.length) return;
+  matchIndex = (matchIndex + delta + matches.length) % matches.length;
+  updateSearchUi();
+  await viewer.revealMatch(matchIndex);
+}
+
+els.searchInput.addEventListener('input', () => {
+  // Searching every page is not free, so keystrokes are allowed to settle.
+  window.clearTimeout(searchTimer);
+  searchTimer = window.setTimeout(() => void runSearch(), 250);
+});
+els.searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (matches.length) void step(e.shiftKey ? -1 : 1);
+    else void runSearch();
+  } else if (e.key === 'Escape') {
+    els.searchInput.value = '';
+    void runSearch();
+    els.searchInput.blur();
+  }
+  e.stopPropagation();
+});
+els.searchNext.addEventListener('click', () => void step(1));
+els.searchPrev.addEventListener('click', () => void step(-1));
 
 /* ---------------- combining and splitting ---------------- */
 
