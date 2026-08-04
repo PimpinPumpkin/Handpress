@@ -77,8 +77,15 @@ and is revisited below.
   Values are written through the field itself rather than painted over the top,
   and appearance streams are regenerated so the result is not blank elsewhere.
 
+- Dragging to reposition. Existing lines of text, added text and placed images
+  can all be dragged. An existing line moves by text rise and a positioning
+  offset rather than by rewriting the line matrix, so every following line stays
+  exactly where the producer put it.
+
 ### Now
 
+- Dragging images that were already in the document. Needs the walker to record
+  image draws, which it does not yet do.
 - OCR for scanned documents.
 
 ### Next

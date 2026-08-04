@@ -42,6 +42,7 @@ export interface PageModel {
 
 interface EditState {
   edits: Map<number, Map<string, string>>;
+  lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
   formValues: Map<string, string>;
@@ -64,6 +65,8 @@ export class VellumDocument {
   private originalBytes: Uint8Array;
   /** pageIndex -> lineId -> replacement text. */
   private edits = new Map<number, Map<string, string>>();
+  /** pageIndex -> lineId -> how far that line has been dragged, in page units. */
+  private lineOffsets = new Map<number, Map<string, { dx: number; dy: number }>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
   private insertions = new Map<number, Map<string, TextInsertion>>();
   /** pageIndex -> stamp id -> image placed on the page, such as a signature. */
@@ -186,6 +189,7 @@ export class VellumDocument {
 
   hasEdits(): boolean {
     for (const m of this.edits.values()) if (m.size) return true;
+    for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
     return this.formValues.size > 0;
@@ -202,6 +206,7 @@ export class VellumDocument {
   editCount(): number {
     let n = 0;
     for (const m of this.edits.values()) n += m.size;
+    for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.insertions.values()) n += m.size;
     for (const m of this.stamps.values()) n += m.size;
     return n + this.formValues.size;
@@ -219,6 +224,7 @@ export class VellumDocument {
   private snapshot(): EditState {
     return {
       edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
+      lineOffsets: new Map([...this.lineOffsets].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
@@ -227,6 +233,7 @@ export class VellumDocument {
 
   private restore(state: EditState): void {
     this.edits = state.edits;
+    this.lineOffsets = state.lineOffsets;
     this.insertions = state.insertions;
     this.stamps = state.stamps;
     this.formValues = state.formValues;
@@ -264,6 +271,52 @@ export class VellumDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return created;
+  }
+
+  /** Moves an existing line of the document by a page-space delta. */
+  moveLine(pageIndex: number, lineId: string, dx: number, dy: number): boolean {
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return false;
+    const before = this.snapshot();
+    let page = this.lineOffsets.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.lineOffsets.set(pageIndex, page);
+    }
+    const existing = page.get(lineId) ?? { dx: 0, dy: 0 };
+    const next = { dx: existing.dx + dx, dy: existing.dy + dy };
+    // Dragged back to where it started means there is nothing to record.
+    if (Math.abs(next.dx) < 0.01 && Math.abs(next.dy) < 0.01) page.delete(lineId);
+    else page.set(lineId, next);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** How far a line has been dragged so far. */
+  offsetFor(pageIndex: number, lineId: string): { dx: number; dy: number } {
+    return this.lineOffsets.get(pageIndex)?.get(lineId) ?? { dx: 0, dy: 0 };
+  }
+
+  /** Moves added text by a page-space delta. */
+  moveInsertion(pageIndex: number, id: string, dx: number, dy: number): boolean {
+    const existing = this.insertions.get(pageIndex)?.get(id);
+    if (!existing || (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01)) return false;
+    const before = this.snapshot();
+    this.insertions.get(pageIndex)!.set(id, { ...existing, x: existing.x + dx, y: existing.y + dy });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** Moves a placed image by a page-space delta. */
+  moveStamp(pageIndex: number, id: string, dx: number, dy: number): boolean {
+    const existing = this.stamps.get(pageIndex)?.get(id);
+    if (!existing || (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01)) return false;
+    const before = this.snapshot();
+    this.stamps.get(pageIndex)!.set(id, { ...existing, x: existing.x + dx, y: existing.y + dy });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
   }
 
   /** Updates added text. Empty text removes it, which is how deleting works. */
@@ -367,14 +420,16 @@ export class VellumDocument {
 
     const touchedPages = new Set<number>([
       ...this.edits.keys(),
+      ...this.lineOffsets.keys(),
       ...this.insertions.keys(),
       ...this.stamps.keys(),
     ]);
     for (const pageIndex of touchedPages) {
       const pageEdits = this.edits.get(pageIndex) ?? new Map<string, string>();
+      const pageOffsets = this.lineOffsets.get(pageIndex) ?? new Map<string, { dx: number; dy: number }>();
       const pageInsertions = [...(this.insertions.get(pageIndex)?.values() ?? [])];
       const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
-      if (!pageEdits.size && !pageInsertions.length && !pageStamps.length) continue;
+      if (!pageEdits.size && !pageOffsets.size && !pageInsertions.length && !pageStamps.length) continue;
       try {
         if (pageIndex >= doc.getPageCount()) continue;
 
@@ -382,8 +437,21 @@ export class VellumDocument {
         const content = getPageContent(page);
         const walk = walkPage(content.bytes, content.resources);
         const lines = groupLines(walk.ops);
+        // A line may be retyped, moved, or both, so the two maps are merged and
+        // anything without a text change keeps the text it already had.
         const list: LineEdit[] = [];
-        for (const [lineId, newText] of pageEdits) list.push({ lineId, newText });
+        const byId = new Map(lines.map((l) => [l.id, l]));
+        for (const lineId of new Set([...pageEdits.keys(), ...pageOffsets.keys()])) {
+          const line = byId.get(lineId);
+          if (!line) continue;
+          const offset = pageOffsets.get(lineId);
+          list.push({
+            lineId,
+            newText: pageEdits.get(lineId) ?? line.text,
+            dx: offset?.dx ?? 0,
+            dy: offset?.dy ?? 0,
+          });
+        }
 
         const result = await applyEdits(
           doc,

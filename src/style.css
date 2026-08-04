@@ -966,3 +966,52 @@ body {
   font-size: 12px;
   cursor: pointer;
 }
+
+/* ---------- dragging placed objects ---------- */
+
+.line-box.line-added,
+.line-box.line-stamp {
+  cursor: grab;
+  touch-action: none;
+}
+
+.line-box.dragging {
+  cursor: grabbing;
+  opacity: 0.75;
+  z-index: 5;
+}
+
+/* Only offered on hover, so the boxes stay quiet until aimed at. */
+.box-remove {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  background: #d0453f;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  display: none;
+}
+
+.line-box:hover > .box-remove {
+  display: block;
+}
+
+/* A text line advertises that it can be dragged as well as edited. */
+.line-box {
+  touch-action: none;
+}
+
+.line-box:hover {
+  cursor: grab;
+}
+
+.line-box.line-locked:hover {
+  cursor: not-allowed;
+}

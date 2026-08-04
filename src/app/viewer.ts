@@ -300,8 +300,19 @@ export class Viewer {
       if (this.selectedLineId === line.id) box.classList.add('line-selected');
 
       const geo = this.lineGeometry(line, viewport);
-      box.style.left = `${geo.left}px`;
-      box.style.top = `${geo.top}px`;
+      // A dragged line is drawn where it now sits, not where the original file
+      // put it, so the box keeps following the text after a move.
+      const offset = this.doc.offsetFor(p.index, line.id);
+      const shift =
+        offset.dx || offset.dy
+          ? (() => {
+              const [ax, ay] = viewport.convertToViewportPoint(line.startX, line.startY);
+              const [bx, by] = viewport.convertToViewportPoint(line.startX + offset.dx, line.startY + offset.dy);
+              return { x: bx - ax, y: by - ay };
+            })()
+          : { x: 0, y: 0 };
+      box.style.left = `${geo.left + shift.x}px`;
+      box.style.top = `${geo.top + shift.y}px`;
       box.style.width = `${geo.width}px`;
       box.style.height = `${geo.height}px`;
       if (geo.angle) box.style.transform = `rotate(${geo.angle}deg)`;
@@ -310,13 +321,22 @@ export class Viewer {
         ? this.doc.textFor(p.index, line)
         : 'This text uses a font with no reliable character mapping, so it cannot be edited safely.';
 
-      box.addEventListener('mousedown', (e) => e.preventDefault());
-      box.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.select(line, p);
-        if (line.editable) this.openEditor(p, line, viewport);
-        else this.cb.onStatus('That text uses a font Vellum cannot map to characters, so editing it is disabled.', 'warn');
-      });
+      // Dragging repositions the line; a plain click still opens it for editing.
+      // The threshold inside makeDraggable is what keeps the two apart.
+      this.makeDraggable(
+        box,
+        viewport as never,
+        (dx, dy) => {
+          if (!this.doc || !line.editable) return;
+          if (!this.doc.moveLine(p.index, line.id, dx, dy)) return;
+          void this.rebuild().then(() => this.cb.onEdited());
+        },
+        () => {
+          this.select(line, p);
+          if (line.editable) this.openEditor(p, line, viewport);
+          else this.cb.onStatus('That text uses a font Vellum cannot map to characters, so editing it is disabled.', 'warn');
+        },
+      );
 
       p.overlay.appendChild(box);
     }
@@ -336,9 +356,15 @@ export class Viewer {
       box.style.top = `${sy}px`;
       box.style.width = `${stamp.width * this.zoom}px`;
       box.style.height = `${stamp.height * this.zoom}px`;
-      box.title = 'Placed signature. Click to remove it.';
-      box.addEventListener('mousedown', (e) => e.preventDefault());
-      box.addEventListener('click', (e) => {
+      box.title = 'Drag to move. Use the cross to remove it.';
+
+      const remove = document.createElement('button');
+      remove.className = 'box-remove';
+      remove.type = 'button';
+      remove.textContent = '\u00d7';
+      remove.title = 'Remove';
+      remove.addEventListener('pointerdown', (e) => e.stopPropagation());
+      remove.addEventListener('click', (e) => {
         e.stopPropagation();
         if (!this.doc) return;
         if (this.doc.removeStamp(p.index, stamp.id)) {
@@ -347,6 +373,13 @@ export class Viewer {
             this.cb.onEdited();
           });
         }
+      });
+      box.appendChild(remove);
+
+      this.makeDraggable(box, viewport as never, (dx, dy) => {
+        if (!this.doc) return;
+        if (!this.doc.moveStamp(p.index, stamp.id, dx, dy)) return;
+        void this.rebuild().then(() => this.cb.onEdited());
       });
       p.overlay.appendChild(box);
     }
@@ -364,14 +397,87 @@ export class Viewer {
       box.style.top = `${iy - size}px`;
       box.style.width = `${Math.max(size * 3, insertion.text.length * size * 0.5)}px`;
       box.style.height = `${size * 1.2 * lineCount}px`;
-      box.title = insertion.text;
-      box.addEventListener('mousedown', (e) => e.preventDefault());
-      box.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.openInsertionEditor(p, insertion, viewport);
-      });
+      box.title = `${insertion.text}\n\nDrag to move, click to edit.`;
+      this.makeDraggable(
+        box,
+        viewport as never,
+        (dx, dy) => {
+          if (!this.doc) return;
+          if (!this.doc.moveInsertion(p.index, insertion.id, dx, dy)) return;
+          void this.rebuild().then(() => this.cb.onEdited());
+        },
+        () => this.openInsertionEditor(p, insertion, viewport),
+      );
       p.overlay.appendChild(box);
     }
+  }
+
+  /**
+   * Makes a box draggable, reporting the move in page coordinates.
+   *
+   * The delta is measured by converting both endpoints through the viewport
+   * rather than dividing pixels by the zoom, so it stays correct on rotated
+   * pages. A small threshold separates a drag from a click, because these boxes
+   * are also click targets and a few stray pixels should not count as a move.
+   */
+  private makeDraggable(
+    box: HTMLElement,
+    viewport: { convertToPdfPoint(x: number, y: number): number[] },
+    onDrop: (dx: number, dy: number) => void,
+    onClick?: () => void,
+  ): void {
+    const THRESHOLD = 3;
+    let startX = 0;
+    let startY = 0;
+    let moved = false;
+    let dragging = false;
+
+    box.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      moved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      try {
+        box.setPointerCapture(e.pointerId);
+      } catch {
+        // Capture is optional; dragging still works without it.
+      }
+    });
+
+    box.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
+      moved = true;
+      box.classList.add('dragging');
+      box.style.transform = `translate(${dx}px, ${dy}px)`;
+    });
+
+    const finish = (e: PointerEvent): void => {
+      if (!dragging) return;
+      dragging = false;
+      box.classList.remove('dragging');
+      box.style.transform = '';
+      if (!moved) {
+        onClick?.();
+        return;
+      }
+      const rect = box.parentElement!.getBoundingClientRect();
+      const [x0, y0] = viewport.convertToPdfPoint(startX - rect.left, startY - rect.top);
+      const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
+      onDrop(x1 - x0, y1 - y0);
+    };
+
+    box.addEventListener('pointerup', finish);
+    box.addEventListener('pointercancel', () => {
+      dragging = false;
+      box.classList.remove('dragging');
+      box.style.transform = '';
+    });
   }
 
   /**

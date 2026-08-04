@@ -20,6 +20,9 @@ import { setPageContent } from './page';
 export interface LineEdit {
   lineId: string;
   newText: string;
+  /** Optional move, in page-space units. */
+  dx?: number;
+  dy?: number;
 }
 
 /**
@@ -419,12 +422,30 @@ async function buildLineFragment(
   resolver: FontResolver,
   resources: PDFDict | null,
   warn: (w: EditWarning) => void,
+  move: { dx: number; dy: number } = { dx: 0, dy: 0 },
 ): Promise<Uint8Array | null> {
   const first = line.ops[0];
   const chunks: Uint8Array[] = [];
   const th = first.horizScale / 100;
 
   let drawnAdvance = 0;
+
+  // A move is expressed in the text's own frame: distance along the writing
+  // direction, and distance perpendicular to it. Perpendicular movement uses
+  // text rise, which shifts the baseline without touching the line matrix, so
+  // every following line stays exactly where the producer put it.
+  const scaleAlong = Math.hypot(first.toPage[0], first.toPage[1]) || 1;
+  const scaleUp = Math.hypot(first.toPage[2], first.toPage[3]) || 1;
+  const alongText = (move.dx * first.dirX + move.dy * first.dirY) / scaleAlong;
+  const riseText = (-move.dx * first.dirY + move.dy * first.dirX) / scaleUp;
+
+  if (Math.abs(riseText) > 1e-6) {
+    chunks.push(bytes(`${fmt(first.rise + riseText)} Ts `));
+  }
+  if (Math.abs(alongText) > 1e-6 && first.fontSize !== 0) {
+    chunks.push(bytes(`[${fmt((-alongText * 1000) / (first.fontSize * th))}]TJ `));
+    drawnAdvance += alongText;
+  }
   let currentFontName = first.fontResourceName;
   let currentFontSize = first.fontSize;
   let currentFill = { ...first.fill };
@@ -504,6 +525,9 @@ async function buildLineFragment(
   }
 
   // Restore the state this operator found, so the rest of the stream is unaffected.
+  if (Math.abs(riseText) > 1e-6) {
+    chunks.push(bytes(`${fmt(first.rise)} Ts `));
+  }
   if (currentFontName !== first.fontResourceName || currentFontSize !== first.fontSize) {
     chunks.push(bytes(`/${first.fontResourceName} ${fmt(first.fontSize)} Tf `));
   }
@@ -639,7 +663,9 @@ export async function applyEdits(
   for (const edit of edits) {
     const line = byId.get(edit.lineId);
     if (!line) continue;
-    if (edit.newText === line.text) continue;
+    const move = { dx: edit.dx ?? 0, dy: edit.dy ?? 0 };
+    const moved = Math.abs(move.dx) > 1e-6 || Math.abs(move.dy) > 1e-6;
+    if (edit.newText === line.text && !moved) continue;
     if (!line.editable) {
       warn({
         lineId: line.id,
@@ -651,7 +677,7 @@ export async function applyEdits(
 
     const resources = walk.resources.get(line.streamId) ?? null;
     const segTexts = mapTextToSegments(line, edit.newText);
-    const fragment = await buildLineFragment(line, segTexts, resolver, resources, warn);
+    const fragment = await buildLineFragment(line, segTexts, resolver, resources, warn, move);
     if (!fragment) continue; // warned already; leave this line untouched
 
     const list = patchesByStream.get(line.streamId) ?? [];
@@ -665,7 +691,7 @@ export async function applyEdits(
     for (const overlay of line.overlays) {
       const overlayTexts = mapTextToSegments(overlay, edit.newText);
       const overlayResources = walk.resources.get(overlay.streamId) ?? null;
-      const overlayFragment = await buildLineFragment(overlay, overlayTexts, resolver, overlayResources, warn);
+      const overlayFragment = await buildLineFragment(overlay, overlayTexts, resolver, overlayResources, warn, move);
       if (!overlayFragment) continue;
       const overlayList = overlay.streamId === line.streamId ? list : (patchesByStream.get(overlay.streamId) ?? []);
       overlayList.push({ start: overlay.ops[0].start, end: overlay.ops[0].end, bytes: overlayFragment });

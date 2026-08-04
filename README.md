@@ -82,6 +82,18 @@ the resulting PDF. The canvas is never an approximation of the output; it is the
 output. Edits are stored as a list against the original bytes and replayed on
 every build, which keeps undo exact and saving reproducible.
 
+### Moving things
+
+Text already in the document can be dragged to a new place, as can text you
+added and any image you placed. A short threshold separates a drag from a click,
+so a line still opens for editing when you simply click it.
+
+Moving an existing line does not rewrite the line matrix, which would drag every
+following line along with it. The move is expressed as text rise for the
+perpendicular component and a positioning offset for the component along the
+line, both of which are local to that one run. A line lands exactly where it was
+dropped and nothing else on the page moves at all.
+
 ### Adding text
 
 Text can also be added where the page had none. It is written as real text with
