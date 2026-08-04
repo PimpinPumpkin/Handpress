@@ -77,6 +77,9 @@ and is revisited below.
   Values are written through the field itself rather than painted over the top,
   and appearance streams are regenerated so the result is not blank elsewhere.
 
+- Erase: drag over anything to cover it with the surrounding page colour. The
+  interface is explicit that this hides rather than deletes, because the
+  difference matters and the category routinely blurs it.
 - Find in document, with every hit highlighted, next and previous, and Cmd+F.
   Searches the text as it currently reads, so a word typed a moment ago is
   findable and one typed out is not.
@@ -100,11 +103,9 @@ and is revisited below.
 Ordered by how often an ordinary person hits the gap, weighted by how well it
 fits an engine that already understands content streams.
 
-1. **Erase**: cover a region with the page colour. What most people actually mean
-   when they say redact, and worth distinguishing from real redaction.
-2. **Highlight and note annotations**: the everyday markup people expect.
-3. **OCR** for scans, the paid tier's natural anchor.
-4. **Real redaction** that removes the underlying characters, for the
+1. **Highlight and note annotations**: the everyday markup people expect.
+2. **OCR** for scans, the paid tier's natural anchor.
+3. **Real redaction** that removes the underlying characters, for the
    professional tier.
 
 ### Next

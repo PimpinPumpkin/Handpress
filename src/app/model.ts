@@ -21,6 +21,7 @@ import {
   type ImageStamp,
   type ImageEdit,
   type LineEdit,
+  type RectFill,
   type TextInsertion,
 } from '../pdf/writer';
 import { decryptToBytes } from '../pdf/decrypt';
@@ -45,6 +46,7 @@ interface EditState {
   edits: Map<number, Map<string, string>>;
   lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
   imageEdits: Map<number, Map<string, ImageEdit>>;
+  erasures: Map<number, Map<string, RectFill>>;
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
   formValues: Map<string, string>;
@@ -106,6 +108,8 @@ export class VellumDocument {
   private extraDocs: Array<{ name: string; bytes: Uint8Array }> = [];
   /** pageIndex -> image id -> how that image has been moved, resized or removed. */
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
+  /** pageIndex -> erasure id -> a rectangle painted over the page. */
+  private erasures = new Map<number, Map<string, RectFill>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
   private insertions = new Map<number, Map<string, TextInsertion>>();
   /** pageIndex -> stamp id -> image placed on the page, such as a signature. */
@@ -125,6 +129,7 @@ export class VellumDocument {
   private redoStack: EditState[] = [];
   private nextInsertionId = 1;
   private nextStampId = 1;
+  private nextErasureId = 1;
 
   private pdfjsDoc: PDFDocumentProxy | null = null;
   private loadingTask: PDFDocumentLoadingTask | null = null;
@@ -241,6 +246,7 @@ export class VellumDocument {
     for (const m of this.edits.values()) if (m.size) return true;
     for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.imageEdits.values()) if (m.size) return true;
+    for (const m of this.erasures.values()) if (m.size) return true;
     if (this.hasPageChanges()) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
@@ -260,6 +266,7 @@ export class VellumDocument {
     for (const m of this.edits.values()) n += m.size;
     for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.imageEdits.values()) n += m.size;
+    for (const m of this.erasures.values()) n += m.size;
     // Page operations count as one change however many pages they touched,
     // since they are performed and undone as single actions.
     if (this.hasPageChanges()) n += 1;
@@ -282,6 +289,7 @@ export class VellumDocument {
       edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
       lineOffsets: new Map([...this.lineOffsets].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       imageEdits: new Map([...this.imageEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
+      erasures: new Map([...this.erasures].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
@@ -294,6 +302,7 @@ export class VellumDocument {
     this.edits = state.edits;
     this.lineOffsets = state.lineOffsets;
     this.imageEdits = state.imageEdits;
+    this.erasures = state.erasures;
     this.insertions = state.insertions;
     this.stamps = state.stamps;
     this.formValues = state.formValues;
@@ -526,6 +535,45 @@ export class VellumDocument {
     return this.lineOffsets.get(pageIndex)?.get(lineId) ?? { dx: 0, dy: 0 };
   }
 
+  /** Paints over a region of a page and returns the erasure. */
+  addErasure(pageIndex: number, rect: Omit<RectFill, 'id'>): RectFill {
+    const before = this.snapshot();
+    const created: RectFill = { ...rect, id: `erase${this.nextErasureId++}` };
+    let page = this.erasures.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.erasures.set(pageIndex, page);
+    }
+    page.set(created.id, created);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return created;
+  }
+
+  removeErasure(pageIndex: number, id: string): boolean {
+    const page = this.erasures.get(pageIndex);
+    if (!page?.has(id)) return false;
+    const before = this.snapshot();
+    page.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  moveErasure(pageIndex: number, id: string, dx: number, dy: number): boolean {
+    const existing = this.erasures.get(pageIndex)?.get(id);
+    if (!existing || (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01)) return false;
+    const before = this.snapshot();
+    this.erasures.get(pageIndex)!.set(id, { ...existing, x: existing.x + dx, y: existing.y + dy });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  erasuresFor(pageIndex: number): RectFill[] {
+    return [...(this.erasures.get(pageIndex)?.values() ?? [])];
+  }
+
   /** Moves added text by a page-space delta. */
   moveInsertion(pageIndex: number, id: string, dx: number, dy: number): boolean {
     const existing = this.insertions.get(pageIndex)?.get(id);
@@ -651,6 +699,7 @@ export class VellumDocument {
       ...this.edits.keys(),
       ...this.lineOffsets.keys(),
       ...this.imageEdits.keys(),
+      ...this.erasures.keys(),
       ...this.insertions.keys(),
       ...this.stamps.keys(),
     ]);
@@ -660,7 +709,15 @@ export class VellumDocument {
       const pageInsertions = [...(this.insertions.get(pageIndex)?.values() ?? [])];
       const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
       const pageImages = [...(this.imageEdits.get(pageIndex)?.values() ?? [])];
-      if (!pageEdits.size && !pageOffsets.size && !pageInsertions.length && !pageStamps.length && !pageImages.length) {
+      const pageErasures = [...(this.erasures.get(pageIndex)?.values() ?? [])];
+      if (
+        !pageEdits.size &&
+        !pageOffsets.size &&
+        !pageInsertions.length &&
+        !pageStamps.length &&
+        !pageImages.length &&
+        !pageErasures.length
+      ) {
         continue;
       }
       try {
@@ -697,6 +754,7 @@ export class VellumDocument {
           pageInsertions,
           pageStamps,
           pageImages,
+          pageErasures,
         );
         warnings.push(...result.warnings);
       } catch (e) {

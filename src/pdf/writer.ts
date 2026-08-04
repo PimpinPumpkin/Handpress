@@ -43,6 +43,23 @@ export interface ImageStamp {
   height: number;
 }
 
+/**
+ * A filled rectangle painted over the page.
+ *
+ * This covers content rather than deleting it. The characters underneath are
+ * still in the file and can still be selected and copied out, which is exactly
+ * why this is called erase and not redaction. Anything that must genuinely be
+ * gone has to remove the operators that drew it.
+ */
+export interface RectFill {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: { r: number; g: number; b: number };
+}
+
 /** New text placed on a page that had none there before. */
 export interface TextInsertion {
   id: string;
@@ -209,6 +226,15 @@ function addXObjectResource(resources: PDFDict, ref: PDFRef, preferred: string):
   while (dict.has(PDFName.of(name))) name = `${preferred}${++n}`;
   dict.set(PDFName.of(name), ref);
   return name;
+}
+
+/** Paints one rectangle, isolated so it cannot leak its colour into the page. */
+function buildRect(rect: RectFill): Uint8Array {
+  if (rect.width <= 0 || rect.height <= 0) return new Uint8Array(0);
+  return bytes(
+    `\nq ${fmt(rect.color.r)} ${fmt(rect.color.g)} ${fmt(rect.color.b)} rg ` +
+      `${fmt(rect.x)} ${fmt(rect.y)} ${fmt(rect.width)} ${fmt(rect.height)} re f Q\n`,
+  );
 }
 
 /**
@@ -692,6 +718,7 @@ export async function applyEdits(
   insertions: TextInsertion[] = [],
   stamps: ImageStamp[] = [],
   imageEdits: ImageEdit[] = [],
+  rects: RectFill[] = [],
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
@@ -764,11 +791,13 @@ export async function applyEdits(
   // Added text is drawn after everything else so it sits on top, and it is
   // built here so it lands in the same rewrite as any edits to the page.
   let addedTail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
-  if (insertions.length || stamps.length) {
+  if (insertions.length || stamps.length || rects.length) {
     const pageResources = walk.resources.get('page') ?? null;
     if (pageResources) {
       const built: Uint8Array[] = [];
-      // Images go down first so text placed afterwards is never hidden by one.
+      // Erasures go down first, then images, then text. That ordering is what
+      // lets somebody cover something up and then write over the top of it.
+      for (const rect of rects) built.push(buildRect(rect));
       const imageCache = new Map<string, string>();
       for (const stamp of stamps) {
         built.push(await buildStamp(stamp, doc, pageResources, imageCache, warn));

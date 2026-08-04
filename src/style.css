@@ -1149,3 +1149,26 @@ body {
   color: var(--ink-faint);
   text-align: center;
 }
+
+/* ---------- erase ---------- */
+
+.page-overlay.erasing {
+  cursor: crosshair;
+}
+
+.erase-preview {
+  position: absolute;
+  background: rgba(208, 69, 63, 0.22);
+  border: 1px solid rgba(208, 69, 63, 0.8);
+  pointer-events: none;
+}
+
+/* Invisible until aimed at, since the point of an erasure is not to be seen. */
+.line-box.erase-box {
+  border: 1px dashed transparent;
+}
+
+.line-box.erase-box:hover {
+  border-color: rgba(208, 69, 63, 0.75);
+  background: rgba(208, 69, 63, 0.1);
+}

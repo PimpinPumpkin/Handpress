@@ -82,6 +82,19 @@ the resulting PDF. The canvas is never an approximation of the output; it is the
 output. Edits are stored as a list against the original bytes and replayed on
 every build, which keeps undo exact and saving reproducible.
 
+### Erasing
+
+Drag over anything to cover it. The fill colour is sampled from a ring around
+the region rather than just above and below it, because a patch inside a tinted
+panel has white paper above it and panel colour beside it, and picking the wrong
+one leaves an obvious scar.
+
+**This hides text rather than deleting it.** The characters underneath are still
+in the file and can still be selected and copied out. That is why it is called
+erase and not redaction, and the interface says so every time you use it. Real
+redaction, which removes the operators that drew the text, is a separate job
+still to be done.
+
 ### Finding text
 
 Cmd+F, or the box in the toolbar. Every hit is highlighted at once, Enter and

@@ -14,12 +14,13 @@ import type { PageModel, VellumDocument } from './model';
 import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
 import type { ImageOp } from '../pdf/content';
+import type { RectFill } from '../pdf/writer';
 
 import type { SearchMatch } from './model';
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
 
-export type ViewerMode = 'edit' | 'add' | 'sign';
+export type ViewerMode = 'edit' | 'add' | 'sign' | 'erase';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -49,7 +50,10 @@ interface RenderedPage {
    * without rendering again. Pages differ in size and rotation, so this cannot
    * be shared between them.
    */
-  viewport: { convertToViewportPoint(x: number, y: number): number[] } | null;
+  viewport: {
+    convertToViewportPoint(x: number, y: number): number[];
+    convertToPdfPoint(x: number, y: number): number[];
+  } | null;
 }
 
 const measureCanvas = document.createElement('canvas');
@@ -67,30 +71,44 @@ function baselineOffset(cssFont: string, lineHeight: number): number {
 }
 
 /**
- * Estimates the page background immediately around a line, used to hide the
- * original text while its replacement is being typed.
+ * Estimates the page colour immediately around a region.
+ *
+ * Samples a ring on all four sides rather than only above and below. A patch
+ * inside a tinted panel has white paper above and below it but panel colour to
+ * left and right, and picking white there leaves an obvious scar. The most
+ * common colour around the whole perimeter is the one that blends.
  */
 function sampleBackground(canvas: HTMLCanvasElement, rect: DOMRect, dpr: number): string {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return '#ffffff';
-  const counts = new Map<string, number>();
-  const probeY = [rect.top - 3, rect.bottom + 3];
-  const probeX = [rect.left + 2, rect.left + rect.width / 2, rect.right - 2];
 
-  for (const y of probeY) {
-    for (const x of probeX) {
-      const px = Math.round(x * dpr);
-      const py = Math.round(y * dpr);
-      if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) continue;
-      try {
-        const d = ctx.getImageData(px, py, 1, 1).data;
-        const key = `${d[0]},${d[1]},${d[2]}`;
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      } catch {
-        return '#ffffff';
-      }
+  const counts = new Map<string, number>();
+  const gap = 3;
+  const points: Array<[number, number]> = [];
+
+  // Along the top and bottom edges.
+  for (let i = 0; i <= 6; i++) {
+    const x = rect.left + (rect.width * i) / 6;
+    points.push([x, rect.top - gap], [x, rect.bottom + gap]);
+  }
+  // Along the left and right edges, which is what a panel background needs.
+  for (let i = 0; i <= 6; i++) {
+    const y = rect.top + (rect.height * i) / 6;
+    points.push([rect.left - gap, y], [rect.right + gap, y]);
+  }
+
+  for (const [x, y] of points) {
+    const px = Math.round(x * dpr);
+    const py = Math.round(y * dpr);
+    if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) continue;
+    try {
+      const d = ctx.getImageData(px, py, 1, 1).data;
+      counts.set(`${d[0]},${d[1]},${d[2]}`, (counts.get(`${d[0]},${d[1]},${d[2]}`) ?? 0) + 1);
+    } catch {
+      return '#ffffff';
     }
   }
+
   let best = '255,255,255';
   let bestN = 0;
   for (const [k, n] of counts) {
@@ -145,7 +163,10 @@ export class Viewer {
   setMode(mode: ViewerMode): void {
     this.closeEditor(false);
     this.mode = mode;
-    for (const p of this.pages) p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign');
+    for (const p of this.pages) {
+      p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign');
+      p.overlay.classList.toggle('erasing', mode === 'erase');
+    }
   }
 
   async load(doc: VellumDocument): Promise<void> {
@@ -176,6 +197,12 @@ export class Viewer {
         if (e.target !== overlay) return; // a click on existing content is not a placement
         if (this.mode === 'add') void this.placeText(this.pages[i], e as MouseEvent);
         else if (this.mode === 'sign') void this.placeSignature(this.pages[i], e as MouseEvent);
+      });
+
+      // Erasing is a drag rather than a click, so it needs the pointer directly.
+      overlay.addEventListener('pointerdown', (e) => {
+        if (this.mode !== 'erase') return;
+        this.beginErase(this.pages[i], e);
       });
 
       container.append(canvas, overlay, label);
@@ -373,6 +400,10 @@ export class Viewer {
       this.addFieldControl(p, field, viewport);
     }
 
+    for (const erasure of this.doc.erasuresFor(p.index)) {
+      this.addErasureBox(p, erasure, viewport);
+    }
+
     // Placed images are not text, so they need their own hit target to be
     // removable; there is nothing in the line model that corresponds to them.
     for (const stamp of this.doc.stampsFor(p.index)) {
@@ -437,6 +468,118 @@ export class Viewer {
       );
       p.overlay.appendChild(box);
     }
+  }
+
+  /**
+   * Drags out a rectangle and paints over whatever is under it.
+   *
+   * The fill colour is sampled from the page just outside the region, so a patch
+   * on tinted or coloured paper disappears instead of leaving a white scar. It
+   * covers rather than deletes, which the interface says plainly.
+   */
+  private beginErase(p: RenderedPage, down: PointerEvent): void {
+    if (!this.doc || !p.viewport) return;
+    down.preventDefault();
+
+    const rect = p.overlay.getBoundingClientRect();
+    const startX = down.clientX - rect.left;
+    const startY = down.clientY - rect.top;
+
+    const preview = document.createElement('div');
+    preview.className = 'erase-preview';
+    p.overlay.appendChild(preview);
+
+    const draw = (x: number, y: number): { left: number; top: number; width: number; height: number } => {
+      const left = Math.min(startX, x);
+      const top = Math.min(startY, y);
+      const width = Math.abs(x - startX);
+      const height = Math.abs(y - startY);
+      preview.style.left = `${left}px`;
+      preview.style.top = `${top}px`;
+      preview.style.width = `${width}px`;
+      preview.style.height = `${height}px`;
+      return { left, top, width, height };
+    };
+    let box = draw(startX, startY);
+
+    const move = (e: PointerEvent): void => {
+      box = draw(e.clientX - rect.left, e.clientY - rect.top);
+    };
+    const up = async (e: PointerEvent): Promise<void> => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up as (ev: PointerEvent) => void);
+      box = draw(e.clientX - rect.left, e.clientY - rect.top);
+      const colour = sampleBackground(
+        p.canvas,
+        new DOMRect(box.left, box.top, box.width, box.height),
+        p.canvas.width / Math.max(1, parseFloat(p.canvas.style.width)),
+      );
+      preview.remove();
+
+      // A stray click is not an erasure.
+      if (box.width < 4 || box.height < 4 || !this.doc || !p.viewport) return;
+
+      const [x0, y0] = p.viewport.convertToPdfPoint(box.left, box.top);
+      const [x1, y1] = p.viewport.convertToPdfPoint(box.left + box.width, box.top + box.height);
+      const match = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(colour);
+      const rgb = match
+        ? { r: Number(match[1]) / 255, g: Number(match[2]) / 255, b: Number(match[3]) / 255 }
+        : { r: 1, g: 1, b: 1 };
+
+      this.doc.addErasure(p.index, {
+        x: Math.min(x0, x1),
+        y: Math.min(y0, y1),
+        width: Math.abs(x1 - x0),
+        height: Math.abs(y1 - y0),
+        color: rgb,
+      });
+      await this.rebuild();
+      this.cb.onStatus('Erased. The text underneath is covered, not removed.');
+      this.cb.onEdited();
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up as (ev: PointerEvent) => void);
+  }
+
+  /** Shows an erasure so it can be moved or taken back. */
+  private addErasureBox(
+    p: RenderedPage,
+    erasure: RectFill,
+    viewport: { convertToViewportPoint(x: number, y: number): number[] },
+  ): void {
+    const [ax, ay] = viewport.convertToViewportPoint(erasure.x, erasure.y + erasure.height);
+    const [bx, by] = viewport.convertToViewportPoint(erasure.x + erasure.width, erasure.y);
+
+    const box = document.createElement('div');
+    box.className = 'line-box erase-box';
+    box.style.left = `${Math.min(ax, bx)}px`;
+    box.style.top = `${Math.min(ay, by)}px`;
+    box.style.width = `${Math.abs(bx - ax)}px`;
+    box.style.height = `${Math.abs(by - ay)}px`;
+    box.title = 'Erased area. Drag to move, cross to undo it.';
+
+    const remove = document.createElement('button');
+    remove.className = 'box-remove';
+    remove.type = 'button';
+    remove.textContent = '\u00d7';
+    remove.title = 'Undo this erasure';
+    remove.addEventListener('pointerdown', (e) => e.stopPropagation());
+    remove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!this.doc?.removeErasure(p.index, erasure.id)) return;
+      void this.rebuild().then(() => {
+        this.cb.onStatus('Erasure removed.');
+        this.cb.onEdited();
+      });
+    });
+    box.appendChild(remove);
+
+    this.makeDraggable(box, viewport as never, (dx, dy) => {
+      if (!this.doc?.moveErasure(p.index, erasure.id, dx, dy)) return;
+      void this.rebuild().then(() => this.cb.onEdited());
+    });
+    p.overlay.appendChild(box);
   }
 
   /** Replaces the highlighted search hits and repaints the overlays. */
