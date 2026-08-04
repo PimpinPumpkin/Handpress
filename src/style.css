@@ -1015,3 +1015,34 @@ body {
 .line-box.line-locked:hover {
   cursor: not-allowed;
 }
+
+/* ---------- images already in the document ---------- */
+
+.line-box.image-box {
+  border: 1px dashed rgba(140, 150, 165, 0.55);
+  cursor: grab;
+}
+
+.line-box.image-box:hover {
+  background: rgba(61, 139, 253, 0.1);
+  border-color: var(--accent);
+  border-style: solid;
+}
+
+.box-resize {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid #fff;
+  background: var(--accent);
+  cursor: nwse-resize;
+  display: none;
+  touch-action: none;
+}
+
+.line-box:hover > .box-resize {
+  display: block;
+}

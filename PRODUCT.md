@@ -77,6 +77,9 @@ and is revisited below.
   Values are written through the field itself rather than painted over the top,
   and appearance streams are regenerated so the result is not blank elsewhere.
 
+- Images already in the document can be dragged, resized from a corner handle,
+  and removed. Placement is entirely the transformation matrix, so the wanted
+  page-space shift is carried back through the inverse of that matrix.
 - Dragging to reposition. Existing lines of text, added text and placed images
   can all be dragged. An existing line moves by text rise and a positioning
   offset rather than by rewriting the line matrix, so every following line stays
@@ -84,9 +87,21 @@ and is revisited below.
 
 ### Now
 
-- Dragging images that were already in the document. Needs the walker to record
-  image draws, which it does not yet do.
-- OCR for scanned documents.
+Ordered by how often an ordinary person hits the gap, weighted by how well it
+fits an engine that already understands content streams.
+
+1. **Page operations**: rotate, delete, reorder, extract, insert blank. Probably
+   the most common thing anyone does to a PDF after reading it, and cheap for us.
+2. **Combining files**: open several and append, or split one apart. "Merge PDF"
+   is one of the highest intent search phrases in the category.
+3. **Find text**: we already have every line with its position, so this is mostly
+   interface work.
+4. **Erase**: cover a region with the page colour. What most people actually mean
+   when they say redact, and worth distinguishing from real redaction.
+5. **Highlight and note annotations**: the everyday markup people expect.
+6. **OCR** for scans, the paid tier's natural anchor.
+7. **Real redaction** that removes the underlying characters, for the
+   professional tier.
 
 ### Next
 

@@ -84,8 +84,9 @@ every build, which keeps undo exact and saving reproducible.
 
 ### Moving things
 
-Text already in the document can be dragged to a new place, as can text you
-added and any image you placed. A short threshold separates a drag from a click,
+Text and images already in the document can be dragged to a new place, as can
+text you added and any signature you placed. Images can also be resized from a
+corner handle or removed outright. A short threshold separates a drag from a click,
 so a line still opens for editing when you simply click it.
 
 Moving an existing line does not rewrite the line matrix, which would drag every
@@ -93,6 +94,12 @@ following line along with it. The move is expressed as text rise for the
 perpendicular component and a positioning offset for the component along the
 line, both of which are local to that one run. A line lands exactly where it was
 dropped and nothing else on the page moves at all.
+
+An image is placed entirely by its transformation matrix, so moving one means
+composing a translation into that matrix. The shift wanted is in page space
+while a matrix inserted there applies in the space the matrix maps from, so it
+is carried back through the inverse of the matrix's linear part. Skipping that
+step sends images on rotated or scaled pages off in the wrong direction.
 
 ### Adding text
 

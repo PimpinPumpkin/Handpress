@@ -14,7 +14,7 @@
 import { PDFDict, PDFDocument, PDFFont, PDFName, PDFPage, PDFRef, StandardFonts } from 'pdf-lib';
 import { encodeLiteralString } from './lexer';
 import { coverageSpans, encodeText, missingChars, standardFontAlias, type EncodedPart, type LoadedFont } from './fonts';
-import type { ShowOp, TextLine, TextSegment, WalkResult } from './content';
+import type { ImageOp, ShowOp, TextLine, TextSegment, WalkResult } from './content';
 import { setPageContent } from './page';
 
 export interface LineEdit {
@@ -54,6 +54,18 @@ export interface TextInsertion {
   text: string;
   bold: boolean;
   italic: boolean;
+}
+
+/** A move or resize applied to an image already in the document. */
+export interface ImageEdit {
+  imageId: string;
+  /** Move in page-space units. */
+  dx: number;
+  dy: number;
+  /** Scale about the image's own lower-left corner. 1 leaves the size alone. */
+  scale: number;
+  /** True to remove the image from the page entirely. */
+  remove?: boolean;
 }
 
 /** Describes the typeface a substitution needs. */
@@ -617,6 +629,35 @@ async function buildInsertion(
   return drew ? concatBytes(chunks) : new Uint8Array(0);
 }
 
+/**
+ * Rewrites an image's draw so it lands somewhere else, or at a different size.
+ *
+ * The placement of an image is entirely its transformation matrix, so the draw
+ * is wrapped in its own q/Q with an extra matrix in front. The wanted shift is
+ * in page space, but a matrix inserted here applies in the space the current
+ * matrix maps from, so it is carried back through the inverse of that matrix's
+ * linear part. Without that step an image on a rotated or scaled page moves in
+ * the wrong direction and by the wrong distance.
+ */
+function buildImageEdit(image: ImageOp, edit: ImageEdit): Uint8Array {
+  if (edit.remove) return new Uint8Array(0);
+
+  const [a, b, c, d] = image.ctm;
+  const det = a * d - b * c;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-9) {
+    // A degenerate matrix cannot be inverted; leaving the draw alone is safest.
+    return bytes(`/${image.name} Do`);
+  }
+
+  const ux = (d * edit.dx - c * edit.dy) / det;
+  const uy = (-b * edit.dx + a * edit.dy) / det;
+  const s = edit.scale > 0 ? edit.scale : 1;
+
+  // Scaling happens about the image's own origin, then the translation is
+  // applied, so a resize grows from the corner the user is not dragging.
+  return bytes(`q ${fmt(s)} 0 0 ${fmt(s)} ${fmt(ux)} ${fmt(uy)} cm /${image.name} Do Q`);
+}
+
 function applyPatches(source: Uint8Array, patches: Patch[]): Uint8Array {
   const sorted = [...patches].sort((a, b) => a.start - b.start);
   const out: Uint8Array[] = [];
@@ -650,6 +691,7 @@ export async function applyEdits(
   fontProvider: FontProvider | null = null,
   insertions: TextInsertion[] = [],
   stamps: ImageStamp[] = [],
+  imageEdits: ImageEdit[] = [],
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
@@ -703,6 +745,20 @@ export async function applyEdits(
 
     patchesByStream.set(line.streamId, list);
     editedLines++;
+  }
+
+  // Images already on the page are repositioned in place, by rewriting the
+  // single operator that draws each one.
+  if (imageEdits.length) {
+    const byId = new Map(walk.images.map((im) => [`${im.streamId}:${im.index}`, im]));
+    for (const edit of imageEdits) {
+      const image = byId.get(edit.imageId);
+      if (!image) continue;
+      const list = patchesByStream.get(image.streamId) ?? [];
+      list.push({ start: image.start, end: image.end, bytes: buildImageEdit(image, edit) });
+      patchesByStream.set(image.streamId, list);
+      editedLines++;
+    }
   }
 
   // Added text is drawn after everything else so it sits on top, and it is

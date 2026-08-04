@@ -19,6 +19,7 @@ import {
   type EditWarning,
   type FontProvider,
   type ImageStamp,
+  type ImageEdit,
   type LineEdit,
   type TextInsertion,
 } from '../pdf/writer';
@@ -43,6 +44,7 @@ export interface PageModel {
 interface EditState {
   edits: Map<number, Map<string, string>>;
   lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
+  imageEdits: Map<number, Map<string, ImageEdit>>;
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
   formValues: Map<string, string>;
@@ -67,6 +69,8 @@ export class VellumDocument {
   private edits = new Map<number, Map<string, string>>();
   /** pageIndex -> lineId -> how far that line has been dragged, in page units. */
   private lineOffsets = new Map<number, Map<string, { dx: number; dy: number }>>();
+  /** pageIndex -> image id -> how that image has been moved, resized or removed. */
+  private imageEdits = new Map<number, Map<string, ImageEdit>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
   private insertions = new Map<number, Map<string, TextInsertion>>();
   /** pageIndex -> stamp id -> image placed on the page, such as a signature. */
@@ -190,6 +194,7 @@ export class VellumDocument {
   hasEdits(): boolean {
     for (const m of this.edits.values()) if (m.size) return true;
     for (const m of this.lineOffsets.values()) if (m.size) return true;
+    for (const m of this.imageEdits.values()) if (m.size) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
     return this.formValues.size > 0;
@@ -207,6 +212,7 @@ export class VellumDocument {
     let n = 0;
     for (const m of this.edits.values()) n += m.size;
     for (const m of this.lineOffsets.values()) n += m.size;
+    for (const m of this.imageEdits.values()) n += m.size;
     for (const m of this.insertions.values()) n += m.size;
     for (const m of this.stamps.values()) n += m.size;
     return n + this.formValues.size;
@@ -225,6 +231,7 @@ export class VellumDocument {
     return {
       edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
       lineOffsets: new Map([...this.lineOffsets].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
+      imageEdits: new Map([...this.imageEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
@@ -234,6 +241,7 @@ export class VellumDocument {
   private restore(state: EditState): void {
     this.edits = state.edits;
     this.lineOffsets = state.lineOffsets;
+    this.imageEdits = state.imageEdits;
     this.insertions = state.insertions;
     this.stamps = state.stamps;
     this.formValues = state.formValues;
@@ -271,6 +279,45 @@ export class VellumDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return created;
+  }
+
+  /** Current move, scale and removal state for an image already on the page. */
+  imageEditFor(pageIndex: number, imageId: string): ImageEdit {
+    return (
+      this.imageEdits.get(pageIndex)?.get(imageId) ?? { imageId, dx: 0, dy: 0, scale: 1, remove: false }
+    );
+  }
+
+  /** Applies a change to an image already in the document. */
+  editImage(pageIndex: number, imageId: string, change: Partial<Omit<ImageEdit, 'imageId'>>): boolean {
+    const current = this.imageEditFor(pageIndex, imageId);
+    const next: ImageEdit = {
+      imageId,
+      dx: current.dx + (change.dx ?? 0),
+      dy: current.dy + (change.dy ?? 0),
+      scale: change.scale !== undefined ? current.scale * change.scale : current.scale,
+      remove: change.remove ?? current.remove,
+    };
+    const unchanged =
+      Math.abs(next.dx - current.dx) < 0.01 &&
+      Math.abs(next.dy - current.dy) < 0.01 &&
+      Math.abs(next.scale - current.scale) < 0.001 &&
+      next.remove === current.remove;
+    if (unchanged) return false;
+
+    const before = this.snapshot();
+    let page = this.imageEdits.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.imageEdits.set(pageIndex, page);
+    }
+    // Back to exactly as it was found means there is nothing to record.
+    const isIdentity = Math.abs(next.dx) < 0.01 && Math.abs(next.dy) < 0.01 && Math.abs(next.scale - 1) < 0.001 && !next.remove;
+    if (isIdentity) page.delete(imageId);
+    else page.set(imageId, next);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
   }
 
   /** Moves an existing line of the document by a page-space delta. */
@@ -421,6 +468,7 @@ export class VellumDocument {
     const touchedPages = new Set<number>([
       ...this.edits.keys(),
       ...this.lineOffsets.keys(),
+      ...this.imageEdits.keys(),
       ...this.insertions.keys(),
       ...this.stamps.keys(),
     ]);
@@ -429,7 +477,10 @@ export class VellumDocument {
       const pageOffsets = this.lineOffsets.get(pageIndex) ?? new Map<string, { dx: number; dy: number }>();
       const pageInsertions = [...(this.insertions.get(pageIndex)?.values() ?? [])];
       const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
-      if (!pageEdits.size && !pageOffsets.size && !pageInsertions.length && !pageStamps.length) continue;
+      const pageImages = [...(this.imageEdits.get(pageIndex)?.values() ?? [])];
+      if (!pageEdits.size && !pageOffsets.size && !pageInsertions.length && !pageStamps.length && !pageImages.length) {
+        continue;
+      }
       try {
         if (pageIndex >= doc.getPageCount()) continue;
 
@@ -463,6 +514,7 @@ export class VellumDocument {
           this.fontProvider,
           pageInsertions,
           pageStamps,
+          pageImages,
         );
         warnings.push(...result.warnings);
       } catch (e) {
@@ -534,7 +586,7 @@ export class VellumDocument {
           height: viewport?.height ?? 792,
           rotation: 0,
           lines: [],
-          walk: { ops: [], streams: new Map(), fonts: new Map(), resources: new Map() },
+          walk: { ops: [], images: [], streams: new Map(), fonts: new Map(), resources: new Map() },
           contentBytes: new Uint8Array(0),
           cssFonts: new Map(),
         };

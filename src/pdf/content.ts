@@ -124,8 +124,31 @@ function cmykToRgb(c: number, m: number, y: number, k: number): RGB {
   return { r: (1 - c) * (1 - k), g: (1 - m) * (1 - k), b: (1 - y) * (1 - k) };
 }
 
+/**
+ * One image drawn on the page.
+ *
+ * An image XObject is always painted into the unit square and positioned purely
+ * by the transformation matrix in effect, so the matrix is the placement and
+ * changing it is how the image moves or resizes.
+ */
+export interface ImageOp {
+  streamId: string;
+  index: number;
+  /** Byte range covering the name operand and the Do operator. */
+  start: number;
+  end: number;
+  name: string;
+  ctm: Matrix;
+  /** Axis-aligned bounds in page space, PDF coordinates. */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface WalkResult {
   ops: ShowOp[];
+  images: ImageOp[];
   /** Decoded bytes of every stream visited, keyed by streamId. */
   streams: Map<string, { bytes: Uint8Array; stream: PDFStream; ref: PDFRef | null }>;
   fonts: Map<string, LoadedFont>;
@@ -135,7 +158,7 @@ export interface WalkResult {
 
 /** Replays a page's content streams and collects every show-text operator. */
 export function walkPage(contentBytes: Uint8Array, resources: PDFDict | null, streamId = 'page'): WalkResult {
-  const result: WalkResult = { ops: [], streams: new Map(), fonts: new Map(), resources: new Map() };
+  const result: WalkResult = { ops: [], images: [], streams: new Map(), fonts: new Map(), resources: new Map() };
   const counter = { n: 0 };
   result.resources.set(streamId, resources);
   walkStream(contentBytes, resources, streamId, result, counter, IDENTITY, 0, new Set());
@@ -435,7 +458,31 @@ function walkStream(
             const xo = xobjs.lookup(PDFName.of(nameTok.name!));
             if (xo instanceof PDFStream) {
               const sub = xo.dict.lookup(PDFName.of('Subtype'));
-              const isForm = sub instanceof PDFName && sub.asString().replace(/^\//, '') === 'Form';
+              const subName = sub instanceof PDFName ? sub.asString().replace(/^\//, '') : '';
+              const isForm = subName === 'Form';
+
+              if (subName === 'Image') {
+                // The unit square carries the image, so its corners under the
+                // current matrix are exactly where it lands on the page.
+                const corners = [
+                  applyMatrix(gs.ctm, 0, 0),
+                  applyMatrix(gs.ctm, 1, 0),
+                  applyMatrix(gs.ctm, 1, 1),
+                  applyMatrix(gs.ctm, 0, 1),
+                ];
+                out.images.push({
+                  streamId,
+                  index: counter.n++,
+                  start: operandStart >= 0 ? operandStart : t.start,
+                  end: t.end,
+                  name: nameTok.name!,
+                  ctm: [...gs.ctm] as Matrix,
+                  x0: Math.min(...corners.map((c) => c[0])),
+                  x1: Math.max(...corners.map((c) => c[0])),
+                  y0: Math.min(...corners.map((c) => c[1])),
+                  y1: Math.max(...corners.map((c) => c[1])),
+                });
+              }
               const childId = `${streamId}>${nameTok.name}`;
               if (isForm && !visited.has(childId)) {
                 visited.add(childId);

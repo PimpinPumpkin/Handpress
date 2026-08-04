@@ -13,6 +13,7 @@
 import type { PageModel, VellumDocument } from './model';
 import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
+import type { ImageOp } from '../pdf/content';
 
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
@@ -341,6 +342,11 @@ export class Viewer {
       p.overlay.appendChild(box);
     }
 
+    // Images sit at the bottom of the overlay so text and fields stay clickable.
+    for (const image of p.model.walk.images) {
+      this.addImageBox(p, image, viewport);
+    }
+
     // Interactive fields come first so their controls sit under nothing else.
     for (const field of this.doc.fieldsFor(p.index)) {
       this.addFieldControl(p, field, viewport);
@@ -410,6 +416,96 @@ export class Viewer {
       );
       p.overlay.appendChild(box);
     }
+  }
+
+  /**
+   * Offers an image already in the document as something you can move, resize
+   * or remove, with a handle in the corner for resizing.
+   */
+  private addImageBox(
+    p: RenderedPage,
+    image: ImageOp,
+    viewport: { convertToViewportPoint(x: number, y: number): number[] },
+  ): void {
+    if (!this.doc) return;
+    const id = `${image.streamId}:${image.index}`;
+    const state = this.doc.imageEditFor(p.index, id);
+    if (state.remove) return;
+
+    // Very small marks are usually rules or bullets, not something to drag.
+    if (image.x1 - image.x0 < 6 || image.y1 - image.y0 < 6) return;
+
+    const scale = state.scale;
+    const x0 = image.x0 + state.dx;
+    const y0 = image.y0 + state.dy;
+    const [ax, ay] = viewport.convertToViewportPoint(x0, y0 + (image.y1 - image.y0) * scale);
+    const [bx, by] = viewport.convertToViewportPoint(x0 + (image.x1 - image.x0) * scale, y0);
+
+    const box = document.createElement('div');
+    box.className = 'line-box image-box';
+    box.style.left = `${Math.min(ax, bx)}px`;
+    box.style.top = `${Math.min(ay, by)}px`;
+    box.style.width = `${Math.abs(bx - ax)}px`;
+    box.style.height = `${Math.abs(by - ay)}px`;
+    box.title = 'Image. Drag to move, corner to resize, cross to remove.';
+
+    const remove = document.createElement('button');
+    remove.className = 'box-remove';
+    remove.type = 'button';
+    remove.textContent = '\u00d7';
+    remove.title = 'Remove this image';
+    remove.addEventListener('pointerdown', (e) => e.stopPropagation());
+    remove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!this.doc?.editImage(p.index, id, { remove: true })) return;
+      void this.rebuild().then(() => {
+        this.cb.onStatus('Image removed.');
+        this.cb.onEdited();
+      });
+    });
+    box.appendChild(remove);
+
+    // The handle scales about the corner being dragged away from, so the image
+    // grows in the direction of the drag rather than jumping.
+    const handle = document.createElement('div');
+    handle.className = 'box-resize';
+    handle.title = 'Resize';
+    const widthPx = Math.abs(bx - ax) || 1;
+    let startX = 0;
+    let resizing = false;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      resizing = true;
+      startX = e.clientX;
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch {
+        // Capture is optional.
+      }
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!resizing) return;
+      const factor = Math.max(0.15, (widthPx + (e.clientX - startX)) / widthPx);
+      box.style.width = `${widthPx * factor}px`;
+      box.style.height = `${Math.abs(by - ay) * factor}px`;
+    });
+    handle.addEventListener('pointerup', (e) => {
+      if (!resizing) return;
+      resizing = false;
+      const factor = Math.max(0.15, (widthPx + (e.clientX - startX)) / widthPx);
+      if (Math.abs(factor - 1) < 0.01) return;
+      if (!this.doc?.editImage(p.index, id, { scale: factor })) return;
+      void this.rebuild().then(() => this.cb.onEdited());
+    });
+    box.appendChild(handle);
+
+    this.makeDraggable(box, viewport as never, (dx, dy) => {
+      if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
+      void this.rebuild().then(() => this.cb.onEdited());
+    });
+
+    p.overlay.appendChild(box);
   }
 
   /**
