@@ -77,6 +77,10 @@ and is revisited below.
   Values are written through the field itself rather than painted over the top,
   and appearance streams are regenerated so the result is not blank elsewhere.
 
+- Real redaction: drag over text and the characters are deleted from the saved
+  file, leaving a gap of the same width so nothing either side moves, with a
+  black bar painted over the region. Proven by re-reading the saved bytes and
+  confirming the text can no longer be extracted.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
@@ -105,8 +109,7 @@ fits an engine that already understands content streams.
 
 1. **Highlight and note annotations**: the everyday markup people expect.
 2. **OCR** for scans, the paid tier's natural anchor.
-3. **Real redaction** that removes the underlying characters, for the
-   professional tier.
+(Real redaction is done.)
 
 ### Next
 

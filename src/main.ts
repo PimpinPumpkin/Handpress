@@ -30,6 +30,7 @@ const els = {
   addColor: $<HTMLInputElement>('addColor'),
   btnSign: $<HTMLButtonElement>('btnSign'),
   btnErase: $<HTMLButtonElement>('btnErase'),
+  btnRedact: $<HTMLButtonElement>('btnRedact'),
   btnAddPages: $<HTMLButtonElement>('btnAddPages'),
   searchInput: $<HTMLInputElement>('searchInput'),
   searchCount: $('searchCount'),
@@ -301,17 +302,19 @@ function syncEditState(): void {
 
 /* ---------------- editing mode ---------------- */
 
-function setMode(mode: 'edit' | 'add' | 'sign' | 'erase'): void {
+function setMode(mode: 'edit' | 'add' | 'sign' | 'erase' | 'redact'): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
   els.btnModeAdd.classList.toggle('tool-active', mode === 'add');
   els.btnSign.classList.toggle('tool-active', mode === 'sign');
   els.btnErase.classList.toggle('tool-active', mode === 'erase');
+  els.btnRedact.classList.toggle('tool-active', mode === 'redact');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
     erase: 'Drag over anything to cover it. This hides the text; it does not delete it.',
+    redact: 'Drag over text to delete it from the saved file. This is not reversible once saved.',
   };
   setStatus(messages[mode]);
 }
@@ -322,6 +325,14 @@ els.btnErase.addEventListener('click', () => {
     return;
   }
   setMode('erase');
+});
+
+els.btnRedact.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  setMode('redact');
 });
 
 els.btnModeEdit.addEventListener('click', () => setMode('edit'));

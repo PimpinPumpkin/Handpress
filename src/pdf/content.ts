@@ -606,6 +606,66 @@ export interface TextLine {
   overlays: TextLine[];
 }
 
+/**
+ * Position of a character along the line's writing direction, in page units.
+ *
+ * Interpolates within whichever styled run the character falls in rather than
+ * across the line as a whole, because a line mixing a bold label with body text
+ * is not evenly spaced.
+ */
+export function charPosition(line: TextLine, charIndex: number): number {
+  for (const seg of line.segments) {
+    if (charIndex <= seg.start) return seg.u0;
+    if (charIndex <= seg.end) {
+      const span = Math.max(1, seg.end - seg.start);
+      return seg.u0 + ((seg.u1 - seg.u0) * (charIndex - seg.start)) / span;
+    }
+  }
+  const last = line.segments[line.segments.length - 1];
+  return last ? last.u1 : 0;
+}
+
+/**
+ * Character ranges of a line that fall inside a page-space rectangle.
+ *
+ * A character counts as inside when its midpoint is, which is what a person
+ * means when they drag a box over some words: partly clipped letters at the
+ * edges go with whichever side most of the glyph sits on.
+ */
+export function charsInRect(
+  line: TextLine,
+  rect: { x: number; y: number; width: number; height: number },
+): Array<[number, number]> {
+  // The line must actually cross the band vertically before any of it counts.
+  const midV = line.baselineY + ((line.font.ascent / 1000) * line.fontSize) / 2;
+  if (midV < rect.y || midV > rect.y + rect.height) return [];
+
+  const ranges: Array<[number, number]> = [];
+  let runStart = -1;
+  const total = [...line.text].length;
+
+  const perpX = -line.dirY;
+  const perpY = line.dirX;
+  // The line's own perpendicular coordinate, recovered from its start point.
+  const vBase = -line.startX * line.dirY + line.startY * line.dirX;
+
+  for (let i = 0; i < total; i++) {
+    const mid = (charPosition(line, i) + charPosition(line, i + 1)) / 2;
+    // A point in the line's frame, mapped back to page coordinates.
+    const x = mid * line.dirX + vBase * perpX;
+    const y = mid * line.dirY + vBase * perpY;
+
+    const inside = x >= rect.x && x <= rect.x + rect.width && y >= rect.y - 1 && y <= rect.y + rect.height + 1;
+    if (inside && runStart < 0) runStart = i;
+    else if (!inside && runStart >= 0) {
+      ranges.push([runStart, i]);
+      runStart = -1;
+    }
+  }
+  if (runStart >= 0) ranges.push([runStart, total]);
+  return ranges;
+}
+
 export function groupLines(ops: ShowOp[]): TextLine[] {
   // Whitespace-only operators are kept: a space is frequently drawn by its own
   // operator, and discarding it silently welds the words either side together.

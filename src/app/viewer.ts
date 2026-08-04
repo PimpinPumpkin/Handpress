@@ -20,7 +20,7 @@ import type { SearchMatch } from './model';
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
 
-export type ViewerMode = 'edit' | 'add' | 'sign' | 'erase';
+export type ViewerMode = 'edit' | 'add' | 'sign' | 'erase' | 'redact';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -165,7 +165,7 @@ export class Viewer {
     this.mode = mode;
     for (const p of this.pages) {
       p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign');
-      p.overlay.classList.toggle('erasing', mode === 'erase');
+      p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact');
     }
   }
 
@@ -201,8 +201,8 @@ export class Viewer {
 
       // Erasing is a drag rather than a click, so it needs the pointer directly.
       overlay.addEventListener('pointerdown', (e) => {
-        if (this.mode !== 'erase') return;
-        this.beginErase(this.pages[i], e);
+        if (this.mode !== 'erase' && this.mode !== 'redact') return;
+        this.beginRegion(this.pages[i], e, this.mode);
       });
 
       container.append(canvas, overlay, label);
@@ -404,6 +404,34 @@ export class Viewer {
       this.addErasureBox(p, erasure, viewport);
     }
 
+    for (const area of this.doc.redactionsFor(p.index)) {
+      const [ax, ay] = viewport.convertToViewportPoint(area.x, area.y + area.height);
+      const [bx, by] = viewport.convertToViewportPoint(area.x + area.width, area.y);
+      const box = document.createElement('div');
+      box.className = 'line-box redact-box';
+      box.style.left = `${Math.min(ax, bx)}px`;
+      box.style.top = `${Math.min(ay, by)}px`;
+      box.style.width = `${Math.abs(bx - ax)}px`;
+      box.style.height = `${Math.abs(by - ay)}px`;
+      box.title = 'Redacted. The text here is deleted from the saved file.';
+      const remove = document.createElement('button');
+      remove.className = 'box-remove';
+      remove.type = 'button';
+      remove.textContent = '\u00d7';
+      remove.title = 'Undo this redaction';
+      remove.addEventListener('pointerdown', (e) => e.stopPropagation());
+      remove.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!this.doc?.removeRedaction(p.index, area.id)) return;
+        void this.rebuild().then(() => {
+          this.cb.onStatus('Redaction removed.');
+          this.cb.onEdited();
+        });
+      });
+      box.appendChild(remove);
+      p.overlay.appendChild(box);
+    }
+
     // Placed images are not text, so they need their own hit target to be
     // removable; there is nothing in the line model that corresponds to them.
     for (const stamp of this.doc.stampsFor(p.index)) {
@@ -477,7 +505,7 @@ export class Viewer {
    * on tinted or coloured paper disappears instead of leaving a white scar. It
    * covers rather than deletes, which the interface says plainly.
    */
-  private beginErase(p: RenderedPage, down: PointerEvent): void {
+  private beginRegion(p: RenderedPage, down: PointerEvent, kind: 'erase' | 'redact'): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();
 
@@ -486,7 +514,7 @@ export class Viewer {
     const startY = down.clientY - rect.top;
 
     const preview = document.createElement('div');
-    preview.className = 'erase-preview';
+    preview.className = kind === 'redact' ? 'erase-preview redact-preview' : 'erase-preview';
     p.overlay.appendChild(preview);
 
     const draw = (x: number, y: number): { left: number; top: number; width: number; height: number } => {
@@ -521,18 +549,32 @@ export class Viewer {
 
       const [x0, y0] = p.viewport.convertToPdfPoint(box.left, box.top);
       const [x1, y1] = p.viewport.convertToPdfPoint(box.left + box.width, box.top + box.height);
+      const area = {
+        x: Math.min(x0, x1),
+        y: Math.min(y0, y1),
+        width: Math.abs(x1 - x0),
+        height: Math.abs(y1 - y0),
+      };
+
+      if (kind === 'redact') {
+        this.doc.addRedaction(p.index, area);
+        const removed = this.doc.countRedactedChars(p.index);
+        await this.rebuild();
+        this.cb.onStatus(
+          removed
+            ? `Redacted. ${removed} character${removed === 1 ? '' : 's'} deleted from the file, not just covered.`
+            : 'Redaction area added, though no text falls inside it.',
+        );
+        this.cb.onEdited();
+        return;
+      }
+
       const match = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(colour);
       const rgb = match
         ? { r: Number(match[1]) / 255, g: Number(match[2]) / 255, b: Number(match[3]) / 255 }
         : { r: 1, g: 1, b: 1 };
 
-      this.doc.addErasure(p.index, {
-        x: Math.min(x0, x1),
-        y: Math.min(y0, y1),
-        width: Math.abs(x1 - x0),
-        height: Math.abs(y1 - y0),
-        color: rgb,
-      });
+      this.doc.addErasure(p.index, { ...area, color: rgb });
       await this.rebuild();
       this.cb.onStatus('Erased. The text underneath is covered, not removed.');
       this.cb.onEdited();

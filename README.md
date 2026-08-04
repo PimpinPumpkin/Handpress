@@ -82,6 +82,16 @@ the resulting PDF. The canvas is never an approximation of the output; it is the
 output. Edits are stored as a list against the original bytes and replayed on
 every build, which keeps undo exact and saving reproducible.
 
+### Redacting
+
+Drag over text and those characters are removed from the file, with a black bar
+painted over the region. The gap they leave is the same width as the text was,
+so the words either side of a deleted name stay exactly where they were.
+
+This is the real thing, not a rectangle. The test for it saves the file, reads
+the bytes back and asserts the removed text can no longer be extracted, which is
+the property that actually matters and the one the category most often fails.
+
 ### Erasing
 
 Drag over anything to cover it. The fill colour is sampled from a ring around

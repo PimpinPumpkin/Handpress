@@ -13,7 +13,7 @@ import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
-import { groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
+import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
 import {
   applyEdits,
   type EditWarning,
@@ -47,6 +47,7 @@ interface EditState {
   lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
   imageEdits: Map<number, Map<string, ImageEdit>>;
   erasures: Map<number, Map<string, RectFill>>;
+  redactions: Map<number, Map<string, RedactionArea>>;
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
   formValues: Map<string, string>;
@@ -72,6 +73,15 @@ export interface PagePlanEntry {
   source: number;
   /** Extra rotation in degrees, added to whatever the page already had. */
   rotate: number;
+}
+
+/** A region whose text is removed from the file, not merely covered. */
+export interface RedactionArea {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface SearchMatch {
@@ -110,6 +120,8 @@ export class VellumDocument {
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
   /** pageIndex -> erasure id -> a rectangle painted over the page. */
   private erasures = new Map<number, Map<string, RectFill>>();
+  /** pageIndex -> redaction id -> a region whose text is deleted. */
+  private redactions = new Map<number, Map<string, RedactionArea>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
   private insertions = new Map<number, Map<string, TextInsertion>>();
   /** pageIndex -> stamp id -> image placed on the page, such as a signature. */
@@ -130,6 +142,7 @@ export class VellumDocument {
   private nextInsertionId = 1;
   private nextStampId = 1;
   private nextErasureId = 1;
+  private nextRedactionId = 1;
 
   private pdfjsDoc: PDFDocumentProxy | null = null;
   private loadingTask: PDFDocumentLoadingTask | null = null;
@@ -247,6 +260,7 @@ export class VellumDocument {
     for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.imageEdits.values()) if (m.size) return true;
     for (const m of this.erasures.values()) if (m.size) return true;
+    for (const m of this.redactions.values()) if (m.size) return true;
     if (this.hasPageChanges()) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
@@ -267,6 +281,7 @@ export class VellumDocument {
     for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.imageEdits.values()) n += m.size;
     for (const m of this.erasures.values()) n += m.size;
+    for (const m of this.redactions.values()) n += m.size;
     // Page operations count as one change however many pages they touched,
     // since they are performed and undone as single actions.
     if (this.hasPageChanges()) n += 1;
@@ -290,6 +305,7 @@ export class VellumDocument {
       lineOffsets: new Map([...this.lineOffsets].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       imageEdits: new Map([...this.imageEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       erasures: new Map([...this.erasures].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
+      redactions: new Map([...this.redactions].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
@@ -303,6 +319,7 @@ export class VellumDocument {
     this.lineOffsets = state.lineOffsets;
     this.imageEdits = state.imageEdits;
     this.erasures = state.erasures;
+    this.redactions = state.redactions;
     this.insertions = state.insertions;
     this.stamps = state.stamps;
     this.formValues = state.formValues;
@@ -535,6 +552,49 @@ export class VellumDocument {
     return this.lineOffsets.get(pageIndex)?.get(lineId) ?? { dx: 0, dy: 0 };
   }
 
+  /** Marks a region for redaction, which deletes its text on save. */
+  addRedaction(pageIndex: number, rect: Omit<RedactionArea, 'id'>): RedactionArea {
+    const before = this.snapshot();
+    const created: RedactionArea = { ...rect, id: `redact${this.nextRedactionId++}` };
+    let page = this.redactions.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.redactions.set(pageIndex, page);
+    }
+    page.set(created.id, created);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return created;
+  }
+
+  removeRedaction(pageIndex: number, id: string): boolean {
+    const page = this.redactions.get(pageIndex);
+    if (!page?.has(id)) return false;
+    const before = this.snapshot();
+    page.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  redactionsFor(pageIndex: number): RedactionArea[] {
+    return [...(this.redactions.get(pageIndex)?.values() ?? [])];
+  }
+
+  /** How many characters a pending redaction would delete, for the interface. */
+  countRedactedChars(pageIndex: number): number {
+    const areas = this.redactions.get(pageIndex);
+    const model = this.lineCache.get(pageIndex);
+    if (!areas?.size || !model) return 0;
+    let n = 0;
+    for (const line of model.lines) {
+      for (const area of areas.values()) {
+        for (const [a, b] of charsInRect(line, area)) n += b - a;
+      }
+    }
+    return n;
+  }
+
   /** Paints over a region of a page and returns the erasure. */
   addErasure(pageIndex: number, rect: Omit<RectFill, 'id'>): RectFill {
     const before = this.snapshot();
@@ -700,6 +760,7 @@ export class VellumDocument {
       ...this.lineOffsets.keys(),
       ...this.imageEdits.keys(),
       ...this.erasures.keys(),
+      ...this.redactions.keys(),
       ...this.insertions.keys(),
       ...this.stamps.keys(),
     ]);
@@ -710,13 +771,15 @@ export class VellumDocument {
       const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
       const pageImages = [...(this.imageEdits.get(pageIndex)?.values() ?? [])];
       const pageErasures = [...(this.erasures.get(pageIndex)?.values() ?? [])];
+      const pageRedactions = [...(this.redactions.get(pageIndex)?.values() ?? [])];
       if (
         !pageEdits.size &&
         !pageOffsets.size &&
         !pageInsertions.length &&
         !pageStamps.length &&
         !pageImages.length &&
-        !pageErasures.length
+        !pageErasures.length &&
+        !pageRedactions.length
       ) {
         continue;
       }
@@ -729,9 +792,20 @@ export class VellumDocument {
         const lines = groupLines(walk.ops);
         // A line may be retyped, moved, or both, so the two maps are merged and
         // anything without a text change keeps the text it already had.
+        // Which characters each redaction covers is worked out here, against the
+        // same line model the edit ids refer to.
+        const redactRanges = new Map<string, Array<[number, number]>>();
+        for (const area of pageRedactions) {
+          for (const line of lines) {
+            const ranges = charsInRect(line, area);
+            if (!ranges.length) continue;
+            redactRanges.set(line.id, [...(redactRanges.get(line.id) ?? []), ...ranges]);
+          }
+        }
+
         const list: LineEdit[] = [];
         const byId = new Map(lines.map((l) => [l.id, l]));
-        for (const lineId of new Set([...pageEdits.keys(), ...pageOffsets.keys()])) {
+        for (const lineId of new Set([...pageEdits.keys(), ...pageOffsets.keys(), ...redactRanges.keys()])) {
           const line = byId.get(lineId);
           if (!line) continue;
           const offset = pageOffsets.get(lineId);
@@ -740,6 +814,20 @@ export class VellumDocument {
             newText: pageEdits.get(lineId) ?? line.text,
             dx: offset?.dx ?? 0,
             dy: offset?.dy ?? 0,
+            redact: redactRanges.get(lineId),
+          });
+        }
+
+        // A black bar is painted over each redacted region as well, so the
+        // result reads as redacted rather than as text that went missing.
+        for (const area of pageRedactions) {
+          pageErasures.push({
+            id: `redact-bar-${area.id}`,
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+            color: { r: 0, g: 0, b: 0 },
           });
         }
 

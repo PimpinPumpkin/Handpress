@@ -1172,3 +1172,20 @@ body {
   border-color: rgba(208, 69, 63, 0.75);
   background: rgba(208, 69, 63, 0.1);
 }
+
+/* ---------- redaction ---------- */
+
+.erase-preview.redact-preview {
+  background: rgba(0, 0, 0, 0.55);
+  border-color: #000;
+}
+
+/* Deliberately conspicuous: a redaction is a destructive change. */
+.line-box.redact-box {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  outline: 1px dashed rgba(208, 69, 63, 0.9);
+}
+
+.line-box.redact-box:hover {
+  outline-color: #ff6b6b;
+}

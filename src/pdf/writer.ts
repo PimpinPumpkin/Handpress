@@ -23,6 +23,13 @@ export interface LineEdit {
   /** Optional move, in page-space units. */
   dx?: number;
   dy?: number;
+  /**
+   * Character ranges to remove outright, for redaction.
+   *
+   * Unlike an ordinary text change these leave a gap of the same width, so the
+   * words either side of a removed name stay exactly where they were.
+   */
+  redact?: Array<[number, number]>;
 }
 
 /**
@@ -461,6 +468,7 @@ async function buildLineFragment(
   resources: PDFDict | null,
   warn: (w: EditWarning) => void,
   move: { dx: number; dy: number } = { dx: 0, dy: 0 },
+  redact: Array<[number, number]> = [],
 ): Promise<Uint8Array | null> {
   const first = line.ops[0];
   const chunks: Uint8Array[] = [];
@@ -512,9 +520,42 @@ async function buildLineFragment(
     const segOp = seg.ops[0];
     const sizeForSeg = segOp.fontSize;
 
+    // Redacted characters are dropped but their width is kept as a positioning
+    // offset, so removing a name does not slide the rest of the line leftwards.
+    const pieces: Array<{ text: string; gap: boolean }> = [];
+    if (redact.length) {
+      const chars = [...text];
+      let cursor = 0;
+      const local = redact
+        .map(([a, b]) => [a - seg.start, b - seg.start] as [number, number])
+        .filter(([a, b]) => b > 0 && a < chars.length)
+        .map(([a, b]) => [Math.max(0, a), Math.min(chars.length, b)] as [number, number])
+        .sort((x, y) => x[0] - y[0]);
+      for (const [a, b] of local) {
+        if (a > cursor) pieces.push({ text: chars.slice(cursor, a).join(''), gap: false });
+        pieces.push({ text: chars.slice(a, b).join(''), gap: true });
+        cursor = b;
+      }
+      if (cursor < chars.length) pieces.push({ text: chars.slice(cursor).join(''), gap: false });
+    } else {
+      pieces.push({ text, gap: false });
+    }
+
+    for (const piece of pieces) {
+      if (!piece.text) continue;
+
+      if (piece.gap) {
+        // Measured with the segment's own font so the gap matches what was there.
+        const measured = resolver.own(seg.font).encode(piece.text, spaceWidthFor(seg));
+        const emWidth = measured ? measured.width : piece.text.length * 500;
+        chunks.push(bytes(`[${fmt(-emWidth)}]TJ `));
+        drawnAdvance += (emWidth / 1000) * currentFontSize * th;
+        continue;
+      }
+
     // Only the characters the document's own font cannot draw are substituted,
     // so a single unusual character never restyles the text around it.
-    for (const span of coverageSpans(seg.font, text)) {
+    for (const span of coverageSpans(seg.font, piece.text)) {
       let out: OutFont = resolver.own(seg.font);
       let encoded = span.covered ? out.encode(span.text, spaceWidthFor(seg)) : null;
 
@@ -559,6 +600,7 @@ async function buildLineFragment(
         (encoded.width / 1000) * currentFontSize * th +
         spacingAdvance(encoded.glyphs ?? 0, segOp.charSpacing, segOp.horizScale);
       wroteAnything = true;
+      }
     }
   }
 
@@ -734,7 +776,8 @@ export async function applyEdits(
     if (!line) continue;
     const move = { dx: edit.dx ?? 0, dy: edit.dy ?? 0 };
     const moved = Math.abs(move.dx) > 1e-6 || Math.abs(move.dy) > 1e-6;
-    if (edit.newText === line.text && !moved) continue;
+    const redacted = (edit.redact?.length ?? 0) > 0;
+    if (edit.newText === line.text && !moved && !redacted) continue;
     if (!line.editable) {
       warn({
         lineId: line.id,
@@ -746,7 +789,7 @@ export async function applyEdits(
 
     const resources = walk.resources.get(line.streamId) ?? null;
     const segTexts = mapTextToSegments(line, edit.newText);
-    const fragment = await buildLineFragment(line, segTexts, resolver, resources, warn, move);
+    const fragment = await buildLineFragment(line, segTexts, resolver, resources, warn, move, edit.redact ?? []);
     if (!fragment) continue; // warned already; leave this line untouched
 
     const list = patchesByStream.get(line.streamId) ?? [];
