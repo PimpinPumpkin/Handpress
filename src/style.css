@@ -701,9 +701,23 @@ body {
   background: rgba(0, 0, 0, 0.16);
 }
 
+/* A narrow window keeps both side panels out of the way by default, but asking
+   for one has to still work, so an explicit request beats the width rule. */
 @media (max-width: 1100px) {
   .workspace {
     grid-template-columns: 0 minmax(0, 1fr) 0;
+  }
+
+  .workspace.show-sidebar {
+    grid-template-columns: 190px minmax(0, 1fr) 0;
+  }
+
+  .workspace.show-panel {
+    grid-template-columns: 0 minmax(0, 1fr) 250px;
+  }
+
+  .workspace.show-sidebar.show-panel {
+    grid-template-columns: 190px minmax(0, 1fr) 250px;
   }
 }
 

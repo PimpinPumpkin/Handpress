@@ -512,7 +512,11 @@ async function buildLineFragment(
   redact: Array<[number, number]> = [],
 ): Promise<Uint8Array | null> {
   const first = line.ops[0];
-  const chunks: Uint8Array[] = [];
+  // A leading space, because the operator before this one may end in a keyword
+  // rather than a delimiter. `Td` followed straight by `-22.25` lexes as one
+  // token named `Td-22.25`, which silently loses both the positioning and the
+  // move: a dragged line then landed at the end of the previous line instead.
+  const chunks: Uint8Array[] = [bytes(' ')];
   const th = first.horizScale / 100;
 
   let drawnAdvance = 0;

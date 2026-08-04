@@ -118,6 +118,25 @@ loop with `requestAnimationFrame`. That is ordinary browser behaviour, but it
 looks exactly like a hang when driving the app from a script, so front the tab
 before concluding anything is stuck.
 
+## Operators must be separated, not just concatenated
+
+A replacement fragment is spliced in where a show operator was, and the bytes
+before it are whatever the producer wrote. `Td` followed immediately by a number
+lexes as one token called `Td-22.25`, because `-` is a regular character and does
+not end a keyword. That silently swallowed both the positioning and the move, and
+a dragged line landed at the end of the line above it. `buildLineFragment` now
+starts with a space. Documents whose previous operator ended in `)` or `]` were
+unaffected, which is why the single page sample never showed it.
+
+## Known reading quirk: neighbouring runs can merge after an edit
+
+Two runs whose baselines differ by less than a point are one line as far as
+`groupLines` is concerned once the horizontal gap between them closes. Making a
+line longer can therefore pull the run beside it into the same line on the next
+read. `tools/test-multi.ts` reports this on `sample-multi.pdf`, where the title
+and the ISSN sit 0.9pt apart. The file itself is correct: the ISSN run is still
+drawn at exactly its original x. Do not chase it as a writer bug.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, recognition across a
   whole document rather than a page at a time.

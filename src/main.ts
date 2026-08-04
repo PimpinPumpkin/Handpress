@@ -151,7 +151,10 @@ async function openFile(file: File): Promise<void> {
 
     await viewer.load(doc);
     await applyZoomChoice();
-    await renderThumbs();
+    // Thumbnails fill in behind the document rather than holding it up. On a
+    // long file they take far longer than the first page does, and waiting for
+    // them made opening look stuck when the document was already usable.
+    void renderThumbs();
     syncEditState();
 
 
@@ -246,8 +249,23 @@ els.btnSave.addEventListener('click', async () => {
 
 /* ---------------- undo / redo ---------------- */
 
+/**
+ * Undo and redo pop state instantly but rebuilding the file takes real work, so
+ * a held Cmd+Z would otherwise queue one full rebuild per repeated keystroke and
+ * leave the window minutes behind the user. Only the newest state is worth
+ * rebuilding: a run in flight is allowed to finish, anything that arrives while
+ * it runs collapses into a single rebuild afterwards.
+ */
+let historyRunning = false;
+let historyPending = false;
+
 async function applyHistory(changed: boolean): Promise<void> {
   if (!changed || !doc) return;
+  if (historyRunning) {
+    historyPending = true;
+    return;
+  }
+  historyRunning = true;
   setBusy(true, 'Updating…');
   try {
     const pagesBefore = doc.pageCount;
@@ -264,7 +282,14 @@ async function applyHistory(changed: boolean): Promise<void> {
     syncEditState();
 
   } finally {
+    historyRunning = false;
     setBusy(false);
+  }
+
+  if (historyPending) {
+    historyPending = false;
+    // The state has already moved on; this rebuild catches the file up to it.
+    await applyHistory(true);
   }
 }
 
@@ -533,14 +558,28 @@ function nearestZoom(target: number): string {
 
 /* ---------------- panels ---------------- */
 
-els.btnSidebar.addEventListener('click', () => {
-  els.workspace.classList.toggle('no-sidebar');
-  els.btnSidebar.classList.toggle('tool-active');
-});
-els.btnPanel.addEventListener('click', () => {
-  els.workspace.classList.toggle('no-panel');
-  els.btnPanel.classList.toggle('tool-active');
-});
+/**
+ * A narrow window hides both panels from the stylesheet, so whether one is on
+ * screen cannot be read from a class alone. It is measured instead, and the
+ * result is written both ways: `no-` hides it at a comfortable width, `show-`
+ * is what lets it be asked for when the window is too narrow to hold it.
+ */
+function togglePanel(button: HTMLButtonElement, panel: HTMLElement, hide: string, show: string): void {
+  const visible = panel.getBoundingClientRect().width > 2;
+  els.workspace.classList.toggle(hide, visible);
+  els.workspace.classList.toggle(show, !visible);
+  button.classList.toggle('tool-active', visible);
+  // Opening or closing a panel changes how much room the page has, and fit
+  // width means nothing if it is not measured against the room it now has.
+  void applyZoomChoice();
+}
+
+els.btnSidebar.addEventListener('click', () =>
+  togglePanel(els.btnSidebar, els.thumbs.parentElement as HTMLElement, 'no-sidebar', 'show-sidebar'),
+);
+els.btnPanel.addEventListener('click', () =>
+  togglePanel(els.btnPanel, els.panelBody.parentElement as HTMLElement, 'no-panel', 'show-panel'),
+);
 
 /* ---------------- page navigation ---------------- */
 
@@ -638,19 +677,23 @@ async function renderThumbs(): Promise<void> {
     els.thumbs.appendChild(wrap);
   }
 
-  // Thumbnails render one at a time so they never contend with the main view.
+  // Thumbnails go through the viewer's own render queue rather than calling
+  // pdf.js directly. They draw the same pages the main view is drawing, and
+  // pdf.js will not render one page twice at once: rendering a thumbnail of a
+  // page the viewer was already drawing never returned, which left the whole
+  // open stuck behind it.
   for (let i = 0; i < doc.pageCount; i++) {
     if (token !== thumbToken) return;
     try {
       const page = await doc.pdfjs.getPage(i + 1);
       const base = page.getViewport({ scale: 1 });
-      const vp = page.getViewport({ scale: 150 / base.width });
       const canvas = els.thumbs.children[i]?.querySelector('canvas');
       if (!canvas) continue;
-      canvas.width = Math.floor(vp.width);
-      canvas.height = Math.floor(vp.height);
-      const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
+      const image = await viewer.rasterise(i, 150 / base.width);
+      if (token !== thumbToken) return;
+      canvas.width = image.width;
+      canvas.height = image.height;
+      canvas.getContext('2d')!.drawImage(image, 0, 0);
     } catch {
       // A thumbnail that will not render is not worth failing the session over.
     }
