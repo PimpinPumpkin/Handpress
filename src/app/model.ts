@@ -8,7 +8,7 @@
  * alone.
  */
 
-import { degrees, PDFDocument } from 'pdf-lib';
+import { degrees, PDFDocument, type PDFPage } from 'pdf-lib';
 import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -50,6 +50,7 @@ interface EditState {
   formValues: Map<string, string>;
   /** Page order and rotation, as a list of operations against the original. */
   pagePlan: PagePlanEntry[];
+  extraDocs: Array<{ name: string; bytes: Uint8Array }>;
 }
 
 /**
@@ -60,7 +61,12 @@ interface EditState {
  * its entry; reordering moves entries; rotating changes one field.
  */
 export interface PagePlanEntry {
-  /** Index of the page in the original document. */
+  /**
+   * Which loaded file the page comes from. Zero is the document that was
+   * opened; anything higher indexes a file merged in afterwards.
+   */
+  doc: number;
+  /** Index of the page within that file. */
   source: number;
   /** Extra rotation in degrees, added to whatever the page already had. */
   rotate: number;
@@ -87,6 +93,8 @@ export class VellumDocument {
   private lineOffsets = new Map<number, Map<string, { dx: number; dy: number }>>();
   /** The output's page list. Empty until a page operation is performed. */
   private pagePlan: PagePlanEntry[] | null = null;
+  /** Files merged in after opening, in the order they were added. */
+  private extraDocs: Array<{ name: string; bytes: Uint8Array }> = [];
   /** pageIndex -> image id -> how that image has been moved, resized or removed. */
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
@@ -261,6 +269,7 @@ export class VellumDocument {
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
       pagePlan: (this.pagePlan ?? []).map((e) => ({ ...e })),
+      extraDocs: [...this.extraDocs],
     };
   }
 
@@ -272,6 +281,7 @@ export class VellumDocument {
     this.stamps = state.stamps;
     this.formValues = state.formValues;
     this.pagePlan = state.pagePlan.length ? state.pagePlan : null;
+    this.extraDocs = state.extraDocs;
   }
 
   /** Records an edit. Returns false when the text is unchanged. */
@@ -312,7 +322,7 @@ export class VellumDocument {
 
   private plan(): PagePlanEntry[] {
     if (!this.pagePlan) {
-      this.pagePlan = Array.from({ length: this.originalPageCount }, (_, i) => ({ source: i, rotate: 0 }));
+      this.pagePlan = Array.from({ length: this.originalPageCount }, (_, i) => ({ doc: 0, source: i, rotate: 0 }));
     }
     return this.pagePlan;
   }
@@ -325,7 +335,48 @@ export class VellumDocument {
   hasPageChanges(): boolean {
     if (!this.pagePlan) return false;
     if (this.pagePlan.length !== this.originalPageCount) return true;
-    return this.pagePlan.some((e, i) => e.source !== i || e.rotate !== 0);
+    return this.pagePlan.some((e, i) => e.doc !== 0 || e.source !== i || e.rotate !== 0);
+  }
+
+  /**
+   * Appends every page of another file, keeping this document's edits intact.
+   * Returns how many pages were added.
+   */
+  async mergeFile(name: string, bytes: Uint8Array): Promise<number> {
+    const { bytes: plain } = await decryptToBytes(bytes);
+    const incoming = await PDFDocument.load(plain, { throwOnInvalidObject: false, updateMetadata: false });
+    const count = incoming.getPageCount();
+    if (!count) return 0;
+
+    const before = this.snapshot();
+    const plan = this.plan();
+    const docIndex = this.extraDocs.length + 1;
+    this.extraDocs.push({ name, bytes: plain });
+    for (let i = 0; i < count; i++) plan.push({ doc: docIndex, source: i, rotate: 0 });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return count;
+  }
+
+  /** Names of the files merged in so far. */
+  mergedNames(): string[] {
+    return this.extraDocs.map((d) => d.name);
+  }
+
+  /**
+   * Builds a new document containing only the given output positions, with
+   * every edit applied. Used to split a file without disturbing this one.
+   */
+  async extractPages(positions: number[]): Promise<Uint8Array> {
+    const { bytes } = await this.build();
+    const full = await PDFDocument.load(bytes, { throwOnInvalidObject: false, updateMetadata: false });
+    const wanted = positions.filter((i) => i >= 0 && i < full.getPageCount());
+    if (!wanted.length) throw new Error('no pages in that range');
+
+    const out = await PDFDocument.create();
+    const copied = await out.copyPages(full, wanted);
+    for (const page of copied) out.addPage(page);
+    return out.save({ useObjectStreams: false });
   }
 
   /** Turns a page by a quarter turn, positive being clockwise. */
@@ -613,9 +664,28 @@ export class VellumDocument {
     if (this.pagePlan) {
       try {
         const originals = doc.getPages();
+
+        // Pages from merged files are copied in first, since copying has to
+        // happen while the destination still has its own page tree intact.
+        const copiedByDoc = new Map<number, Map<number, PDFPage>>();
+        for (let d = 1; d <= this.extraDocs.length; d++) {
+          const wanted = [...new Set(this.pagePlan.filter((e) => e.doc === d).map((e) => e.source))];
+          if (!wanted.length) continue;
+          const source = await PDFDocument.load(this.extraDocs[d - 1].bytes, {
+            throwOnInvalidObject: false,
+            updateMetadata: false,
+          });
+          const valid = wanted.filter((i) => i < source.getPageCount());
+          const pages = await doc.copyPages(source, valid);
+          copiedByDoc.set(d, new Map(valid.map((srcIndex, k) => [srcIndex, pages[k]])));
+        }
+
         const chosen = this.pagePlan
-          .map((entry) => ({ page: originals[entry.source], rotate: entry.rotate }))
-          .filter((x) => x.page);
+          .map((entry) => ({
+            page: entry.doc === 0 ? originals[entry.source] : copiedByDoc.get(entry.doc)?.get(entry.source),
+            rotate: entry.rotate,
+          }))
+          .filter((x): x is { page: PDFPage; rotate: number } => !!x.page);
 
         if (chosen.length) {
           for (let i = doc.getPageCount() - 1; i >= 0; i--) doc.removePage(i);

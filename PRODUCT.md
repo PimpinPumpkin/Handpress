@@ -77,6 +77,10 @@ and is revisited below.
   Values are written through the field itself rather than painted over the top,
   and appearance streams are regenerated so the result is not blank elsewhere.
 
+- Combining and splitting. Add pages appends other files, and Extract saves a
+  page range as a new PDF without touching the open document. A merged page is
+  just a plan entry naming a different source file, so it reorders, rotates and
+  undoes like any other page.
 - Page operations: rotate, delete and reorder from the thumbnail rail. Held as a
   plan against the original rather than applied eagerly, so they compose with
   content edits and undo like everything else.
@@ -93,15 +97,13 @@ and is revisited below.
 Ordered by how often an ordinary person hits the gap, weighted by how well it
 fits an engine that already understands content streams.
 
-1. **Combining files**: open several and append, or split one apart. "Merge PDF"
-   is one of the highest intent search phrases in the category.
-2. **Find text**: we already have every line with its position, so this is mostly
+1. **Find text**: we already have every line with its position, so this is mostly
    interface work.
-3. **Erase**: cover a region with the page colour. What most people actually mean
+2. **Erase**: cover a region with the page colour. What most people actually mean
    when they say redact, and worth distinguishing from real redaction.
-4. **Highlight and note annotations**: the everyday markup people expect.
-5. **OCR** for scans, the paid tier's natural anchor.
-6. **Real redaction** that removes the underlying characters, for the
+3. **Highlight and note annotations**: the everyday markup people expect.
+4. **OCR** for scans, the paid tier's natural anchor.
+5. **Real redaction** that removes the underlying characters, for the
    professional tier.
 
 ### Next

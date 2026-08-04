@@ -1090,3 +1090,19 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.range-input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--chrome-line);
+  background: var(--chrome-1);
+  color: var(--ink);
+  font: inherit;
+}
+
+.range-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}

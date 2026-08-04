@@ -85,7 +85,12 @@ every build, which keeps undo exact and saving reproducible.
 ### Page operations
 
 Pages can be rotated, deleted and reordered from the thumbnail rail, by dragging
-one thumbnail onto another.
+one thumbnail onto another. **Add pages** appends the pages of other PDFs, and
+**Extract** saves a range such as `1-3, 7, 10-` as a new file while leaving the
+open document untouched.
+
+A merged page is simply a plan entry naming a different source file, so pages
+that arrived from elsewhere reorder, rotate and undo exactly like the rest.
 
 These are held as a plan against the original document rather than applied as
 they are made. That matters because every other edit is addressed by a page's

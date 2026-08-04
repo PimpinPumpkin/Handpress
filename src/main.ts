@@ -29,6 +29,14 @@ const els = {
   addSize: $<HTMLSelectElement>('addSize'),
   addColor: $<HTMLInputElement>('addColor'),
   btnSign: $<HTMLButtonElement>('btnSign'),
+  btnAddPages: $<HTMLButtonElement>('btnAddPages'),
+  btnExtract: $<HTMLButtonElement>('btnExtract'),
+  mergeFileInput: $<HTMLInputElement>('mergeFileInput'),
+  extractModal: $('extractModal'),
+  extractRange: $<HTMLInputElement>('extractRange'),
+  extractHint: $('extractHint'),
+  extractCancel: $<HTMLButtonElement>('extractCancel'),
+  extractGo: $<HTMLButtonElement>('extractGo'),
   sigModal: $('sigModal'),
   sigPad: $<HTMLCanvasElement>('sigPad'),
   sigTabDraw: $<HTMLButtonElement>('sigTabDraw'),
@@ -601,19 +609,152 @@ async function applyPageChange(changed: boolean): Promise<void> {
   setBusy(true, 'Updating pages…');
   try {
     await doc.refresh();
-    await viewer.load(doc);
-    await applyZoomChoice();
-    await renderThumbs();
-    syncEditState();
     els.pageTotal.textContent = `/ ${doc.pageCount}`;
     els.pageInput.value = String(Math.min(Number(els.pageInput.value) || 1, doc.pageCount));
+    syncEditState();
     setStatus(`Document now has ${doc.pageCount} page${doc.pageCount === 1 ? '' : 's'}.`);
+
+    await viewer.load(doc);
+    await applyZoomChoice();
+    void renderThumbs();
   } catch (e) {
     setStatus(`Could not update pages: ${(e as Error).message}`, 'warn');
   } finally {
     setBusy(false);
   }
 }
+
+/* ---------------- combining and splitting ---------------- */
+
+/**
+ * Reads a page range the way people write one: "1-3, 5, 8-" and so on, with
+ * an open ended last part meaning "to the end". Returns zero-based positions.
+ */
+function parseRange(text: string, pageCount: number): number[] {
+  const out = new Set<number>();
+  for (const part of text.split(',')) {
+    const piece = part.trim();
+    if (!piece) continue;
+    const m = /^(\d+)?\s*(-)?\s*(\d+)?$/.exec(piece);
+    if (!m) continue;
+    const [, fromRaw, dash, toRaw] = m;
+    if (!dash) {
+      const n = Number(fromRaw);
+      if (n >= 1 && n <= pageCount) out.add(n - 1);
+      continue;
+    }
+    const from = fromRaw ? Number(fromRaw) : 1;
+    const to = toRaw ? Number(toRaw) : pageCount;
+    for (let n = Math.max(1, from); n <= Math.min(pageCount, to); n++) out.add(n - 1);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+function downloadPdf(bytes: Uint8Array, filename: string): void {
+  const copy = new Uint8Array(bytes.length);
+  copy.set(bytes);
+  const url = URL.createObjectURL(new Blob([copy], { type: 'application/pdf' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 20000);
+}
+
+els.btnAddPages.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  els.mergeFileInput.click();
+});
+
+els.mergeFileInput.addEventListener('change', async () => {
+  const files = [...(els.mergeFileInput.files ?? [])];
+  els.mergeFileInput.value = '';
+  if (!files.length || !doc) return;
+
+  setBusy(true, files.length === 1 ? `Adding ${files[0].name}…` : `Adding ${files.length} files…`);
+  let added = 0;
+  try {
+    for (const file of files) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      added += await doc.mergeFile(file.name, bytes);
+    }
+    if (!added) {
+      setStatus('Nothing to add: those files had no pages.', 'warn');
+      return;
+    }
+    await doc.refresh();
+    // The counts are what the user is waiting to see, so they are updated before
+    // the expensive repaint rather than after it.
+    els.pageTotal.textContent = `/ ${doc.pageCount}`;
+    syncEditState();
+    setStatus(`Added ${added} page${added === 1 ? '' : 's'}. The document now has ${doc.pageCount}.`);
+
+    await viewer.load(doc);
+    await applyZoomChoice();
+    // Thumbnails for a long document take a while and nothing waits on them.
+    void renderThumbs();
+  } catch (e) {
+    setStatus(`Could not add those pages: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
+
+function openExtract(): void {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  els.extractRange.value = `1-${doc.pageCount}`;
+  els.extractHint.textContent = `This document has ${doc.pageCount} page${doc.pageCount === 1 ? '' : 's'}.`;
+  els.extractModal.hidden = false;
+  els.extractRange.focus();
+  els.extractRange.select();
+}
+
+els.btnExtract.addEventListener('click', openExtract);
+els.extractCancel.addEventListener('click', () => {
+  els.extractModal.hidden = true;
+});
+els.extractModal.addEventListener('click', (e) => {
+  if (e.target === els.extractModal) els.extractModal.hidden = true;
+});
+els.extractRange.addEventListener('input', () => {
+  if (!doc) return;
+  const n = parseRange(els.extractRange.value, doc.pageCount).length;
+  els.extractHint.textContent = n
+    ? `${n} page${n === 1 ? '' : 's'} selected.`
+    : 'That does not select any pages.';
+});
+els.extractRange.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') els.extractGo.click();
+});
+
+els.extractGo.addEventListener('click', async () => {
+  if (!doc) return;
+  const positions = parseRange(els.extractRange.value, doc.pageCount);
+  if (!positions.length) {
+    setStatus('That range does not select any pages.', 'warn');
+    return;
+  }
+  els.extractModal.hidden = true;
+  setBusy(true, 'Preparing those pages…');
+  try {
+    const bytes = await doc.extractPages(positions);
+    const base = doc.name.replace(/\.pdf$/i, '');
+    downloadPdf(bytes, `${base} (pages ${els.extractRange.value.trim()}).pdf`);
+    setStatus(`Saved ${positions.length} page${positions.length === 1 ? '' : 's'} as a new PDF.`);
+  } catch (e) {
+    setStatus(`Could not extract those pages: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
 
 /* ---------------- properties ---------------- */
 
