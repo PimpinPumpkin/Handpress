@@ -143,6 +143,15 @@ export class Viewer {
   signatureWidth = 150;
   private matches: SearchMatch[] = [];
   private currentMatch = -1;
+  /**
+   * Serialises rebuilds.
+   *
+   * Rebuilding replaces the pdf.js document, which cancels any render still
+   * running against the old one and leaves that canvas half drawn. Overlapping
+   * rebuilds also cancel each other, so a burst of quick edits could settle
+   * with the page showing a partial composite of two different renders.
+   */
+  private rebuildQueue: Promise<void> = Promise.resolve();
 
 
   constructor(root: HTMLElement, cb: ViewerCallbacks) {
@@ -839,6 +848,9 @@ export class Viewer {
 
     box.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      // In a region mode the drag belongs to the region being drawn, not to
+      // whatever object happens to sit under the pointer.
+      if (this.mode === 'erase' || this.mode === 'redact') return;
       e.preventDefault();
       e.stopPropagation();
       dragging = true;
@@ -1014,18 +1026,35 @@ export class Viewer {
     this.cb.onEdited();
   }
 
-  /** Rebuilds the document and repaints, shared by anything that adds content. */
+  /** True for the error pdf.js raises when a newer render supersedes one. */
+  private static isCancellation(e: unknown): boolean {
+    const err = e as { message?: string; name?: string };
+    return /cancel/i.test(err?.message ?? '') || err?.name === 'RenderingCancelledException';
+  }
+
+  /** Waits for every page render currently in flight to finish. */
+  private async settleRenders(): Promise<void> {
+    await Promise.allSettled(this.pages.map((p) => p.rendering).filter(Boolean) as Array<Promise<void>>);
+  }
+
+  /** Rebuilds the document and repaints, shared by anything that changes it. */
   private async rebuild(): Promise<void> {
-    if (!this.doc) return;
-    try {
-      await this.doc.refresh();
-      await this.refreshRendered();
-    } catch (e) {
-      // A render cancelled because a newer one superseded it is normal.
-      const message = (e as Error).message ?? '';
-      if (/cancel/i.test(message) || (e as { name?: string }).name === 'RenderingCancelledException') return;
-      this.cb.onStatus(`Could not apply that: ${message}`, 'warn');
-    }
+    const run = this.rebuildQueue.then(async () => {
+      if (!this.doc) return;
+      try {
+        // Renders already running hold the document that is about to be
+        // replaced; letting them finish first is what stops a cancelled render
+        // leaving half a page behind.
+        await this.settleRenders();
+        await this.doc.refresh();
+        await this.refreshRendered();
+      } catch (e) {
+        if (Viewer.isCancellation(e)) return;
+        this.cb.onStatus(`Could not apply that: ${(e as Error).message}`, 'warn');
+      }
+    });
+    this.rebuildQueue = run.catch(() => undefined);
+    return run;
   }
 
   /** Creates new text where the user clicked and opens it for typing. */
@@ -1244,6 +1273,7 @@ export class Viewer {
 
     this.cb.onStatus('Applying edit…');
     try {
+      await this.settleRenders();
       const warnings = await this.doc.refresh();
       await this.refreshRendered();
       this.cb.onEdited();
@@ -1256,6 +1286,7 @@ export class Viewer {
         this.cb.onStatus('Edit applied.');
       }
     } catch (e) {
+      if (Viewer.isCancellation(e)) return;
       this.cb.onStatus(`Could not apply the edit: ${(e as Error).message}`, 'warn');
     }
   }
