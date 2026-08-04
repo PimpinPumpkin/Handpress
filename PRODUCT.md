@@ -84,9 +84,17 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Highlighting: drag over anything and it is marked with a multiply blend, so
+  the words read through the ink rather than being covered by it. The colour is
+  picked from a swatch beside the button.
+- Reading a scan: recognition runs on this machine and writes what it found back
+  as invisible text over the picture, so the page looks identical but can be
+  searched, selected, copied and edited. Words are stretched to the width they
+  occupy in the image so a selection follows the printed line.
 - Find in document, with every hit highlighted, next and previous, and Cmd+F.
   Searches the text as it currently reads, so a word typed a moment ago is
-  findable and one typed out is not.
+  findable and one typed out is not, and it covers added text, which is what
+  makes a recognised scan findable at all.
 - Combining and splitting. Add pages appends other files, and Extract saves a
   page range as a new PDF without touching the open document. A merged page is
   just a plan entry naming a different source file, so it reorders, rotates and
@@ -107,9 +115,11 @@ and is revisited below.
 Ordered by how often an ordinary person hits the gap, weighted by how well it
 fits an engine that already understands content streams.
 
-1. **Highlight and note annotations**: the everyday markup people expect.
-2. **OCR** for scans, the paid tier's natural anchor.
-(Real redaction is done.)
+1. **Note annotations**: comments attached to a point on the page, which is the
+   half of everyday markup still missing now that highlighting is in.
+2. **Whole-document recognition** rather than a page at a time, with the pages
+   that need it detected on open.
+(Real redaction, highlighting and page recognition are done.)
 
 ### Next
 

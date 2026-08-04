@@ -65,6 +65,14 @@ export interface RectFill {
   width: number;
   height: number;
   color: { r: number; g: number; b: number };
+  /**
+   * Draw multiplied against what is already there rather than over it.
+   *
+   * This is what makes a highlight a highlight: yellow laid opaquely over a
+   * paragraph hides it, whereas multiplying darkens the paper and leaves the
+   * text showing through exactly as a marker pen would.
+   */
+  blend?: boolean;
 }
 
 /** New text placed on a page that had none there before. */
@@ -78,6 +86,17 @@ export interface TextInsertion {
   text: string;
   bold: boolean;
   italic: boolean;
+  /**
+   * Draw the glyphs invisibly, which is how a recognised text layer sits over a
+   * scan: the words can be searched, selected and copied, while the page still
+   * looks exactly like the picture it is.
+   */
+  invisible?: boolean;
+  /**
+   * Horizontal scaling as a percentage, used to stretch recognised words to the
+   * width they occupy in the image so selection lines up with what is seen.
+   */
+  horizScale?: number;
 }
 
 /** A move or resize applied to an image already in the document. */
@@ -235,11 +254,33 @@ function addXObjectResource(resources: PDFDict, ref: PDFRef, preferred: string):
   return name;
 }
 
-/** Paints one rectangle, isolated so it cannot leak its colour into the page. */
-function buildRect(rect: RectFill): Uint8Array {
+/** Adds a graphics state to the resources and returns its name. */
+function addExtGStateResource(resources: PDFDict, name: string, dict: PDFDict): string {
+  let states = resources.lookup(PDFName.of('ExtGState'));
+  if (!(states instanceof PDFDict)) {
+    states = resources.context.obj({}) as PDFDict;
+    resources.set(PDFName.of('ExtGState'), states);
+  }
+  const target = states as PDFDict;
+  let unique = name;
+  let n = 0;
+  while (target.has(PDFName.of(unique)) && unique !== name) unique = `${name}${++n}`;
+  if (!target.has(PDFName.of(unique))) target.set(PDFName.of(unique), dict);
+  return unique;
+}
+
+/** Paints one rectangle, isolated so it cannot leak its state into the page. */
+function buildRect(rect: RectFill, resources: PDFDict | null): Uint8Array {
   if (rect.width <= 0 || rect.height <= 0) return new Uint8Array(0);
+
+  let blendPrefix = '';
+  if (rect.blend && resources) {
+    const gs = resources.context.obj({ Type: 'ExtGState', BM: 'Multiply' }) as PDFDict;
+    blendPrefix = `/${addExtGStateResource(resources, 'VeMul', gs)} gs `;
+  }
+
   return bytes(
-    `\nq ${fmt(rect.color.r)} ${fmt(rect.color.g)} ${fmt(rect.color.b)} rg ` +
+    `\nq ${blendPrefix}${fmt(rect.color.r)} ${fmt(rect.color.g)} ${fmt(rect.color.b)} rg ` +
       `${fmt(rect.x)} ${fmt(rect.y)} ${fmt(rect.width)} ${fmt(rect.height)} re f Q\n`,
   );
 }
@@ -670,6 +711,12 @@ async function buildInsertion(
   chunks.push(
     bytes(`${fmt(insertion.color.r)} ${fmt(insertion.color.g)} ${fmt(insertion.color.b)} rg `),
   );
+  // Render mode 3 draws nothing while still laying the glyphs down for
+  // selection, searching and copying.
+  if (insertion.invisible) chunks.push(bytes('3 Tr '));
+  if (insertion.horizScale && Math.abs(insertion.horizScale - 100) > 0.5) {
+    chunks.push(bytes(`${fmt(insertion.horizScale)} Tz `));
+  }
 
   const lines = insertion.text.split('\n');
   const leading = insertion.size * 1.2;
@@ -840,7 +887,7 @@ export async function applyEdits(
       const built: Uint8Array[] = [];
       // Erasures go down first, then images, then text. That ordering is what
       // lets somebody cover something up and then write over the top of it.
-      for (const rect of rects) built.push(buildRect(rect));
+      for (const rect of rects) built.push(buildRect(rect, pageResources));
       const imageCache = new Map<string, string>();
       for (const stamp of stamps) {
         built.push(await buildStamp(stamp, doc, pageResources, imageCache, warn));

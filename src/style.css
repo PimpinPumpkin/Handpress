@@ -1227,3 +1227,8 @@ body {
 .page-overlay.erasing .field-box {
   pointer-events: none;
 }
+
+.erase-preview.highlight-preview {
+  background: rgba(255, 235, 59, 0.45);
+  border-color: rgba(200, 170, 0, 0.9);
+}

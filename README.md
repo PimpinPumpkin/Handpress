@@ -105,13 +105,37 @@ erase and not redaction, and the interface says so every time you use it. Real
 redaction, which removes the operators that drew the text, is a separate job
 still to be done.
 
+### Highlighting
+
+Drag over anything to mark it. The colour is painted with a multiply blend, which
+is what makes it read as a highlighter rather than a sticker: the words show
+through the ink instead of being covered by it. The colour swatch beside the
+button changes it, and a highlight is undone like any other edit.
+
+### Reading a scan
+
+**Read scan** runs recognition on the current page and writes what it finds back
+as invisible text sitting exactly over the picture. The page looks identical, but
+its words can now be searched, selected, copied and edited like any other text.
+
+Each word is stretched horizontally to the width it occupies in the image, so a
+selection follows the printed words instead of drifting further out of step along
+the line. Words the recogniser is not reasonably sure of are left out rather than
+written down wrong.
+
+Recognition runs on this machine, in a worker; the page is never uploaded. The
+recogniser itself and its language data are fetched from a CDN the first time
+they are needed, so the first run on a new browser takes a few seconds longer.
+
 ### Finding text
 
 Cmd+F, or the box in the toolbar. Every hit is highlighted at once, Enter and
 Shift+Enter step through them, and the count shows where you are.
 
 Search runs against the text as it currently reads rather than as the file was
-opened, so a word typed a moment ago is findable and one typed out is not. A hit
+opened, so a word typed a moment ago is findable and one typed out is not. Text
+added to a page is searched too, which is what makes a recognised scan findable
+at all. A hit
 is placed by walking the line's styled runs and interpolating within whichever
 ones it covers; a line that mixes a bold label with body text is not evenly
 spaced, so interpolating across the whole line would put the highlight in the
@@ -212,8 +236,9 @@ A file that genuinely needs a password still needs one, and says so.
 
 ## Limitations
 
-- **Scanned PDFs have no text to edit.** They need OCR first. Vellum detects this
-  and says so rather than showing an empty page.
+- **Scanned PDFs have no text to edit** until they are read. Vellum detects this
+  and says so rather than showing an empty page, and **Read scan** adds the text
+  layer a page at a time.
 - Editing existing text is line at a time, with no reflow across lines.
 - Text drawn with Type 3 fonts is read only.
 

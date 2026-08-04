@@ -101,5 +101,23 @@ Strings inside object streams are covered by the encryption of the stream holdin
 them, so `preDecrypt` only touches strings in top-level object dictionaries, which
 is naturally what scanning the file bytes gives.
 
+## Rendering is serialised per page, through a chain
+
+pdf.js refuses to render the same page twice at once, and two renders sharing one
+canvas context interleave their save and restore pairs, which leaves a stray
+transform behind and draws the page upside down. Every draw therefore joins that
+page's `queue`, including the offscreen rasterising that recognition needs. It has
+to be per page: one queue for the whole document deadlocks, because a render ends
+up waiting on work sitting behind it in the same queue.
+
+A failing job must not break the chain for everything behind it, so `enqueue`
+keeps the tail resolved and hands the error only to its own caller.
+
+Renders do not progress in a background tab, because pdf.js drives its canvas
+loop with `requestAnimationFrame`. That is ordinary browser behaviour, but it
+looks exactly like a hang when driving the app from a script, so front the tab
+before concluding anything is stuck.
+
 ## Open work
-- Reflow across lines, adding and deleting text blocks, OCR for scans.
+- Reflow across lines, adding and deleting text blocks, recognition across a
+  whole document rather than a page at a time.

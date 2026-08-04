@@ -86,7 +86,10 @@ export interface RedactionArea {
 
 export interface SearchMatch {
   pageIndex: number;
+  /** The line the hit sits in, empty when the hit is in added text. */
   lineId: string;
+  /** Set instead of lineId when the hit is in text added to the page. */
+  insertionId?: string;
   /** Character range of the hit within the line's current text. */
   start: number;
   end: number;
@@ -378,17 +381,25 @@ export class VellumDocument {
       const page = await this.getPage(pageIndex).catch(() => null);
       if (!page) continue;
 
-      for (const line of page.lines) {
-        const text = this.textFor(pageIndex, line);
+      const record = (text: string, where: { lineId: string; insertionId?: string }): void => {
         const haystack = caseSensitive ? text : text.toLowerCase();
         let from = 0;
         for (;;) {
           const at = haystack.indexOf(needle, from);
           if (at < 0) break;
-          matches.push({ pageIndex, lineId: line.id, start: at, end: at + needle.length, text });
+          matches.push({ pageIndex, ...where, start: at, end: at + needle.length, text });
           // Overlapping hits are not useful, so the scan resumes after this one.
           from = at + Math.max(1, needle.length);
         }
+      };
+
+      for (const line of page.lines) {
+        record(this.textFor(pageIndex, line), { lineId: line.id });
+      }
+      // Added text is part of the document too, and on a recognised scan it is
+      // the only text there is, so searching without it would find nothing.
+      for (const insertion of this.insertionsFor(pageIndex)) {
+        record(insertion.text, { lineId: '', insertionId: insertion.id });
       }
     }
     return matches;

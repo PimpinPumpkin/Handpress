@@ -8,6 +8,7 @@ import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import { DecryptionError } from './pdf/decrypt';
 import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/signature';
+import { OCR_SCALE, recogniseCanvas, wordsToInsertions } from './app/ocr';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -31,6 +32,9 @@ const els = {
   btnSign: $<HTMLButtonElement>('btnSign'),
   btnErase: $<HTMLButtonElement>('btnErase'),
   btnRedact: $<HTMLButtonElement>('btnRedact'),
+  btnHighlight: $<HTMLButtonElement>('btnHighlight'),
+  btnOcr: $<HTMLButtonElement>('btnOcr'),
+  highlightColor: $<HTMLInputElement>('highlightColor'),
   btnAddPages: $<HTMLButtonElement>('btnAddPages'),
   searchInput: $<HTMLInputElement>('searchInput'),
   searchCount: $('searchCount'),
@@ -302,19 +306,21 @@ function syncEditState(): void {
 
 /* ---------------- editing mode ---------------- */
 
-function setMode(mode: 'edit' | 'add' | 'sign' | 'erase' | 'redact'): void {
+function setMode(mode: 'edit' | 'add' | 'sign' | 'erase' | 'redact' | 'highlight'): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
   els.btnModeAdd.classList.toggle('tool-active', mode === 'add');
   els.btnSign.classList.toggle('tool-active', mode === 'sign');
   els.btnErase.classList.toggle('tool-active', mode === 'erase');
   els.btnRedact.classList.toggle('tool-active', mode === 'redact');
+  els.btnHighlight.classList.toggle('tool-active', mode === 'highlight');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
     erase: 'Drag over anything to cover it. This hides the text; it does not delete it.',
     redact: 'Drag over text to delete it from the saved file. This is not reversible once saved.',
+    highlight: 'Drag over text to highlight it. The words stay readable underneath.',
   };
   setStatus(messages[mode]);
 }
@@ -325,6 +331,23 @@ els.btnErase.addEventListener('click', () => {
     return;
   }
   setMode('erase');
+});
+
+els.btnHighlight.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  setMode('highlight');
+});
+
+els.highlightColor.addEventListener('change', () => {
+  const hex = els.highlightColor.value;
+  viewer.highlightColor = {
+    r: parseInt(hex.slice(1, 3), 16) / 255,
+    g: parseInt(hex.slice(3, 5), 16) / 255,
+    b: parseInt(hex.slice(5, 7), 16) / 255,
+  };
 });
 
 els.btnRedact.addEventListener('click', () => {
@@ -657,6 +680,57 @@ async function applyPageChange(changed: boolean): Promise<void> {
     setBusy(false);
   }
 }
+
+/* ---------------- recognising scanned pages ---------------- */
+
+/**
+ * Measures a word using a canvas, which is close enough to Helvetica's own
+ * metrics for deciding how far each recognised word has to be stretched.
+ */
+const measureCanvas = document.createElement('canvas');
+const measureCtx = measureCanvas.getContext('2d')!;
+function measureHelvetica(text: string, size: number): number {
+  measureCtx.font = `${size}px Helvetica, Arial, sans-serif`;
+  return measureCtx.measureText(text).width;
+}
+
+els.btnOcr.addEventListener('click', async () => {
+  if (!doc?.pdfjs) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  const pageIndex = viewer.currentPageIndex();
+
+  setBusy(true, 'Preparing to read the page…');
+  try {
+    const canvas = await viewer.rasterise(pageIndex, OCR_SCALE);
+    const result = await recogniseCanvas(canvas, OCR_SCALE, (fraction, label) => {
+      setBusy(true, `${label}… ${Math.round(fraction * 100)}%`);
+    });
+
+    if (!result.words.length) {
+      setStatus('Nothing legible was found on this page.', 'warn');
+      return;
+    }
+
+    const insertions = wordsToInsertions(result.words, measureHelvetica);
+    for (const insertion of insertions) doc.addInsertion(pageIndex, insertion);
+
+    setBusy(true, 'Adding the text layer…');
+    await doc.refresh();
+    await viewer.refreshRendered();
+    void renderThumbs();
+    syncEditState();
+    setStatus(
+      `Read ${insertions.length} word${insertions.length === 1 ? '' : 's'} at ${Math.round(result.confidence)}% confidence. ` +
+        'The page can now be searched and edited.',
+    );
+  } catch (e) {
+    setStatus(`Could not read that page: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
 
 /* ---------------- find ---------------- */
 

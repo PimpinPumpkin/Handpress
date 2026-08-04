@@ -20,7 +20,7 @@ import type { SearchMatch } from './model';
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
 
-export type ViewerMode = 'edit' | 'add' | 'sign' | 'erase' | 'redact';
+export type ViewerMode = 'edit' | 'add' | 'sign' | 'erase' | 'redact' | 'highlight';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -42,9 +42,12 @@ interface RenderedPage {
    * initial load and the visibility observer firing for the same page. Two
    * concurrent renders share one canvas context, and their save and restore
    * pairs interleave, which leaves a stray transform behind and draws the page
-   * upside down. Rendering is therefore serialised per page.
+   * upside down. Every draw of this page therefore joins one chain, which is
+   * strictly serial and cannot be lost the way a nullable in-flight promise can.
+   * The chain is per page: one queue for the whole document deadlocks, because a
+   * render can wait on work that is itself sitting behind it in the queue.
    */
-  rendering: Promise<void> | null;
+  queue: Promise<void>;
   /**
    * Viewport of this page's last render, kept so highlights can be repainted
    * without rendering again. Pages differ in size and rotation, so this cannot
@@ -138,9 +141,15 @@ export class Viewer {
   /** Defaults applied to newly added text. */
   addSize = 12;
   addColor = { r: 0, g: 0, b: 0 };
+  /** Colour used by the highlighter, a marker-pen yellow by default. */
+  highlightColor = { r: 1, g: 0.92, b: 0.23 };
   /** Signature waiting to be placed, and the width it is placed at, in points. */
   pendingSignature: CapturedSignature | null = null;
   signatureWidth = 150;
+  /** Shared canvas used only for text measurement, never drawn. */
+  private static measureCtx: CanvasRenderingContext2D =
+    document.createElement('canvas').getContext('2d')!;
+
   private matches: SearchMatch[] = [];
   private currentMatch = -1;
   /**
@@ -174,7 +183,7 @@ export class Viewer {
     this.mode = mode;
     for (const p of this.pages) {
       p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign');
-      p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact');
+      p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact' || mode === 'highlight');
     }
   }
 
@@ -210,7 +219,7 @@ export class Viewer {
 
       // Erasing is a drag rather than a click, so it needs the pointer directly.
       overlay.addEventListener('pointerdown', (e) => {
-        if (this.mode !== 'erase' && this.mode !== 'redact') return;
+        if (this.mode !== 'erase' && this.mode !== 'redact' && this.mode !== 'highlight') return;
         this.beginRegion(this.pages[i], e, this.mode);
       });
 
@@ -223,7 +232,7 @@ export class Viewer {
         overlay,
         model: null,
         renderedZoom: 0,
-        rendering: null,
+        queue: Promise.resolve(),
         viewport: null,
       });
     }
@@ -296,17 +305,56 @@ export class Viewer {
 
     // Wait for any render already under way, then reconsider: it may have
     // produced exactly what this call wanted.
-    if (p.rendering) {
-      await p.rendering;
+    await this.enqueue(p, async () => {
+      // Re-checked inside the queue: whatever was already drawing may have
+      // produced exactly what this call wanted.
       if (p.renderedZoom === this.zoom && p.model) return;
-    }
+      await this.drawPage(p, index);
+    });
+  }
 
-    p.rendering = this.drawPage(p, index);
-    try {
-      await p.rendering;
-    } finally {
-      p.rendering = null;
-    }
+  /**
+   * Runs a job on a page's render chain, one at a time.
+   *
+   * A failing job must not break the chain for everything queued behind it, so
+   * the tail always resolves and the error goes only to this caller.
+   */
+  private enqueue<T>(p: RenderedPage, job: () => Promise<T>): Promise<T> {
+    const result = p.queue.then(job);
+    p.queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /**
+   * Draws a page into an offscreen canvas at an arbitrary scale.
+   *
+   * pdf.js will not render the same page twice at once, so this joins the same
+   * queue the on-screen render uses. Calling getPage and render directly while
+   * the viewer was still drawing that page left both renders waiting forever.
+   */
+  async rasterise(index: number, scale: number): Promise<HTMLCanvasElement> {
+    if (!this.doc?.pdfjs) throw new Error('No document is open.');
+    const p = this.pages[index];
+
+    const run = async (): Promise<HTMLCanvasElement> => {
+      const jsPage = await this.doc!.pdfjs!.getPage(index + 1);
+      const viewport = jsPage.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      const ctx = canvas.getContext('2d')!;
+      // A PDF page may draw nothing where it expects paper, and recognition
+      // wants a white ground rather than a transparent one.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await jsPage.render({ canvasContext: ctx, viewport, canvas }).promise;
+      return canvas;
+    };
+
+    return p ? this.enqueue(p, run) : run();
   }
 
   private async drawPage(p: RenderedPage, index: number): Promise<void> {
@@ -514,7 +562,7 @@ export class Viewer {
    * on tinted or coloured paper disappears instead of leaving a white scar. It
    * covers rather than deletes, which the interface says plainly.
    */
-  private beginRegion(p: RenderedPage, down: PointerEvent, kind: 'erase' | 'redact'): void {
+  private beginRegion(p: RenderedPage, down: PointerEvent, kind: 'erase' | 'redact' | 'highlight'): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();
 
@@ -523,7 +571,12 @@ export class Viewer {
     const startY = down.clientY - rect.top;
 
     const preview = document.createElement('div');
-    preview.className = kind === 'redact' ? 'erase-preview redact-preview' : 'erase-preview';
+    preview.className =
+      kind === 'redact'
+        ? 'erase-preview redact-preview'
+        : kind === 'highlight'
+          ? 'erase-preview highlight-preview'
+          : 'erase-preview';
     p.overlay.appendChild(preview);
 
     const draw = (x: number, y: number): { left: number; top: number; width: number; height: number } => {
@@ -564,6 +617,14 @@ export class Viewer {
         width: Math.abs(x1 - x0),
         height: Math.abs(y1 - y0),
       };
+
+      if (kind === 'highlight') {
+        this.doc.addErasure(p.index, { ...area, color: { ...this.highlightColor }, blend: true });
+        await this.rebuild();
+        this.cb.onStatus('Highlighted.');
+        this.cb.onEdited();
+        return;
+      }
 
       if (kind === 'redact') {
         this.doc.addRedaction(p.index, area);
@@ -679,8 +740,14 @@ export class Viewer {
     if (!mine.length) return;
 
     const byId = new Map(p.model.lines.map((l) => [l.id, l]));
+    const insertions = new Map(this.doc.insertionsFor(p.index).map((x) => [x.id, x]));
 
     for (const { m, i } of mine) {
+      if (m.insertionId) {
+        const box = this.matchBoxForInsertion(p, insertions.get(m.insertionId), m, i);
+        if (box) p.overlay.appendChild(box);
+        continue;
+      }
       const line = byId.get(m.lineId);
       if (!line) continue;
 
@@ -734,6 +801,46 @@ export class Viewer {
       box.style.height = `${Math.max(2, Math.max(...ys) - Math.min(...ys))}px`;
       p.overlay.appendChild(box);
     }
+  }
+
+  /**
+   * Draws a hit that falls inside added text.
+   *
+   * Added text has no styled segments to interpolate through, so the span is
+   * measured with the same canvas metrics the insertion was laid out against,
+   * which is close enough for a highlight and costs nothing.
+   */
+  private matchBoxForInsertion(
+    p: RenderedPage,
+    insertion: TextInsertion | undefined,
+    match: SearchMatch,
+    index: number,
+  ): HTMLElement | null {
+    const viewport = p.viewport;
+    if (!insertion || !viewport) return null;
+
+    const scale = (insertion.horizScale ?? 100) / 100;
+    const measure = (text: string): number => {
+      Viewer.measureCtx.font = `${insertion.size}px Helvetica, Arial, sans-serif`;
+      return Viewer.measureCtx.measureText(text).width * scale;
+    };
+    const x0 = insertion.x + measure(insertion.text.slice(0, match.start));
+    const x1 = insertion.x + measure(insertion.text.slice(0, match.end));
+    const descent = insertion.size * 0.22;
+    const ascent = insertion.size * 0.82;
+
+    const a = viewport.convertToViewportPoint(x0, insertion.y - descent);
+    const b = viewport.convertToViewportPoint(x1, insertion.y + ascent);
+
+    const box = document.createElement('div');
+    box.className = 'match-box';
+    if (index === this.currentMatch) box.classList.add('match-current');
+    box.dataset.match = String(index);
+    box.style.left = `${Math.min(a[0], b[0])}px`;
+    box.style.top = `${Math.min(a[1], b[1])}px`;
+    box.style.width = `${Math.max(2, Math.abs(b[0] - a[0]))}px`;
+    box.style.height = `${Math.max(2, Math.abs(b[1] - a[1]))}px`;
+    return box;
   }
 
   /**
@@ -1034,7 +1141,7 @@ export class Viewer {
 
   /** Waits for every page render currently in flight to finish. */
   private async settleRenders(): Promise<void> {
-    await Promise.allSettled(this.pages.map((p) => p.rendering).filter(Boolean) as Array<Promise<void>>);
+    await Promise.allSettled(this.pages.map((p) => p.queue));
   }
 
   /** Rebuilds the document and repaints, shared by anything that changes it. */
