@@ -212,7 +212,11 @@ export class Viewer {
       label.textContent = String(i + 1);
 
       overlay.addEventListener('click', (e) => {
-        if (e.target !== overlay) return; // a click on existing content is not a placement
+        // A click that landed on something placed earlier belongs to that thing,
+        // not to a new placement. The boxes over existing text do not take part:
+        // the stylesheet lets clicks through them while placing, because a
+        // signature usually belongs exactly where the page already has text.
+        if (e.target !== overlay) return;
         if (this.mode === 'add') void this.placeText(this.pages[i], e as MouseEvent);
         else if (this.mode === 'sign') void this.placeSignature(this.pages[i], e as MouseEvent);
       });

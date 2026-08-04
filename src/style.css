@@ -804,6 +804,14 @@ body {
   cursor: crosshair;
 }
 
+/* Text and signatures are placed where the page already has something on it,
+   over a printed signature line or beside a paragraph. Letting the boxes drawn
+   over existing text swallow the click meant those spots could not be used. */
+.page-overlay.placing .line-box,
+.page-overlay.placing .field-box {
+  pointer-events: none;
+}
+
 .line-box.line-added {
   border: 1px dashed rgba(70, 177, 123, 0.55);
 }

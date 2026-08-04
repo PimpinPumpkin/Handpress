@@ -182,6 +182,9 @@ Text can also be added where the page had none. It is written as real text with
 a standard font at the chosen size and colour, not as an annotation stuck on
 top, so it copies, searches and prints like the rest of the document.
 
+It can be placed anywhere, including over text the page already has. That is
+where a signature usually belongs, on the printed line that asks for it.
+
 ### Filling forms
 
 A fillable PDF already knows where its boxes are, what they are called and what
