@@ -1893,6 +1893,11 @@ body {
   position: absolute;
   z-index: 6;
   pointer-events: none;
+  /* A rectangle of the page, so whatever overlapped comes with it. Faded and
+     outlined so it reads as a preview of where this is going rather than as
+     the object having already landed there. */
+  opacity: 0.75;
+  outline: 1px solid var(--accent);
 }
 
 /* The space the object left, filled with the page's own colour so the original

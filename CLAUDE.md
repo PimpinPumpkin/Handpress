@@ -392,6 +392,23 @@ the tails of descenders visible around the edited text, and two sets of glyphs
 half a pixel apart read as the wrong typeface rather than as a leftover. The
 margin scales with the type so it is the same at every zoom.
 
+## Type 3 fonts measure in their own units
+
+A Type 3 font declares its glyph space with `/FontMatrix` and its `/Widths` are
+in that space. Every other kind of font measures in 1/1000 em and the rest of
+the engine assumes it, so a font at 1/2048 made every advance nearly twice what
+it should be. That is a reading bug before it is a writing one: gaps between
+runs were measured against inflated advances, so spaces that were there went
+unnoticed. `codeWidth` scales by the matrix.
+
+`encodeText` also refused Type 3 outright, on the grounds that a glyph is a
+procedure and cannot be invented. True for a character the font never had, and
+false for one it already has: writing that code draws the procedure already in
+the file. Refusing all of it meant a document set in a Type 3 font was silently
+redrawn in Helvetica the moment a word was changed, which is what a real Carfax
+report did. Coverage decides now, the same as everywhere else, and anything
+genuinely missing still falls through to substitution.
+
 ## Moving something shows its own pixels, not a promise
 
 Any move rebuilds the document and hands it back to pdf.js before a pixel can

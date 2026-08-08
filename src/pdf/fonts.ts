@@ -428,9 +428,24 @@ export function loadFont(resourceName: string, dict: PDFDict, ref: PDFRef | null
 /** Width of one character code, in 1/1000 em. */
 export function codeWidth(font: LoadedFont, code: number): number {
   const w = font.widths.get(code);
-  if (w !== undefined) return w;
+  if (w !== undefined) return font.type3 ? w * type3Scale(font) : w;
   if (font.twoByte) return font.missingWidth || 1000;
   return font.missingWidth || defaultStandardWidth(font, code);
+}
+
+/**
+ * How many thousandths of an em one unit of a Type 3 glyph space is worth.
+ *
+ * Every other kind of font measures in 1/1000 em, so the rest of the engine
+ * assumes it. A Type 3 font declares its own glyph space with `/FontMatrix`,
+ * and its `/Widths` are in that space: this document uses 1/2048, which made
+ * every advance almost twice what it should have been. A missing or degenerate
+ * matrix falls back to the usual thousandths.
+ */
+function type3Scale(font: LoadedFont): number {
+  const m = font.fontMatrix;
+  if (!m || !m[0]) return 1;
+  return Math.abs(m[0]) * 1000;
 }
 
 /**
@@ -597,7 +612,13 @@ function packCodes(font: LoadedFont, codes: number[]): Uint8Array {
  * should substitute a different font rather than draw the wrong thing.
  */
 export function encodeText(font: LoadedFont, text: string, spaceWidth?: number): EncodedText | null {
-  if (font.type3) return null; // Type3 glyphs are procedures, not re-encodable
+  // Type 3 glyphs are drawing procedures, so a character the font never had
+  // cannot be invented. One it already has is another matter: writing that
+  // code draws the procedure that is already in the font. Coverage decides,
+  // the same as everywhere else, and anything genuinely missing still falls
+  // through to substitution. Refusing all of it meant a document set in a
+  // Type 3 font was redrawn in Helvetica the moment a word was changed, which
+  // is exactly what it looked like.
 
   const parts: EncodedPart[] = [];
   let pending: number[] = [];

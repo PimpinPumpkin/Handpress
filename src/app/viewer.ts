@@ -1380,6 +1380,15 @@ export class Viewer {
    * covered with the page's colour, and the copy is what follows the pointer.
    * When the real render lands, both are dropped.
    *
+   * The copy is a rectangle of the rendered page, so anything overlapping that
+   * rectangle comes with it. That is honest for an isolated object and a lie
+   * for one sitting on a background or under something else, which is why it
+   * is drawn slightly faded rather than as a perfect duplicate: it reads as a
+   * preview of where the thing is going, not as the thing itself having
+   * already arrived. Cutting the object out properly means rendering it alone,
+   * which for an image means finding it in the file and for text means setting
+   * it again, and neither is a copy of the canvas.
+   *
    * The copies live on the page container rather than the overlay, which is
    * emptied and rebuilt whenever the page redraws.
    */

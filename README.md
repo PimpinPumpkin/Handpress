@@ -480,7 +480,9 @@ few, and were put there to be moved. Two fingers pinch to zoom.
   layer a page at a time.
 - Reflow works inside a paragraph, not across them. A paragraph cannot grow
   past the lines it already has, and one that shrinks leaves the gap.
-- Text drawn with Type 3 fonts is read only.
+- Type 3 fonts can be edited with the characters the font already has. A Type 3
+  glyph is a drawing procedure, so a character the document never contained
+  cannot be invented and falls back to a substitute face.
 - The recogniser reads one language at a time, from the set installed at build
   time. A page mixing two scripts is read as whichever was chosen.
 
