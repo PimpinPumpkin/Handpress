@@ -12,7 +12,7 @@
  * honest trade and is what the interface says.
  */
 
-const DB_NAME = 'vellum';
+const DB_NAME = 'handpress';
 const STORE = 'session';
 const KEY = 'current';
 

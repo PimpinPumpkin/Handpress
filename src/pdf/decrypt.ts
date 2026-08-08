@@ -215,7 +215,7 @@ export async function readHandler(doc: PDFDocument, password = ''): Promise<Hand
 
   const filter = encrypt.lookup(PDFName.of('Filter'));
   if (!(filter instanceof PDFName) || filter.asString().replace(/^\//, '') !== 'Standard') {
-    throw new DecryptionError('This PDF uses a custom security handler that Vellum cannot read.');
+    throw new DecryptionError('This PDF uses a custom security handler that Handpress cannot read.');
   }
 
   const version = numberOf(encrypt, 'V', 0);

@@ -25,6 +25,6 @@ jobs:
       # uploaded as an artifact instead and can be dropped on any static host.
       - uses: actions/upload-artifact@v4
         with:
-          name: vellum-site
+          name: handpress-site
           path: dist
           retention-days: 30

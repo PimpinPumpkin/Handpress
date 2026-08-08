@@ -138,7 +138,7 @@ interface RawOutline {
   items?: RawOutline[];
 }
 
-export class VellumDocument {
+export class HandpressDocument {
   readonly name: string;
   private originalBytes: Uint8Array;
   /** pageIndex -> lineId -> replacement text. */
@@ -230,9 +230,9 @@ export class VellumDocument {
     name: string,
     bytes: Uint8Array,
     password?: string,
-  ): Promise<{ doc: VellumDocument; report: LoadReport }> {
+  ): Promise<{ doc: HandpressDocument; report: LoadReport }> {
     const { bytes: plain, wasEncrypted } = await decryptToBytes(bytes, password);
-    const doc = new VellumDocument(name, plain);
+    const doc = new HandpressDocument(name, plain);
     const report = await doc.reload();
     report.wasEncrypted = wasEncrypted;
     return { doc, report };
@@ -1279,7 +1279,7 @@ export class VellumDocument {
           cssFonts: new Map(),
         };
       } catch (e) {
-        console.warn(`[vellum] page ${index + 1} produced no text model:`, e);
+        console.warn(`[handpress] page ${index + 1} produced no text model:`, e);
         const jsPage = await this.pdfjsDoc.getPage(index + 1).catch(() => null);
         const viewport = jsPage?.getViewport({ scale: 1 });
         model = {

@@ -1,4 +1,4 @@
-# Vellum: working notes
+# Handpress: working notes
 
 **Update the docs with every change.** README.md and this file are part of the
 change, not a follow-up. No AI attribution in commits or repo text, and no

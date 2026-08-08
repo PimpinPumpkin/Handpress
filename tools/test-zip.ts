@@ -46,7 +46,7 @@ for (const file of files) {
   }
 
   const archive = zip(pieces);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vellum-zip-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handpress-zip-'));
   const archivePath = path.join(dir, 'split.zip');
   fs.writeFileSync(archivePath, archive);
 

@@ -15,7 +15,7 @@ const lines = groupLines(walk.ops);
 
 const mutate = (t: string): string | null => {
   const m = /[A-Za-z]{3,}/.exec(t);
-  return m ? t.slice(0, m.index) + 'Vellum' + t.slice(m.index + m[0].length) : null;
+  return m ? t.slice(0, m.index) + 'Handpress' + t.slice(m.index + m[0].length) : null;
 };
 const target = lines.filter((l) => l.text.trim().length >= 12 && mutate(l.text)).sort((a, b) => b.text.length - a.text.length)[0];
 const newText = mutate(target.text)!;
@@ -73,8 +73,8 @@ for (const l of lines2) {
 }
 
 console.log('lines after save (total):', lines2.length);
-console.log('any Vellum?', lines2.some((l) => l.text.includes('Vellum')));
-for (const l of lines2.filter((l) => l.text.includes('Vellum'))) {
+console.log('any Handpress?', lines2.some((l) => l.text.includes('Handpress')));
+for (const l of lines2.filter((l) => l.text.includes('Handpress'))) {
   console.log('  found at baselineY=', l.baselineY.toFixed(2), JSON.stringify(l.text.slice(0, 60)));
 }
 const newContent = getPageContent(doc2.getPage(0));

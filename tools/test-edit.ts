@@ -33,7 +33,7 @@ function snapshot(lines: TextLine[]): Snap[] {
 function mutate(text: string): string | null {
   const m = /[A-Za-z]{3,}/.exec(text);
   if (!m) return null;
-  return text.slice(0, m.index) + 'Vellum' + text.slice(m.index + m[0].length);
+  return text.slice(0, m.index) + 'Handpress' + text.slice(m.index + m[0].length);
 }
 
 let pass = 0;
@@ -171,7 +171,7 @@ for (const file of files) {
   const expected = newText;
 
   const problems: string[] = [];
-  if (!edited.includes('Vellum')) {
+  if (!edited.includes('Handpress')) {
     problems.push(`edit not found on saved page (got ${JSON.stringify(edited.slice(0, 60))})`);
   }
   // An edit that makes a line longer can bring it up against the run beside it,

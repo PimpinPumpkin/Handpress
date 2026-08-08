@@ -1,4 +1,4 @@
-# Vellum
+# Handpress
 
 A PDF text editor that runs entirely in the browser. Open a PDF, click a line of
 text, retype it, save. There is no server, no upload and no account.
@@ -9,13 +9,13 @@ the file. The ones that do are either desktop apps or put a daily cap on it.
 
 ## How it works
 
-Editing existing PDF text is harder than it looks, and most of Vellum is about
+Editing existing PDF text is harder than it looks, and most of Handpress is about
 the two problems that make it hard.
 
 ### Finding the text
 
 A PDF does not store paragraphs. It stores drawing instructions: set a font, set
-a position, show these character codes. Vellum tokenises the page content stream
+a position, show these character codes. Handpress tokenises the page content stream
 and replays the graphics and text state machines, so it knows where every run of
 text lands on the page and, crucially, the exact byte range of the operator that
 drew it. Editing then becomes a precise splice of the original stream rather than
@@ -38,14 +38,14 @@ operators are never touched.
 
 **Fonts are checked per character before anything is written.** Embedded fonts
 are nearly always subset to only the glyphs the document actually uses, so the
-letter you just typed may genuinely not exist in the file. Vellum inverts the
+letter you just typed may genuinely not exist in the file. Handpress inverts the
 font's ToUnicode CMap to get both a Unicode to character-code encoder and an
 honest test of what the subset can draw. Characters the font has are written with
 the document's own font. Characters it lacks are drawn with a substitute,
 and only those characters, so one unusual letter never restyles the text around
 it. The properties panel says when this happened.
 
-For the substitute, Vellum prefers the real typeface. Press **Match fonts** and
+For the substitute, Handpress prefers the real typeface. Press **Match fonts** and
 it will look up the document's font by name among the ones installed on your
 computer, and embed a subset of the genuine face rather than a lookalike. That
 uses the Local Font Access API, so it is Chromium only and asks permission the
@@ -116,7 +116,7 @@ comment rather than part of the document.
 
 Notes drag to reposition, reopen for editing, and delete. Emptying the comment
 removes the note, which is the only sensible reading of a note with nothing in
-it. The marker Vellum draws stands in for the icon a reader will draw; the page
+it. The marker Handpress draws stands in for the icon a reader will draw; the page
 itself is not touched.
 
 ### Highlighting
@@ -302,7 +302,7 @@ otherwise take an afternoon's editing with it, and the warning on the way out is
 only worth anything if there is something behind it.
 
 The document as it currently stands is written aside a couple of seconds after
-the last change, and offered back the next time Vellum is opened. What is kept
+the last change, and offered back the next time Handpress is opened. What is kept
 is the document, not the list of edits that made it, so restoring is exactly the
 same as opening a file, which is the best tested path there is. The cost is the
 undo history, which the offer says plainly.
@@ -352,7 +352,7 @@ positioned spans are otherwise all one line as far as a copy is concerned.
 
 Editing one line of a paragraph and leaving the rest where they were is what
 makes most PDF editors feel like patching rather than writing: delete a word and
-the line ends early, add a sentence and it runs off the column. Vellum treats the
+the line ends early, add a sentence and it runs off the column. Handpress treats the
 lines a paragraph is made of as one piece of text, re-breaks it from the edited
 line onwards, and writes each line back.
 
@@ -424,7 +424,7 @@ the wording says as much.
 
 Most "protected" PDFs are not password protected at all. They carry an owner
 password restricting printing or editing while the user password is empty, which
-is why any viewer opens them without asking. Vellum unlocks those on the way in
+is why any viewer opens them without asking. Handpress unlocks those on the way in
 and the copy you save is not locked.
 
 Decryption has to happen before parsing rather than after. Objects stored inside
@@ -439,7 +439,7 @@ open the file and nothing else: it is not stored, not remembered between files,
 and not sent anywhere, because there is nowhere to send it. A wrong one says so
 and asks again.
 
-Vellum can put a password on a document, so it had better be able to take one
+Handpress can put a password on a document, so it had better be able to take one
 off, and the copy it saves does not ask for the password the original did.
 That is said out loud on opening rather than discovered later. **Protect** puts
 one back on.
@@ -448,7 +448,7 @@ one back on.
 
 The renderer and the editor are different parsers with different tolerance for
 damage, and a file can be perfectly readable to one and impossible for the
-other. Rather than refuse those, Vellum opens them for reading: the pages show,
+other. Rather than refuse those, Handpress opens them for reading: the pages show,
 the text can be selected and copied, and the pages export as images. Saving is
 switched off and a notice says why, because finding out at the save is worse
 than being told at the door.
@@ -467,7 +467,7 @@ few, and were put there to be moved. Two fingers pinch to zoom.
 
 ## Limitations
 
-- **Scanned PDFs have no text to edit** until they are read. Vellum detects this
+- **Scanned PDFs have no text to edit** until they are read. Handpress detects this
   and says so rather than showing an empty page, and **Read scan** adds the text
   layer a page at a time.
 - Reflow works inside a paragraph, not across them. A paragraph cannot grow
@@ -598,4 +598,18 @@ Good corpora to point them at, all free:
 
 ## Licence
 
-Private project. pdf.js is Apache 2.0 and pdf-lib is MIT.
+[GNU Affero General Public License v3.0](LICENSE). Use it, change it, run it,
+sell what you build around it. If you offer a modified version to other people,
+including over a network, you have to offer them its source too.
+
+That last clause is the reason for choosing this licence rather than MIT. It
+costs an ordinary user nothing and it stops a modified, closed copy being put up
+somewhere with adverts on it and the privacy taken back out.
+
+Complying is close to automatic here. Handpress is delivered to the browser and
+run there, so anybody using it already has the code; the only real duty is to
+say where the readable version lives, which the page does.
+
+pdf.js is Apache 2.0, pdf-lib is MIT, tesseract.js is Apache 2.0, and the
+recogniser's language data is Apache 2.0 from the tessdata project. All are
+compatible with the AGPL and are redistributed under their own terms.

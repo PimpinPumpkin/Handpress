@@ -1,4 +1,4 @@
-/* Vellum: chrome modelled on desktop PDF editors. Dark tool surfaces framing a
+/* Handpress: chrome modelled on desktop PDF editors. Dark tool surfaces framing a
    light document canvas, so the page itself is the brightest thing on screen. */
 
 :root {
@@ -1698,4 +1698,32 @@ body {
     right: 0;
     width: min(76vw, 280px);
   }
+}
+
+/* What the tool does that the others do not, said once, where somebody deciding
+   whether to drop a file in can read it. */
+.claims {
+  max-width: 30rem;
+  margin: 14px auto 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+/* The licence asks that anyone running this can find its source. It is also
+   the only route anyone has to get in touch, so it is not buried. */
+.colophon {
+  margin: 18px auto 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.colophon a {
+  color: var(--ink-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.colophon a:hover {
+  color: var(--ink);
 }

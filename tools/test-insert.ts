@@ -15,7 +15,7 @@ const before = lines.length;
 const insertion: TextInsertion = {
   id: 'ins1', x: 72, y: 200, size: 14,
   color: { r: 0.85, g: 0.1, b: 0.1 },
-  text: 'Added by Vellum\nSecond line here',
+  text: 'Added by Handpress\nSecond line here',
   bold: true, italic: false,
 };
 
@@ -25,7 +25,7 @@ const out = await doc.save({ useObjectStreams: false });
 const doc2 = await PDFDocument.load(out, { throwOnInvalidObject: false, updateMetadata: false });
 const c2 = getPageContent(doc2.getPage(0));
 const lines2 = groupLines(walkPage(c2.bytes, c2.resources).ops);
-const added = lines2.filter((l) => l.text.includes('Added by Vellum') || l.text.includes('Second line'));
+const added = lines2.filter((l) => l.text.includes('Added by Handpress') || l.text.includes('Second line'));
 
 console.log(`lines before=${before} after=${lines2.length}  warnings=${JSON.stringify(res.warnings.map((w) => w.detail))}`);
 for (const l of added) {

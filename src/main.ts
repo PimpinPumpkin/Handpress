@@ -3,7 +3,7 @@
  */
 
 import './style.css';
-import { VellumDocument, type OutlineEntry, type PageModel, type SearchMatch } from './app/model';
+import { HandpressDocument, type OutlineEntry, type PageModel, type SearchMatch } from './app/model';
 import { splitChunks } from './pdf/split';
 import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
@@ -138,7 +138,7 @@ const els = {
   busyText: $('busyText'),
 };
 
-let doc: VellumDocument | null = null;
+let doc: HandpressDocument | null = null;
 let statusTimer: number | undefined;
 /** Remembered so saving can repeat the warning at the moment it matters. */
 let signedDocument = false;
@@ -207,7 +207,7 @@ async function openFile(file: File, password?: string): Promise<void> {
       bytes = (await pdfFromImages([{ name: file.name, bytes }])) as Uint8Array<ArrayBuffer>;
       name = file.name.replace(/\.[^.]+$/, '') + '.pdf';
     }
-    const { doc: opened, report } = await VellumDocument.open(name, bytes, password);
+    const { doc: opened, report } = await HandpressDocument.open(name, bytes, password);
     doc = opened;
     signedDocument = report.signatures.signatures.length > 0;
     if (localFonts.enabled) doc.fontProvider = localFonts;
@@ -240,7 +240,7 @@ async function openFile(file: File, password?: string): Promise<void> {
       // and extracting are not offered here: both rebuild the file, which is
       // the thing that cannot be done.
       showNotice(
-        'This file is damaged in a way the editor cannot work with. Vellum can show it, its text can be ' +
+        'This file is damaged in a way the editor cannot work with. Handpress can show it, its text can be ' +
           'selected and copied, and its pages can be saved as images, but it cannot be changed or saved as a PDF.',
       );
       // The status line should not then suggest recognition would help,
@@ -274,7 +274,7 @@ async function openFile(file: File, password?: string): Promise<void> {
     }
   } catch (e) {
     if (e instanceof DecryptionError) {
-      // Vellum can put a password on a document, so it had better be able to
+      // Handpress can put a password on a document, so it had better be able to
       // take one off. Asking is the whole of it: the file is already in hand.
       askForPassword(file, password !== undefined);
     } else {
@@ -414,7 +414,7 @@ async function offerRecovery(): Promise<void> {
   if (!saved || doc) return;
 
   els.restoreText.textContent =
-    `Vellum still has ${saved.name}, as it stood ${howLongAgo(saved.saved)}. ` +
+    `Handpress still has ${saved.name}, as it stood ${howLongAgo(saved.saved)}. ` +
     'Restoring reopens the document with those changes already in it; the undo history is not kept.';
   els.restoreBar.hidden = false;
 
@@ -1212,7 +1212,7 @@ function measureHelvetica(text: string, size: number): number {
 
 /* ---------------- the recogniser's language ---------------- */
 
-const OCR_LANGUAGE_KEY = 'vellum.ocr.language';
+const OCR_LANGUAGE_KEY = 'handpress.ocr.language';
 
 /**
  * Fills the language picker with the languages this copy actually has.
@@ -1682,7 +1682,7 @@ els.btnProtect.addEventListener('click', () => {
   }
   els.protectPassword.value = '';
   els.protectConfirm.value = '';
-  els.protectHint.textContent = 'Nobody can recover this password for you, not even Vellum.';
+  els.protectHint.textContent = 'Nobody can recover this password for you, not even Handpress.';
   els.protectModal.hidden = false;
   els.protectPassword.focus();
 });
@@ -1702,7 +1702,7 @@ for (const field of [els.protectPassword, els.protectConfirm]) {
     const password = els.protectPassword.value;
     const confirm = els.protectConfirm.value;
     els.protectHint.textContent = !password
-      ? 'Nobody can recover this password for you, not even Vellum.'
+      ? 'Nobody can recover this password for you, not even Handpress.'
       : confirm && password !== confirm
         ? 'The two do not match yet.'
         : password.length < 6
@@ -1824,7 +1824,7 @@ function showProperties(line: TextLine | null, page: PageModel | null): void {
 
   const edited = doc.isEdited(page.index, line.id);
   const note = !line.editable
-    ? '<p class="panel-note">This font has no reliable character mapping, so Vellum cannot tell which glyph is which. Editing is disabled here to avoid corrupting the page.</p>'
+    ? '<p class="panel-note">This font has no reliable character mapping, so Handpress cannot tell which glyph is which. Editing is disabled here to avoid corrupting the page.</p>'
     : edited
       ? '<p class="panel-note ok">Edited. The page above already shows the result that will be saved.</p>'
       : '';

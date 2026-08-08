@@ -1,5 +1,6 @@
 {
-  "name": "vellum",
+  "name": "handpress",
+  "license": "AGPL-3.0-only",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +9,7 @@
     "build": "npm run ocr-assets && tsc && vite build",
     "ocr-assets": "node tools/ocr-assets.mjs",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler pages deploy dist --project-name vellum"
+    "deploy": "npm run build && wrangler pages deploy dist --project-name handpress"
   },
   "devDependencies": {
     "tsx": "^4.23.5",

@@ -38,7 +38,7 @@ and is revisited below.
 
 ## Open questions
 
-- **Name.** `Vellum` is too close to `Vela`. `Overtype` was the favourite until we
+- **Name.** `Handpress` is too close to `Vela`. `Overtype` was the favourite until we
   found an actively promoted open source [OverType markdown editor](https://overtype.dev/)
   with the .dev domain and a Show HN behind it. Too close, in adjacent
   territory, and it would outrank us. Needs another pass with a bulk domain

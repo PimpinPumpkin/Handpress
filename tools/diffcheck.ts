@@ -9,7 +9,7 @@ const page = doc.getPage(0);
 const c = getPageContent(page);
 const walk = walkPage(c.bytes, c.resources);
 const lines = groupLines(walk.ops);
-const mutate = (t: string) => { const m = /[A-Za-z]{3,}/.exec(t); return m ? t.slice(0, m.index) + 'Vellum' + t.slice(m.index + m[0].length) : null; };
+const mutate = (t: string) => { const m = /[A-Za-z]{3,}/.exec(t); return m ? t.slice(0, m.index) + 'Handpress' + t.slice(m.index + m[0].length) : null; };
 const target = lines.filter((l) => l.text.trim().length >= 12 && mutate(l.text)).sort((a, b) => b.text.length - a.text.length)[0];
 await applyEdits(doc, page, walk, lines, [{ lineId: target.id, newText: mutate(target.text)! }], c.bytes);
 const out = await doc.save({ useObjectStreams: false });

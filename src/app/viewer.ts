@@ -10,7 +10,7 @@
  * produces.
  */
 
-import type { PageModel, VellumDocument } from './model';
+import type { PageModel, HandpressDocument } from './model';
 import { charPosition } from '../pdf/content';
 import { standardTextWidth } from '../pdf/fonts';
 import type { TextLine } from '../pdf/content';
@@ -139,7 +139,7 @@ function sampleBackground(canvas: HTMLCanvasElement, rect: DOMRect, dpr: number)
 
 export class Viewer {
   readonly root: HTMLElement;
-  private doc: VellumDocument | null = null;
+  private doc: HandpressDocument | null = null;
   private pages: RenderedPage[] = [];
   private zoom = 1;
   private cb: ViewerCallbacks;
@@ -207,7 +207,7 @@ export class Viewer {
     }
   }
 
-  async load(doc: VellumDocument): Promise<void> {
+  async load(doc: HandpressDocument): Promise<void> {
     this.doc = doc;
     this.root.innerHTML = '';
     this.pages = [];
@@ -501,7 +501,7 @@ export class Viewer {
         () => {
           this.select(line, p);
           if (line.editable) this.openEditor(p, line, viewport);
-          else this.cb.onStatus('That text uses a font Vellum cannot map to characters, so editing it is disabled.', 'warn');
+          else this.cb.onStatus('That text uses a font Handpress cannot map to characters, so editing it is disabled.', 'warn');
         },
       );
 
