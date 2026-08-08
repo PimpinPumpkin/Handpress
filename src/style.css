@@ -525,24 +525,36 @@ body {
   margin: 12px 0 0;
 }
 
+/* The first thing read after the headline, because it is the reason to trust
+   the page with a document at all. Everything else is a feature; this is the
+   whole difference. */
 .dropzone .privacy {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin-top: 26px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.24);
-  color: rgba(255, 255, 255, 0.86);
-  font-size: 12px;
+  gap: 12px;
+  margin: 18px 0 26px;
+  padding: 14px 22px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.dropzone .privacy b {
+  color: #fff;
+  font-weight: 600;
 }
 
 .dropzone .privacy svg {
-  width: 14px;
-  height: 14px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
   fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
+  stroke: var(--accent);
+  stroke-width: 1.6;
   stroke-linejoin: round;
 }
 
@@ -1907,4 +1919,44 @@ body {
   position: absolute;
   z-index: 5;
   pointer-events: none;
+}
+
+/* Open source is a reason people choose this over the alternatives, so it gets
+   a line of its own rather than a footnote. */
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 22px;
+  padding: 9px 16px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 9px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  text-decoration: none;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.source-link:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.source-link svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  fill: currentColor;
+}
+
+/* Says plainly that this is early. Better here than discovered in a bug. */
+.beta {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(240, 165, 58, 0.16);
+  color: #f0a53a;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
 }

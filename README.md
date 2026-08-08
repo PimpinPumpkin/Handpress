@@ -7,6 +7,14 @@ The gap this fills: plenty of free web tools will merge, split, rotate or
 annotate a PDF, but almost none will let you edit the text that is already in
 the file. The ones that do are either desktop apps or put a daily cap on it.
 
+
+## Status
+
+Beta. It is used daily on real documents and its engine is checked against a
+corpus of nearly a thousand PDFs on every change, but the version number starts
+with a zero on purpose: things are still being found, and some of them have
+been in how text is written back.
+
 ## How it works
 
 Editing existing PDF text is harder than it looks, and most of Handpress is about
