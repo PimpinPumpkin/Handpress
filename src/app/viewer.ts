@@ -12,6 +12,7 @@
 
 import type { PageModel, HandpressDocument } from './model';
 import { charPosition } from '../pdf/content';
+import { measure } from '../pdf/paragraphs';
 import { standardTextWidth } from '../pdf/fonts';
 import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
@@ -483,9 +484,22 @@ export class Viewer {
               return { x: bx - ax, y: by - ay };
             })()
           : { x: 0, y: 0 };
+      // An edited line is not the length it was drawn. The box comes from the
+      // original extent, so text that grew ran out past the edge of its own
+      // box and text that shrank left the box hanging off the end. The
+      // difference is measured in the line's own font and added.
+      const shown = this.doc.textFor(p.index, line);
+      let width = geo.width;
+      if (shown !== line.text) {
+        const horizScale = line.ops[0]?.horizScale ?? 100;
+        const was = measure(line.font, line.text, line.fontSize, horizScale);
+        const now = measure(line.font, shown, line.fontSize, horizScale);
+        if (was !== null && now !== null) width = Math.max(4, geo.width + (now - was) * this.zoom);
+      }
+
       box.style.left = `${geo.left + shift.x}px`;
       box.style.top = `${geo.top + shift.y}px`;
-      box.style.width = `${geo.width}px`;
+      box.style.width = `${width}px`;
       box.style.height = `${geo.height}px`;
       if (geo.angle) box.style.transform = `rotate(${geo.angle}deg)`;
       box.style.transformOrigin = 'left top';

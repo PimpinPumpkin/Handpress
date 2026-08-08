@@ -2,7 +2,7 @@
   "name": "handpress",
   "license": "AGPL-3.0-only",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.3.1",
   "type": "module",
   "scripts": {
     "dev": "npm run ocr-assets && vite",
