@@ -105,6 +105,20 @@ erase and not redaction, and the interface says so every time you use it. Real
 redaction, which removes the operators that drew the text, is a separate job
 still to be done.
 
+### Notes
+
+Click anywhere in note mode and type a comment. It is attached as a real `/Text`
+annotation, which is what every other reader already understands: Acrobat,
+Preview and the browser viewers show it as a note icon that opens the comment,
+and a reviewer can reply to it. Drawing the words onto the page instead would
+look similar and be useless, because nothing downstream would know it was a
+comment rather than part of the document.
+
+Notes drag to reposition, reopen for editing, and delete. Emptying the comment
+removes the note, which is the only sensible reading of a note with nothing in
+it. The marker Vellum draws stands in for the icon a reader will draw; the page
+itself is not touched.
+
 ### Highlighting
 
 Drag over anything to mark it. The colour is painted with a multiply blend, which

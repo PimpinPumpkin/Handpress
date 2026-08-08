@@ -27,6 +27,7 @@ import {
 import { decryptToBytes } from '../pdf/decrypt';
 import { describeSignatures, findSignatures, type SignatureReport } from '../pdf/signatures';
 import { applyFormValues, readForm, type FormField } from '../pdf/forms';
+import { addNotes, type PageNote } from '../pdf/notes';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -50,6 +51,7 @@ interface EditState {
   redactions: Map<number, Map<string, RedactionArea>>;
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
+  notes: Map<number, Map<string, PageNote>>;
   formValues: Map<string, string>;
   /** Page order and rotation, as a list of operations against the original. */
   pagePlan: PagePlanEntry[];
@@ -129,6 +131,8 @@ export class VellumDocument {
   private insertions = new Map<number, Map<string, TextInsertion>>();
   /** pageIndex -> stamp id -> image placed on the page, such as a signature. */
   private stamps = new Map<number, Map<string, ImageStamp>>();
+  /** pageIndex -> note id -> a comment attached to a point on the page. */
+  private notes = new Map<number, Map<string, PageNote>>();
   /** Interactive form field values, keyed by the field's own name. */
   private formValues = new Map<string, string>();
   /** Fields as the original document declares them, read once. */
@@ -144,6 +148,7 @@ export class VellumDocument {
   private redoStack: EditState[] = [];
   private nextInsertionId = 1;
   private nextStampId = 1;
+  private nextNoteId = 1;
   private nextErasureId = 1;
   private nextRedactionId = 1;
 
@@ -267,6 +272,7 @@ export class VellumDocument {
     if (this.hasPageChanges()) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
+    for (const m of this.notes.values()) if (m.size) return true;
     return this.formValues.size > 0;
   }
 
@@ -290,6 +296,7 @@ export class VellumDocument {
     if (this.hasPageChanges()) n += 1;
     for (const m of this.insertions.values()) n += m.size;
     for (const m of this.stamps.values()) n += m.size;
+    for (const m of this.notes.values()) n += m.size;
     return n + this.formValues.size;
   }
 
@@ -311,6 +318,7 @@ export class VellumDocument {
       redactions: new Map([...this.redactions].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
+      notes: new Map([...this.notes].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
       pagePlan: (this.pagePlan ?? []).map((e) => ({ ...e })),
       extraDocs: [...this.extraDocs],
@@ -325,6 +333,7 @@ export class VellumDocument {
     this.redactions = state.redactions;
     this.insertions = state.insertions;
     this.stamps = state.stamps;
+    this.notes = state.notes;
     this.formValues = state.formValues;
     this.pagePlan = state.pagePlan.length ? state.pagePlan : null;
     this.extraDocs = state.extraDocs;
@@ -362,6 +371,60 @@ export class VellumDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return created;
+  }
+
+  /* ---------------- notes ---------------- */
+
+  /** Attaches a comment to a point on a page and returns it. */
+  addNote(pageIndex: number, note: Omit<PageNote, 'id'>): PageNote {
+    const before = this.snapshot();
+    const created: PageNote = { ...note, id: `note${this.nextNoteId++}` };
+    let page = this.notes.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.notes.set(pageIndex, page);
+    }
+    page.set(created.id, created);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return created;
+  }
+
+  /** Rewrites a note, or removes it when the comment is emptied. */
+  setNoteText(pageIndex: number, id: string, text: string): boolean {
+    const existing = this.notes.get(pageIndex)?.get(id);
+    if (!existing || existing.text === text) return false;
+    const before = this.snapshot();
+    if (text.trim()) this.notes.get(pageIndex)!.set(id, { ...existing, text });
+    else this.notes.get(pageIndex)!.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** Moves a note by a page-space offset. */
+  moveNote(pageIndex: number, id: string, dx: number, dy: number): boolean {
+    const existing = this.notes.get(pageIndex)?.get(id);
+    if (!existing || (!dx && !dy)) return false;
+    const before = this.snapshot();
+    this.notes.get(pageIndex)!.set(id, { ...existing, x: existing.x + dx, y: existing.y + dy });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  removeNote(pageIndex: number, id: string): boolean {
+    const page = this.notes.get(pageIndex);
+    if (!page?.has(id)) return false;
+    const before = this.snapshot();
+    page.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  notesFor(pageIndex: number): PageNote[] {
+    return [...(this.notes.get(pageIndex)?.values() ?? [])];
   }
 
   /* ---------------- searching ---------------- */
@@ -796,6 +859,7 @@ export class VellumDocument {
       ...this.redactions.keys(),
       ...this.insertions.keys(),
       ...this.stamps.keys(),
+      ...this.notes.keys(),
     ]);
     for (const pageIndex of touchedPages) {
       const pageEdits = this.edits.get(pageIndex) ?? new Map<string, string>();
@@ -805,6 +869,7 @@ export class VellumDocument {
       const pageImages = [...(this.imageEdits.get(pageIndex)?.values() ?? [])];
       const pageErasures = [...(this.erasures.get(pageIndex)?.values() ?? [])];
       const pageRedactions = [...(this.redactions.get(pageIndex)?.values() ?? [])];
+      const pageNotes = [...(this.notes.get(pageIndex)?.values() ?? [])];
       if (
         !pageEdits.size &&
         !pageOffsets.size &&
@@ -812,7 +877,8 @@ export class VellumDocument {
         !pageStamps.length &&
         !pageImages.length &&
         !pageErasures.length &&
-        !pageRedactions.length
+        !pageRedactions.length &&
+        !pageNotes.length
       ) {
         continue;
       }
@@ -820,6 +886,9 @@ export class VellumDocument {
         if (pageIndex >= doc.getPageCount()) continue;
 
         const page = doc.getPage(pageIndex);
+        // Notes are annotations rather than page content, so they are attached
+        // to the page object and never touch the content stream.
+        if (pageNotes.length) addNotes(doc, page, pageNotes);
         const content = getPageContent(page);
         const walk = walkPage(content.bytes, content.resources);
         const lines = groupLines(walk.ops);

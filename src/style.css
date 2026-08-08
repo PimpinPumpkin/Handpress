@@ -1204,6 +1204,80 @@ body {
   text-align: center;
 }
 
+/* ---------- notes ---------- */
+
+/* The marker stands in for the icon a reader draws for a /Text annotation. */
+.note-marker {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  min-height: 16px;
+  border-radius: 4px 4px 4px 0;
+  background: #ffd23f;
+  border: 1px solid rgba(120, 90, 0, 0.75);
+  color: rgba(60, 45, 0, 0.9);
+  font: 600 14px/1 Georgia, serif;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.note-marker:hover {
+  background: #ffdf6b;
+}
+
+.note-editor {
+  position: absolute;
+  z-index: 6;
+  width: 240px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--chrome-1);
+  border: 1px solid var(--chrome-line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  cursor: default;
+}
+
+.note-editor textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--chrome-line);
+  background: var(--chrome-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.note-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.note-actions button {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--chrome-line);
+  background: var(--chrome-2);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.note-actions .note-done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.note-actions .note-delete:hover {
+  border-color: rgba(208, 69, 63, 0.9);
+  color: #f0a09b;
+}
+
 /* ---------- erase ---------- */
 
 .page-overlay.erasing {

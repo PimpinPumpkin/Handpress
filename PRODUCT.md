@@ -84,6 +84,8 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Notes: a comment attached to a point on the page, written as a real /Text
+  annotation so any other reader shows it and can reply to it.
 - Highlighting: drag over anything and it is marked with a multiply blend, so
   the words read through the ink rather than being covered by it. The colour is
   picked from a swatch beside the button.
@@ -116,10 +118,10 @@ and is revisited below.
 Ordered by how often an ordinary person hits the gap, weighted by how well it
 fits an engine that already understands content streams.
 
-1. **Note annotations**: comments attached to a point on the page, which is the
-   half of everyday markup still missing now that highlighting is in.
-2. **More languages for recognition** than English.
-(Real redaction, highlighting and whole-document recognition are done.)
+1. **More languages for recognition** than English.
+2. **Replies on a note**, so a comment can become a thread rather than a single
+   remark.
+(Real redaction, highlighting, notes and whole-document recognition are done.)
 
 ### Next
 

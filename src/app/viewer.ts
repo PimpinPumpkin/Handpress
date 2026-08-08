@@ -13,6 +13,7 @@
 import type { PageModel, VellumDocument } from './model';
 import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
+import { NOTE_SIZE, type PageNote } from '../pdf/notes';
 import type { ImageOp } from '../pdf/content';
 import type { RectFill } from '../pdf/writer';
 
@@ -20,7 +21,7 @@ import type { SearchMatch } from './model';
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
 
-export type ViewerMode = 'edit' | 'add' | 'sign' | 'erase' | 'redact' | 'highlight';
+export type ViewerMode = 'edit' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -136,6 +137,8 @@ export class Viewer {
   private renderToken = 0;
   private observer: IntersectionObserver | null = null;
   private mode: ViewerMode = 'edit';
+  /** Name attached to new notes. Empty until the user gives one. */
+  noteAuthor = '';
   /** Insertion being edited, when the active editor belongs to added text. */
   private activeInsertion: TextInsertion | null = null;
   /** Defaults applied to newly added text. */
@@ -182,7 +185,7 @@ export class Viewer {
     this.closeEditor(false);
     this.mode = mode;
     for (const p of this.pages) {
-      p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign');
+      p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign' || mode === 'note');
       p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact' || mode === 'highlight');
     }
   }
@@ -219,6 +222,7 @@ export class Viewer {
         if (e.target !== overlay) return;
         if (this.mode === 'add') void this.placeText(this.pages[i], e as MouseEvent);
         else if (this.mode === 'sign') void this.placeSignature(this.pages[i], e as MouseEvent);
+        else if (this.mode === 'note') void this.placeNote(this.pages[i], e as MouseEvent);
       });
 
       // Erasing is a drag rather than a click, so it needs the pointer directly.
@@ -557,6 +561,144 @@ export class Viewer {
       );
       p.overlay.appendChild(box);
     }
+
+    // Notes are annotations, so the canvas never draws them: a reader shows its
+    // own icon and its own popup. The marker here stands in for that icon and
+    // is what makes the comment editable while the document is open.
+    for (const note of this.doc.notesFor(p.index)) this.addNoteMarker(p, note, viewport);
+  }
+
+  /** Draws one note's marker and wires dragging and editing to it. */
+  private addNoteMarker(
+    p: RenderedPage,
+    note: PageNote,
+    viewport: { convertToViewportPoint(x: number, y: number): number[] },
+  ): void {
+    const [nx, ny] = viewport.convertToViewportPoint(note.x, note.y);
+    const marker = document.createElement('div');
+    marker.className = 'note-marker';
+    marker.dataset.note = note.id;
+    marker.style.left = `${nx}px`;
+    marker.style.top = `${ny}px`;
+    marker.style.width = `${NOTE_SIZE * this.zoom}px`;
+    marker.style.height = `${NOTE_SIZE * this.zoom}px`;
+    marker.textContent = '\u201c';
+    marker.title = `${note.text || 'Empty note'}\n\nDrag to move, click to edit.`;
+
+    this.makeDraggable(
+      marker,
+      viewport as never,
+      (dx, dy) => {
+        if (!this.doc) return;
+        if (!this.doc.moveNote(p.index, note.id, dx, dy)) return;
+        void this.rebuild().then(() => this.cb.onEdited());
+      },
+      () => this.openNoteEditor(p, note, viewport),
+    );
+    p.overlay.appendChild(marker);
+  }
+
+  /** Attaches a comment where the user clicked and opens it for typing. */
+  private async placeNote(p: RenderedPage, event: MouseEvent): Promise<void> {
+    if (!this.doc?.pdfjs) return;
+    const rect = p.overlay.getBoundingClientRect();
+    const jsPage = await this.doc.pdfjs.getPage(p.index + 1);
+    const viewport = jsPage.getViewport({ scale: this.zoom });
+    const [px, py] = viewport.convertToPdfPoint(event.clientX - rect.left, event.clientY - rect.top);
+
+    const note = this.doc.addNote(p.index, {
+      x: px,
+      y: py,
+      text: '',
+      author: this.noteAuthor,
+      written: Date.now(),
+    });
+    // Drawn straight away rather than waiting for the next rebuild, so the note
+    // is visibly there while its comment is still being typed.
+    this.addNoteMarker(p, note, viewport);
+    this.cb.onEdited();
+    this.openNoteEditor(p, note, viewport);
+  }
+
+  /**
+   * Opens a note for typing.
+   *
+   * A comment is prose rather than a line of the page, so it gets a proper box
+   * to write in instead of the in-place editor the rest of the text uses. An
+   * empty comment on close removes the note, which is the only sensible reading
+   * of a note with nothing in it.
+   */
+  private openNoteEditor(
+    p: RenderedPage,
+    note: PageNote,
+    viewport: { convertToViewportPoint(x: number, y: number): number[] },
+  ): void {
+    if (!this.doc) return;
+    this.closeEditor(true);
+    p.container.querySelector('.note-editor')?.remove();
+
+    const [nx, ny] = viewport.convertToViewportPoint(note.x, note.y);
+    const panel = document.createElement('div');
+    panel.className = 'note-editor';
+    panel.style.left = `${nx + NOTE_SIZE * this.zoom + 6}px`;
+    panel.style.top = `${ny}px`;
+
+    const area = document.createElement('textarea');
+    area.value = note.text;
+    area.placeholder = 'Write a comment';
+    area.rows = 4;
+    panel.appendChild(area);
+
+    const row = document.createElement('div');
+    row.className = 'note-actions';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'note-delete';
+    remove.textContent = 'Delete';
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'note-done';
+    done.textContent = 'Done';
+    row.append(remove, done);
+    panel.appendChild(row);
+
+    const close = (): void => panel.remove();
+    const save = (): void => {
+      if (!this.doc) return;
+      const text = area.value;
+      close();
+      if (!this.doc.setNoteText(p.index, note.id, text)) return;
+      void this.rebuild().then(() => {
+        this.cb.onStatus(text.trim() ? 'Note saved.' : 'Empty note removed.');
+        this.cb.onEdited();
+      });
+    };
+
+    done.addEventListener('click', save);
+    remove.addEventListener('click', () => {
+      if (!this.doc) return;
+      close();
+      if (!this.doc.removeNote(p.index, note.id)) return;
+      void this.rebuild().then(() => {
+        this.cb.onStatus('Note removed.');
+        this.cb.onEdited();
+      });
+    });
+    panel.addEventListener('click', (e) => e.stopPropagation());
+    panel.addEventListener('pointerdown', (e) => e.stopPropagation());
+    area.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+      e.stopPropagation();
+    });
+
+    // The panel belongs to the page rather than the overlay, because the
+    // overlay is thrown away and rebuilt on every rebuild of the document and
+    // would take a half typed comment with it.
+    p.container.appendChild(panel);
+    area.focus();
   }
 
   /**

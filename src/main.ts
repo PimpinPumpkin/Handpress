@@ -33,6 +33,7 @@ const els = {
   btnErase: $<HTMLButtonElement>('btnErase'),
   btnRedact: $<HTMLButtonElement>('btnRedact'),
   btnHighlight: $<HTMLButtonElement>('btnHighlight'),
+  btnNote: $<HTMLButtonElement>('btnNote'),
   btnOcr: $<HTMLButtonElement>('btnOcr'),
   highlightColor: $<HTMLInputElement>('highlightColor'),
   btnAddPages: $<HTMLButtonElement>('btnAddPages'),
@@ -331,7 +332,7 @@ function syncEditState(): void {
 
 /* ---------------- editing mode ---------------- */
 
-function setMode(mode: 'edit' | 'add' | 'sign' | 'erase' | 'redact' | 'highlight'): void {
+function setMode(mode: 'edit' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight'): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
   els.btnModeAdd.classList.toggle('tool-active', mode === 'add');
@@ -339,6 +340,7 @@ function setMode(mode: 'edit' | 'add' | 'sign' | 'erase' | 'redact' | 'highlight
   els.btnErase.classList.toggle('tool-active', mode === 'erase');
   els.btnRedact.classList.toggle('tool-active', mode === 'redact');
   els.btnHighlight.classList.toggle('tool-active', mode === 'highlight');
+  els.btnNote.classList.toggle('tool-active', mode === 'note');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
@@ -346,6 +348,7 @@ function setMode(mode: 'edit' | 'add' | 'sign' | 'erase' | 'redact' | 'highlight
     erase: 'Drag over anything to cover it. This hides the text; it does not delete it.',
     redact: 'Drag over text to delete it from the saved file. This is not reversible once saved.',
     highlight: 'Drag over text to highlight it. The words stay readable underneath.',
+    note: 'Click where the comment belongs. It is attached as a note any PDF reader can open.',
   };
   setStatus(messages[mode]);
 }
@@ -364,6 +367,14 @@ els.btnHighlight.addEventListener('click', () => {
     return;
   }
   setMode('highlight');
+});
+
+els.btnNote.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  setMode('note');
 });
 
 els.highlightColor.addEventListener('change', () => {

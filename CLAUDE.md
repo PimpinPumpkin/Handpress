@@ -137,6 +137,19 @@ read. `tools/test-multi.ts` reports this on `sample-multi.pdf`, where the title
 and the ISSN sit 0.9pt apart. The file itself is correct: the ISSN run is still
 drawn at exactly its original x. Do not chase it as a writer bug.
 
+## Notes are annotations, not page content
+
+`src/pdf/notes.ts` attaches `/Text` annotations to the page object; nothing about
+a note goes through the content stream or the writer. That is why the canvas
+never shows one: readers draw their own icon and popup, so the overlay draws a
+marker to stand in for it while the document is open. Comment text is written as
+a hex string, which is UTF-16 and can therefore carry any language; a literal
+string would be stuck with the document's own encoding.
+
+The note editor is appended to the page container rather than the overlay,
+because the overlay is discarded and rebuilt on every rebuild of the document
+and took a half typed comment with it.
+
 ## Open work
-- Reflow across lines, adding and deleting text blocks, note annotations,
+- Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.
