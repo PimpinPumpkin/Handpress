@@ -1228,6 +1228,12 @@ body {
   gap: 4px;
 }
 
+/* The find button is for phones, where the search box is collapsed behind it.
+   With room for the box itself there is nothing for it to do. */
+#btnFind {
+  display: none;
+}
+
 .search-input {
   width: 150px;
   padding: 4px 8px;
@@ -1642,6 +1648,31 @@ body {
   .topbar {
     gap: 8px;
     padding: 0 8px;
+  }
+
+  /* Find is behind its own button here, and takes the whole bar when it is
+     open. Left permanently open it was 200px of a 375px screen and Open,
+     Print and Save were off the right hand edge. */
+  #btnFind {
+    display: inline-flex;
+  }
+
+  .search-box {
+    display: none;
+  }
+
+  #app.finding .search-box {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+
+  #app.finding .brand,
+  #app.finding .doc-title,
+  #app.finding #btnOpen,
+  #app.finding #btnPrint,
+  #app.finding #btnSave {
+    display: none;
   }
 
   .brand-name {

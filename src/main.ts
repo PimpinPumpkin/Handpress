@@ -27,7 +27,22 @@ import type { TextLine } from './pdf/content';
 
 declare const __APP_VERSION__: string;
 
-const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+/**
+ * Looks up an element that the page is required to contain.
+ *
+ * It throws rather than casting a null through, because it used to cast a null
+ * through. Rearranging the toolbar dropped the zoom control out of the markup,
+ * nothing said so, and the first sign of it was every document reporting
+ * "Could not open that PDF" while opening perfectly well: a null read three
+ * calls away from the missing tag. Everything here is built at startup, so a
+ * throw stops the app on the first load with the id that is missing, which is
+ * where the mistake actually is.
+ */
+const $ = <T extends HTMLElement>(id: string): T => {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`The page is missing #${id}`);
+  return el as T;
+};
 
 /**
  * What went wrong, in a form fit to show someone.
@@ -85,6 +100,7 @@ const els = {
   searchCount: $('searchCount'),
   searchPrev: $<HTMLButtonElement>('searchPrev'),
   searchNext: $<HTMLButtonElement>('searchNext'),
+  btnFind: $<HTMLButtonElement>('btnFind'),
   btnExtract: $<HTMLButtonElement>('btnExtract'),
   btnPageImage: $<HTMLButtonElement>('btnPageImage'),
   btnCompress: $<HTMLButtonElement>('btnCompress'),
@@ -209,6 +225,8 @@ async function openFile(file: File, password?: string): Promise<void> {
   }
 
   setBusy(true, `Opening ${file.name}…`);
+  // Declared out here so it is released whether the open succeeds or not.
+  let previous: HandpressDocument | null = null;
   try {
     let bytes: Uint8Array<ArrayBuffer> = new Uint8Array(await file.arrayBuffer());
     let name = file.name;
@@ -221,9 +239,12 @@ async function openFile(file: File, password?: string): Promise<void> {
       name = file.name.replace(/\.[^.]+$/, '') + '.pdf';
     }
     const { doc: opened, report } = await HandpressDocument.open(name, bytes, password);
-    // Only once the new one is known to have opened, so a file that fails to
-    // load does not take the working document down with it.
-    void doc?.close();
+    // Held, not closed. Closing here destroyed the pdf.js document while the
+    // viewer was still drawing from it, and the cancelled render was reported
+    // as the new file failing to open. It is released below, after the viewer
+    // has let go of it. Nothing is closed before this line, so a file that
+    // fails to open does not take the working document down with it.
+    previous = doc;
     doc = opened;
     signedDocument = report.signatures.signatures.length > 0;
     if (localFonts.enabled) doc.fontProvider = localFonts;
@@ -298,6 +319,9 @@ async function openFile(file: File, password?: string): Promise<void> {
       setStatus(`Could not open that PDF: ${reason(e)}`, 'warn');
     }
   } finally {
+    // After the viewer has settled its renders and pointed itself at the new
+    // document, so nothing is still reading from the old one.
+    void previous?.close();
     setBusy(false);
   }
 }
@@ -658,8 +682,7 @@ window.addEventListener('keydown', (e) => {
     if (viewer.selectPageText()) e.preventDefault();
   } else if (key === 'f') {
     e.preventDefault();
-    els.searchInput.focus();
-    els.searchInput.select();
+    openFind();
   } else if (key === 'g') {
     e.preventDefault();
     void step(e.shiftKey ? -1 : 1);
@@ -1639,6 +1662,34 @@ async function step(delta: number): Promise<void> {
   await viewer.revealMatch(matchIndex);
 }
 
+/**
+ * Puts the cursor in the find box, unfolding it first on a phone.
+ *
+ * On a wide screen the box is always there and this is just a focus. On a
+ * narrow one it is folded away behind a button, because a permanently open
+ * search field took enough of the bar to push Save off the edge.
+ */
+function openFind(): void {
+  document.getElementById('app')?.classList.add('finding');
+  els.searchInput.focus();
+  els.searchInput.select();
+}
+
+/** Folds the find box away again, and clears whatever it was highlighting. */
+function closeFind(): void {
+  document.getElementById('app')?.classList.remove('finding');
+  if (els.searchInput.value) {
+    els.searchInput.value = '';
+    void runSearch();
+  }
+  els.searchInput.blur();
+}
+
+els.btnFind.addEventListener('click', () => {
+  if (document.getElementById('app')?.classList.contains('finding')) closeFind();
+  else openFind();
+});
+
 els.searchInput.addEventListener('input', () => {
   // Searching every page is not free, so keystrokes are allowed to settle.
   window.clearTimeout(searchTimer);
@@ -1650,9 +1701,7 @@ els.searchInput.addEventListener('keydown', (e) => {
     if (matches.length) void step(e.shiftKey ? -1 : 1);
     else void runSearch();
   } else if (e.key === 'Escape') {
-    els.searchInput.value = '';
-    void runSearch();
-    els.searchInput.blur();
+    closeFind();
   }
   e.stopPropagation();
 });

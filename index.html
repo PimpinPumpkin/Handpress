@@ -25,7 +25,27 @@
           title="Click to rename. The name is used when you save."
         >No document open</div>
 
+        <!-- Find lives up here rather than in a tool group for the same reason
+             zoom lives in the status bar: it is not a tool, and reaching for
+             it should not put down whatever tool is in hand. -->
+        <div class="search-box">
+          <input class="search-input" id="searchInput" type="search" placeholder="Find in document" aria-label="Find in document" />
+          <span class="search-count" id="searchCount"></span>
+          <button class="tool tool-icon" id="searchPrev" type="button" title="Previous match" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
+          </button>
+          <button class="tool tool-icon" id="searchNext" type="button" title="Next match" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+        </div>
+
         <div class="topbar-actions">
+          <!-- Phones only. There is no Ctrl+F on a phone, and a search box
+               sitting open in the top bar there pushed Open and Save off the
+               edge of the screen. -->
+          <button class="tool tool-icon" id="btnFind" type="button" title="Find in document">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+          </button>
           <button class="btn" id="btnOpen" type="button">Open</button>
           <button class="btn" id="btnPrint" type="button" disabled>Print</button>
           <button class="btn btn-primary" id="btnSave" type="button" disabled>Save a copy</button>
@@ -274,6 +294,29 @@
           <button class="tool tool-icon" id="btnNext" type="button" title="Next page">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
           </button>
+
+          <!-- Zoom sits down here with the page number rather than up in a
+               tab, because it is not a tool and it is wanted while another
+               tool is in use. Putting it in one of the tool groups meant
+               zooming mid-stroke first put the pen away. -->
+          <div class="zoom-group">
+            <button class="tool tool-icon" id="btnZoomOut" type="button" title="Zoom out">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M8 11h6" /><path d="M20 20l-3.5-3.5" /></svg>
+            </button>
+            <select class="zoom-select" id="zoomSelect" title="Zoom">
+              <option value="fit">Fit width</option>
+              <option value="0.5">50%</option>
+              <option value="0.75">75%</option>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5">150%</option>
+              <option value="2">200%</option>
+              <option value="3">300%</option>
+            </select>
+            <button class="tool tool-icon" id="btnZoomIn" type="button" title="Zoom in">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M11 8v6" /><path d="M8 11h6" /><path d="M20 20l-3.5-3.5" /></svg>
+            </button>
+          </div>
         </div>
         <div class="status-message" id="statusMessage"></div>
         <div class="status-right" id="editCount"></div>

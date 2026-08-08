@@ -291,6 +291,13 @@ export class Viewer {
   }
 
   async load(doc: HandpressDocument): Promise<void> {
+    // The outgoing document's renders finish before it is let go of. Opening a
+    // second file while the first was still drawing tore the canvases out from
+    // under those renders, and the cancellation came back up as "Could not
+    // open that PDF: Rendering cancelled, page 1" about a file that was
+    // perfectly fine. settleRenders never rejects, so a page that was already
+    // failing cannot take the new document down with it either.
+    await this.settleRenders();
     this.doc = doc;
     this.root.innerHTML = '';
     this.pages = [];
@@ -374,7 +381,14 @@ export class Viewer {
     for (const p of this.pages) this.observer.observe(p.container);
 
     await this.reserveSizes();
-    await this.renderPage(0);
+    try {
+      await this.renderPage(0);
+    } catch (e) {
+      // A superseded first page is not a document that failed to open. It
+      // means a third file arrived while this one was drawing, and that file's
+      // render is the one that should be believed.
+      if (!Viewer.isCancellation(e)) throw e;
+    }
   }
 
   /** Sets page box sizes before rendering so scrolling does not jump. */
@@ -1976,9 +1990,30 @@ export class Viewer {
     await Promise.allSettled(this.pages.map((p) => p.queue));
   }
 
+  /**
+   * Runs one document rebuild at a time, whoever asked for it.
+   *
+   * Every rebuild replaces the pdf.js document underneath the canvases, so two
+   * of them overlapping is two sets of renders drawing from two different
+   * files into the same page. Typing an edit and then dragging something while
+   * it applies used to do exactly that, and the page settled on whichever
+   * render happened to finish last: a composite of two versions of the
+   * document, correct in neither.
+   */
+  private serialize<T>(job: () => Promise<T>): Promise<T> {
+    const run = this.rebuildQueue.then(job);
+    // Swallowed here only so a failure does not break the chain for whatever
+    // is queued behind it. The caller still sees its own rejection.
+    this.rebuildQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   /** Rebuilds the document and repaints, shared by anything that changes it. */
   private async rebuild(onlyPage?: number): Promise<void> {
-    const run = this.rebuildQueue.then(async () => {
+    return this.serialize(async () => {
       if (!this.doc) return;
       try {
         // Renders already running hold the document that is about to be
@@ -1997,8 +2032,6 @@ export class Viewer {
         this.dropLifted();
       }
     });
-    this.rebuildQueue = run.catch(() => undefined);
-    return run;
   }
 
   /** Creates new text where the user clicked and opens it for typing. */
@@ -2251,11 +2284,18 @@ export class Viewer {
 
     this.cb.onStatus('Applying edit…');
     try {
-      await this.settleRenders();
-      const warnings = await this.doc.refresh();
-      // Only the page that was typed on. A reflowed paragraph stays on its own
-      // page, so nothing else on screen can have changed.
-      await this.refreshRendered(page.index);
+      // On the same chain as every other rebuild. This used to refresh on its
+      // own, so an edit committing while a drag was being applied put two
+      // rebuilds through at once and the page kept whichever finished last.
+      const warnings = await this.serialize(async () => {
+        if (!this.doc) return [];
+        await this.settleRenders();
+        const w = await this.doc.refresh();
+        // Only the page that was typed on. A reflowed paragraph stays on its
+        // own page, so nothing else on screen can have changed.
+        await this.refreshRendered(page.index);
+        return w;
+      });
       this.dropLifted();
       this.cb.onEdited();
       const substituted = warnings.filter((w) => w.kind === 'substituted-font');
