@@ -859,6 +859,69 @@ els.btnArrow.addEventListener('click', () => setMode('arrow'));
 els.btnRect.addEventListener('click', () => setMode('rect'));
 els.btnEllipse.addEventListener('click', () => setMode('ellipse'));
 
+/* ---------------- tool groups ---------------- */
+
+/**
+ * Shows one group of tools at a time.
+ *
+ * The flat strip was wider than any screen and scrolled past its own contents,
+ * so tools existed that nobody would ever find. Choosing a group is not
+ * choosing a tool: the active tool keeps working while another group is on
+ * screen, which matters because the width and colour of the pen live in the
+ * draw group and somebody may well go and change the zoom halfway through.
+ */
+function showToolGroup(name: string): void {
+  for (const tab of document.querySelectorAll<HTMLElement>('.tool-tab')) {
+    tab.classList.toggle('is-on', tab.dataset.group === name);
+  }
+  for (const group of document.querySelectorAll<HTMLElement>('.tool-group')) {
+    group.classList.toggle('is-hidden', group.dataset.group !== name);
+  }
+  localStorage.setItem(TOOL_GROUP_KEY, name);
+}
+
+const TOOL_GROUP_KEY = 'handpress.toolgroup';
+
+for (const tab of document.querySelectorAll<HTMLElement>('.tool-tab')) {
+  tab.addEventListener('click', () => showToolGroup(tab.dataset.group ?? 'text'));
+}
+
+showToolGroup(localStorage.getItem(TOOL_GROUP_KEY) ?? 'text');
+
+/**
+ * Brings a tool's own group forward when the tool is chosen another way.
+ *
+ * A keyboard shortcut or a status message can put the app into a mode whose
+ * button is in a group nobody is looking at, and a mode with no visible tool
+ * is how somebody ends up drawing on a page by accident.
+ */
+function revealGroupOf(id: string): void {
+  const button = document.getElementById(id);
+  // Only when it cannot already be seen, so choosing a tool that is right
+  // there does not shuffle the toolbar underneath the pointer.
+  if (!button || button.offsetParent !== null) return;
+  const group = button.closest<HTMLElement>('.tool-group')?.dataset.group;
+  if (group) showToolGroup(group);
+}
+
+/** Which button belongs to each tool, for bringing its group forward. */
+const MODE_BUTTONS: Record<string, string> = {
+  edit: 'btnModeEdit',
+  select: 'btnModeSelect',
+  add: 'btnModeAdd',
+  sign: 'btnSign',
+  note: 'btnNote',
+  erase: 'btnErase',
+  redact: 'btnRedact',
+  highlight: 'btnHighlight',
+  pen: 'btnPen',
+  inkErase: 'btnInkErase',
+  line: 'btnLine',
+  arrow: 'btnArrow',
+  rect: 'btnRect',
+  ellipse: 'btnEllipse',
+};
+
 function syncEditState(): void {
   const dirty = doc?.hasEdits() ?? false;
   // Nothing can be written back from a document the editor's parser could not
@@ -926,6 +989,7 @@ function setMode(
   els.btnArrow.classList.toggle('tool-active', mode === 'arrow');
   els.btnRect.classList.toggle('tool-active', mode === 'rect');
   els.btnEllipse.classList.toggle('tool-active', mode === 'ellipse');
+  revealGroupOf(MODE_BUTTONS[mode] ?? '');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
     pen: 'Draw anywhere on the page. What you draw becomes part of it.',

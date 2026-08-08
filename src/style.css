@@ -17,6 +17,7 @@
   --radius: 6px;
   --topbar-h: 48px;
   --toolbar-h: 44px;
+  --tabs-h: 34px;
   --status-h: 30px;
   color-scheme: dark;
 }
@@ -50,7 +51,10 @@ body {
 
 #app {
   display: grid;
-  grid-template-rows: var(--topbar-h) var(--toolbar-h) 1fr var(--status-h);
+  /* Tabs, then the tools of whichever group is chosen. Adding a row here and
+     forgetting the template pushed every row down one and gave the toolbar the
+     whole window. */
+  grid-template-rows: var(--topbar-h) var(--tabs-h) var(--toolbar-h) 1fr var(--status-h);
   height: 100vh;
   /* The grid must never grow past the window. A toolbar wider than the screen
      would otherwise stretch the whole layout, and the viewer would then measure
@@ -1655,9 +1659,18 @@ body {
     flex: 0 0 auto;
   }
 
-  /* The tool strip scrolls sideways rather than shrinking its targets. Twenty
-     tools will not fit a phone at any size worth tapping, and a row that
-     scrolls is honest about that where a row of unreadable icons is not. */
+  /* Now that the tools are grouped, the labels can go: the tab above says
+     which group these belong to, which is the context the label was carrying.
+     What is left still scrolls when a group is wide, but the widest group is
+     now a third of what the flat strip was. */
+  .tool span {
+    display: none;
+  }
+
+  .ink-slider input[type='range'] {
+    width: 54px;
+  }
+
   .toolbar {
     padding: 0 8px;
     scroll-padding: 0 8px;
@@ -2023,4 +2036,68 @@ body {
 .line-box.dragging,
 .note-marker.dragging {
   cursor: grabbing;
+}
+
+/* ---------- tool groups ---------- */
+
+/* Everything visible at once was two and a half thousand pixels of strip that
+   scrolled past its own contents. The tools are grouped instead, one group
+   shown at a time, which is what Acrobat settled on: a rail of categories and
+   a contextual bar for whichever is chosen. Every group still fits one row on
+   a phone, which the flat strip never could. */
+.toolbar-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 8px;
+  background: var(--chrome-1);
+  border-bottom: 1px solid var(--chrome-line);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 0 0 auto;
+}
+
+.toolbar-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tool-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 8px 13px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tool-tab:hover {
+  color: var(--ink);
+}
+
+.tool-tab.is-on {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-group.is-hidden {
+  display: none;
+}
+
+.tool-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 22px;
+  margin: 0 6px;
+  background: var(--chrome-line);
 }
