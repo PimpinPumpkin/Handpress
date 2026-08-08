@@ -497,9 +497,11 @@ critical path: it is already on this machine, and a build that has to fetch
 tens of megabytes from a third party is a build that can fail for reasons that
 have nothing to do with the code.
 
-`dist` is around 31 MB with the default set of languages, in 27 files, the
-largest of them 10 MB. Cloudflare's free plan allows 25 MiB per file and 20,000
-files, so there is room for every language at once if `OCR_LANGS=all` is wanted.
+`dist` is about 85 MB with the default eight languages, in 37 files, the
+largest of them 10.4 MB; the languages are 62 MB of that, so English on its own
+is nearer 23 MB. Cloudflare's free plan allows 25 MiB per file and 20,000 files
+and does not cap the total, so `OCR_LANGS=all` fits as well. Nobody downloads
+more than the one language they pick.
 
 `public/_headers` goes with it. It tells the host to hold on to `/ocr` and
 `/assets` for a year, since those filenames change whenever their contents do,
