@@ -13,6 +13,7 @@
  */
 
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRawStream, PDFRef, PDFStream, decodePDFRawStream } from 'pdf-lib';
+import { Encodings, Font, type FontNames } from '@pdf-lib/standard-fonts';
 import { Lexer, Tok, type Token } from './lexer';
 import { baseEncodingByName, glyphNameToUnicode, StandardEncoding, WinAnsiEncoding } from './encodings';
 
@@ -433,17 +434,73 @@ export function codeWidth(font: LoadedFont, code: number): number {
 }
 
 /**
- * Non-embedded standard fonts often omit `Widths`. Courier is uniformly 600;
- * for the others an average keeps layout plausible rather than exact.
+ * The width of a character in a font that did not say.
+ *
+ * Non-embedded standard fonts often omit `Widths`, because a reader is
+ * expected to already know the metrics of the fourteen fonts every reader has.
+ * We know them too: they ship with pdf-lib, so they are looked up rather than
+ * guessed. This used to average them, which read as plausible and was out by
+ * eight per cent over a line of ordinary prose, and every position measured
+ * along that line was out with it.
+ *
+ * The rough table survives for the fonts that match none of the fourteen and
+ * carry no widths of their own, where a plausible number is all there is.
  */
 function defaultStandardWidth(font: LoadedFont, code: number): number {
-  if (font.fixedPitch) return 600;
   const ch = font.toUnicode.get(code) ?? '';
+  const metrics = standardMetrics(font);
+  if (metrics && ch) {
+    const point = ch.codePointAt(0) ?? 0;
+    if (Encodings.WinAnsi.canEncodeUnicodeCodePoint(point)) {
+      const { name } = Encodings.WinAnsi.encodeUnicodeCodePoint(point);
+      const width = metrics.getWidthOfGlyph(String(name));
+      if (typeof width === 'number' && width > 0) return width;
+    }
+  }
+
+  if (font.fixedPitch) return 600;
   if (ch === ' ') return font.serif ? 250 : 278;
   if (/[ilj.,;:'!|]/.test(ch)) return 278;
-  if (/[A-Z]/.test(ch)) return font.serif ? 667 : 667;
+  if (/[A-Z]/.test(ch)) return 667;
   if (/[mwMW]/.test(ch)) return 889;
   return font.serif ? 500 : 556;
+}
+
+/** Names as `@pdf-lib/standard-fonts` spells them, which is not how we do. */
+const STANDARD_METRIC_NAMES: Record<string, string> = {
+  Helvetica: 'Helvetica',
+  HelveticaBold: 'Helvetica-Bold',
+  HelveticaOblique: 'Helvetica-Oblique',
+  HelveticaBoldOblique: 'Helvetica-BoldOblique',
+  Courier: 'Courier',
+  CourierBold: 'Courier-Bold',
+  CourierOblique: 'Courier-Oblique',
+  CourierBoldOblique: 'Courier-BoldOblique',
+  TimesRoman: 'Times-Roman',
+  TimesRomanBold: 'Times-Bold',
+  TimesRomanItalic: 'Times-Italic',
+  TimesRomanBoldItalic: 'Times-BoldItalic',
+};
+
+type StandardFont = ReturnType<typeof Font.load>;
+
+const metricsCache = new Map<string, StandardFont | null>();
+
+/** The real metrics for whichever of the fourteen this font is, if it is one. */
+function standardMetrics(font: LoadedFont): StandardFont | null {
+  const alias = standardFontAlias(font);
+  const name = alias ? STANDARD_METRIC_NAMES[alias] : undefined;
+  if (!name) return null;
+  const cached = metricsCache.get(name);
+  if (cached !== undefined) return cached;
+  let loaded: StandardFont | null = null;
+  try {
+    loaded = Font.load(name as FontNames);
+  } catch {
+    loaded = null;
+  }
+  metricsCache.set(name, loaded);
+  return loaded;
 }
 
 /** A run of glyph codes, or a pure horizontal advance with nothing drawn. */

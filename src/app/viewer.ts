@@ -11,6 +11,7 @@
  */
 
 import type { PageModel, VellumDocument } from './model';
+import { charPosition } from '../pdf/content';
 import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
 import { NOTE_SIZE, type PageNote } from '../pdf/notes';
@@ -1081,21 +1082,11 @@ export class Viewer {
       const line = byId.get(m.lineId);
       if (!line) continue;
 
-      // Where along the line the hit starts and ends, in page units.
-      const locate = (charIndex: number): number => {
-        for (const seg of line.segments) {
-          if (charIndex <= seg.start) return seg.u0;
-          if (charIndex <= seg.end) {
-            const span = Math.max(1, seg.end - seg.start);
-            return seg.u0 + ((seg.u1 - seg.u0) * (charIndex - seg.start)) / span;
-          }
-        }
-        const last = line.segments[line.segments.length - 1];
-        return last ? last.u1 : 0;
-      };
-
-      const uStart = locate(m.start);
-      const uEnd = locate(m.end);
+      // Where along the line the hit starts and ends, in page units. The same
+      // measurement the rest of the app uses, rather than a second copy of it
+      // that could drift away from the first.
+      const uStart = charPosition(line, m.start);
+      const uEnd = charPosition(line, m.end);
       const perpX = -line.dirY;
       const perpY = line.dirX;
       const descent = (Math.abs(line.font.descent) / 1000) * line.fontSize;

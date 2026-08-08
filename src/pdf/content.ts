@@ -9,7 +9,7 @@
 
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRawStream, PDFRef, PDFStream, decodePDFRawStream } from 'pdf-lib';
 import { Lexer, Tok, type Token } from './lexer';
-import { codeWidth, decodeString, loadFont, type LoadedFont } from './fonts';
+import { codeWidth, decodeString, encodeText, loadFont, type LoadedFont } from './fonts';
 
 export type Matrix = [number, number, number, number, number, number];
 
@@ -612,17 +612,38 @@ export interface TextLine {
  * Interpolates within whichever styled run the character falls in rather than
  * across the line as a whole, because a line mixing a bold label with body text
  * is not evenly spaced.
+ *
+ * Within a run the position comes from the width of the text before it, not
+ * from how many characters it is. Counting characters puts every position in a
+ * proportional font slightly wrong, and always in the same direction, since the
+ * letters that start a word are wider than the average of the ones that follow.
+ * The measured prefix is scaled to the run's drawn extent, so kerning and a
+ * justified line's stretched spaces still come out where they were drawn.
  */
 export function charPosition(line: TextLine, charIndex: number): number {
   for (const seg of line.segments) {
     if (charIndex <= seg.start) return seg.u0;
     if (charIndex <= seg.end) {
-      const span = Math.max(1, seg.end - seg.start);
-      return seg.u0 + ((seg.u1 - seg.u0) * (charIndex - seg.start)) / span;
+      const fraction = prefixFraction(seg, charIndex - seg.start);
+      return seg.u0 + (seg.u1 - seg.u0) * fraction;
     }
   }
   const last = line.segments[line.segments.length - 1];
   return last ? last.u1 : 0;
+}
+
+/**
+ * How far into a run a character offset falls, as a fraction of its width.
+ *
+ * Falls back to counting characters when the run's own text cannot be measured
+ * with its own font, which happens with fonts that carry no usable widths.
+ */
+function prefixFraction(seg: TextSegment, offset: number): number {
+  const span = Math.max(1, seg.end - seg.start);
+  const before = encodeText(seg.font, seg.text.slice(0, offset));
+  const whole = encodeText(seg.font, seg.text);
+  if (!before || !whole || whole.width <= 0) return offset / span;
+  return before.width / whole.width;
 }
 
 /**

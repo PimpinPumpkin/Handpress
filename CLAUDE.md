@@ -308,6 +308,25 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## The fourteen standard fonts have real metrics, so use them
+
+A non-embedded standard font usually omits `Widths`, because every reader is
+expected to already know the metrics of the fourteen fonts every reader has.
+Those metrics ship with pdf-lib, in `@pdf-lib/standard-fonts`, and are already
+in the bundle. `defaultStandardWidth` used to average them into a plausible
+guess, which was eight per cent wide over a line of ordinary prose. Everything
+measured along a line inherited that: a search hit fifteen points into the
+wrong word, and the line's own recorded extent too long by the same amount.
+
+The rough table is still there for fonts that match none of the fourteen and
+carry no widths of their own, where a plausible number is all there is.
+
+Positions within a run now come from the width of the text before them rather
+than from how many characters it is, scaled to the run's drawn extent so
+kerning and a justified line's stretched spaces still land where they were
+drawn. `charPosition` in `content.ts` is the one implementation; the viewer had
+grown a second copy.
+
 ## A locked file can be opened, not just refused
 
 `Protect` writes documents that need a password, and until now opening one only
