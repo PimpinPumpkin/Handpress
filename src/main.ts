@@ -146,6 +146,9 @@ const viewer = new Viewer(els.viewer, {
     void renderThumbs();
   },
   onStatus: setStatus,
+  onZoomedByHand: (zoom) => {
+    els.zoomSelect.value = nearestZoom(zoom);
+  },
 });
 
 /* ---------------- opening ---------------- */

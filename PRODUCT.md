@@ -84,6 +84,7 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Touch: pinch to zoom, and larger targets wherever the pointer is a finger.
 - Password protection: a locked copy written with AES-256, verified by opening
   it with pdf.js, which shares no code with any of this.
 - Split: every page as its own PDF, in one archive, with names that sort the way

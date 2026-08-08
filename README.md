@@ -159,6 +159,19 @@ ones it covers; a line that mixes a bold label with body text is not evenly
 spaced, so interpolating across the whole line would put the highlight in the
 wrong place.
 
+### Touch
+
+A pinch zooms the pages. During the gesture the whole column is scaled with a
+transform, which costs nothing, and the real zoom is applied once on release:
+asking pdf.js to redraw every page on every frame of a pinch would be a
+slideshow. The toolbar's zoom control follows, or the next window resize would
+snap the page back to fit width and undo the pinch.
+
+Where the pointer is coarse, everything worth tapping grows: a finger is about
+ten millimetres across and has no hover, so a thin line of small type is
+unhittable at its drawn size. The line boxes grow around their own baseline, so
+nothing moves on screen.
+
 ### Putting a password on it
 
 **Protect** saves a copy that needs a password to open, written with the standard

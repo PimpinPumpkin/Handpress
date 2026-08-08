@@ -27,6 +27,8 @@ export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
   onEdited(): void;
   onStatus(message: string, tone?: 'info' | 'warn'): void;
+  /** The user zoomed by gesture rather than by the toolbar. */
+  onZoomedByHand?(zoom: number): void;
 }
 
 interface RenderedPage {
@@ -144,6 +146,8 @@ export class Viewer {
   private activePage: RenderedPage | null = null;
   private selectedLineId: string | null = null;
   private renderToken = 0;
+  /** The column of pages, kept so a pinch can scale it without re-rendering. */
+  private strip: HTMLElement | null = null;
   private observer: IntersectionObserver | null = null;
   private mode: ViewerMode = 'edit';
   /** Name attached to new notes. Empty until the user gives one. */
@@ -178,6 +182,7 @@ export class Viewer {
   constructor(root: HTMLElement, cb: ViewerCallbacks) {
     this.root = root;
     this.cb = cb;
+    this.watchPinch();
     root.addEventListener('click', (e) => {
       if (e.target === root || (e.target as HTMLElement).classList.contains('page-strip')) {
         this.closeEditor(true);
@@ -209,6 +214,7 @@ export class Viewer {
     const strip = document.createElement('div');
     strip.className = 'page-strip';
     this.root.appendChild(strip);
+    this.strip = strip;
 
     for (let i = 0; i < doc.pageCount; i++) {
       const container = document.createElement('div');
@@ -659,6 +665,74 @@ export class Viewer {
     selection?.removeAllRanges();
     selection?.addRange(range);
     return true;
+  }
+
+  /**
+   * Pinching two fingers apart zooms the pages.
+   *
+   * During the gesture the whole column is simply scaled with a transform,
+   * which costs nothing, and the real zoom is applied once on release. Asking
+   * pdf.js to redraw every page on every frame of a pinch would be a slideshow.
+   */
+  private watchPinch(): void {
+    const active = new Map<number, { x: number; y: number }>();
+    let startGap = 0;
+    let startZoom = 1;
+    let scale = 1;
+
+    const gap = (): number => {
+      const [a, b] = [...active.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+
+    this.root.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.pointerType !== 'touch') return;
+        active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (active.size === 2) {
+          startGap = gap();
+          startZoom = this.zoom;
+          scale = 1;
+        }
+      },
+      { capture: true },
+    );
+
+    this.root.addEventListener(
+      'pointermove',
+      (e) => {
+        if (!active.has(e.pointerId)) return;
+        active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (active.size !== 2 || !startGap || !this.strip) return;
+
+        // Two fingers on the page mean a pinch, never a scroll.
+        e.preventDefault();
+        scale = Math.max(0.2, Math.min(6, gap() / startGap));
+        this.strip.style.transformOrigin = 'top center';
+        this.strip.style.transform = `scale(${scale})`;
+      },
+      { capture: true, passive: false },
+    );
+
+    const release = (e: PointerEvent): void => {
+      if (!active.delete(e.pointerId)) return;
+      if (active.size >= 2 || !startGap) return;
+
+      const wanted = startZoom * scale;
+      startGap = 0;
+      scale = 1;
+      if (this.strip) this.strip.style.transform = '';
+      if (Math.abs(wanted - this.zoom) > 0.01) {
+        void this.setZoom(wanted);
+        // The toolbar has to agree, or the next window resize snaps the page
+        // back to fit width and undoes the pinch.
+        this.cb.onZoomedByHand?.(wanted);
+      }
+    };
+
+    this.root.addEventListener('pointerup', release, { capture: true });
+    this.root.addEventListener('pointercancel', release, { capture: true });
   }
 
   /** Draws one note's marker and wires dragging and editing to it. */

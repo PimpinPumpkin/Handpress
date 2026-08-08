@@ -1232,6 +1232,46 @@ body {
   background: var(--accent-dim);
 }
 
+/* ---------- touch ---------- */
+
+/* A finger is about ten millimetres across and has no hover, so anything worth
+   tapping has to be big enough to hit on the first try. */
+@media (pointer: coarse) {
+  .tool {
+    padding: 10px 12px;
+  }
+
+  .line-box {
+    /* Thin lines of small type are unhittable otherwise. The box grows upward
+       and downward around the same baseline, so nothing moves. */
+    min-height: 22px;
+    margin-top: -3px;
+    padding: 3px 0;
+  }
+
+  .note-marker {
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  .box-remove,
+  .box-resize {
+    width: 26px;
+    height: 26px;
+  }
+
+  .thumb-tools button {
+    width: 30px;
+    height: 30px;
+  }
+}
+
+/* Vertical scrolling belongs to the page; a two finger pinch is taken by the
+   viewer itself, which is why the gesture handler asks for it explicitly. */
+.viewer {
+  touch-action: pan-x pan-y;
+}
+
 /* ---------- selectable text ---------- */
 
 /* An invisible copy of the page's words, so the page can be selected, copied
