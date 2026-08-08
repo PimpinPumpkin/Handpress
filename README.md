@@ -179,6 +179,20 @@ Some browsers will not print a PDF from inside a page and there is no way to
 ask beforehand, so if nothing has happened after a moment the document opens in
 a tab to be printed from there.
 
+### The document's own contents
+
+A PDF can carry a table of contents, and one that does gets a **Contents** tab
+beside the page thumbnails. The headings nest as the document nests them,
+clicking one goes to its page, and the heading you are currently under is
+marked as you scroll.
+
+Every entry is resolved to a page when the list is built rather than when it is
+clicked, because a destination can be a name that needs a second lookup, and
+doing that on the click makes a list that sometimes does nothing. A heading
+whose destination the file has lost keeps its place and says so instead of
+pretending to be a link. Documents with no contents get no tab, rather than an
+empty panel that invites the question of whether something broke.
+
 ### Finding text
 
 Cmd+F, or the box in the toolbar. Every hit is highlighted at once, Enter and

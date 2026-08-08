@@ -3,7 +3,7 @@
  */
 
 import './style.css';
-import { VellumDocument, type PageModel, type SearchMatch } from './app/model';
+import { VellumDocument, type OutlineEntry, type PageModel, type SearchMatch } from './app/model';
 import { splitChunks } from './pdf/split';
 import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
@@ -49,6 +49,9 @@ const els = {
   btnZoomIn: $<HTMLButtonElement>('btnZoomIn'),
   btnZoomOut: $<HTMLButtonElement>('btnZoomOut'),
   btnSidebar: $<HTMLButtonElement>('btnSidebar'),
+  tabPages: $<HTMLButtonElement>('tabPages'),
+  tabOutline: $<HTMLButtonElement>('tabOutline'),
+  outline: $('outline'),
   btnPanel: $<HTMLButtonElement>('btnPanel'),
   btnLocalFonts: $<HTMLButtonElement>('btnLocalFonts'),
   btnModeEdit: $<HTMLButtonElement>('btnModeEdit'),
@@ -226,6 +229,7 @@ async function openFile(file: File, password?: string): Promise<void> {
     // long file they take far longer than the first page does, and waiting for
     // them made opening look stuck when the document was already usable.
     void renderThumbs();
+    void renderOutline();
     syncEditState();
 
 
@@ -670,6 +674,86 @@ const WRITERS = [
   'btnExtract',
 ] as const;
 
+/* ---------------- the document's own table of contents ---------------- */
+
+/** Every entry, flattened, so the one for the current page can be found. */
+let outlineEntries: Array<{ button: HTMLButtonElement; pageIndex: number }> = [];
+
+function showSidebarTab(which: 'pages' | 'outline'): void {
+  const outline = which === 'outline';
+  els.tabPages.classList.toggle('is-on', !outline);
+  els.tabOutline.classList.toggle('is-on', outline);
+  els.tabPages.setAttribute('aria-selected', String(!outline));
+  els.tabOutline.setAttribute('aria-selected', String(outline));
+  els.thumbs.hidden = outline;
+  els.outline.hidden = !outline;
+  if (outline) markOutlinePosition(viewer.currentPageIndex());
+}
+
+els.tabPages.addEventListener('click', () => showSidebarTab('pages'));
+els.tabOutline.addEventListener('click', () => showSidebarTab('outline'));
+
+/**
+ * Builds the contents list, and offers the tab only when there is one.
+ *
+ * A document with no outline gets no tab rather than an empty panel: an empty
+ * panel invites the question of whether something failed.
+ */
+async function renderOutline(): Promise<void> {
+  outlineEntries = [];
+  els.outline.replaceChildren();
+  els.tabOutline.hidden = true;
+  showSidebarTab('pages');
+  if (!doc) return;
+
+  const entries = await doc.outline();
+  if (!entries.length) return;
+
+  const add = (list: OutlineEntry[], depth: number): void => {
+    for (const entry of list) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'outline-item';
+      button.style.paddingLeft = `${8 + depth * 13}px`;
+
+      if (entry.pageIndex === null) {
+        button.classList.add('is-lost');
+        button.disabled = true;
+        button.title = 'This heading does not say which page it belongs to.';
+      } else {
+        const page = entry.pageIndex;
+        const number = document.createElement('span');
+        number.className = 'outline-page';
+        number.textContent = String(page + 1);
+        button.appendChild(number);
+        button.addEventListener('click', () => {
+          viewer.scrollToPage(page);
+          els.pageInput.value = String(page + 1);
+          markOutlinePosition(page);
+        });
+        outlineEntries.push({ button, pageIndex: page });
+      }
+
+      button.appendChild(document.createTextNode(entry.title));
+      els.outline.appendChild(button);
+      if (entry.children.length) add(entry.children, depth + 1);
+    }
+  };
+
+  add(entries, 0);
+  els.tabOutline.hidden = false;
+}
+
+/** Marks the last heading at or before the page being read. */
+function markOutlinePosition(pageIndex: number): void {
+  let best: HTMLButtonElement | null = null;
+  for (const entry of outlineEntries) {
+    if (entry.pageIndex <= pageIndex) best = entry.button;
+    else break;
+  }
+  for (const entry of outlineEntries) entry.button.classList.toggle('is-here', entry.button === best);
+}
+
 function syncEditState(): void {
   const dirty = doc?.hasEdits() ?? false;
   // Nothing can be written back from a document the editor's parser could not
@@ -988,6 +1072,7 @@ els.viewer.addEventListener('scroll', () => {
     for (const t of Array.from(els.thumbs.children)) {
       t.classList.toggle('current', Number((t as HTMLElement).dataset.page) === idx);
     }
+    markOutlinePosition(idx);
   });
 });
 

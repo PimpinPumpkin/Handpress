@@ -123,6 +123,21 @@ export interface LoadReport {
   canEdit: boolean;
 }
 
+/** One heading in the document's table of contents. */
+export interface OutlineEntry {
+  title: string;
+  /** Page it points at, or null when the file has lost track of where it went. */
+  pageIndex: number | null;
+  children: OutlineEntry[];
+}
+
+/** What pdf.js hands back, which is looser than what the rest of this wants. */
+interface RawOutline {
+  title?: string;
+  dest?: string | unknown[] | null;
+  items?: RawOutline[];
+}
+
 export class VellumDocument {
   readonly name: string;
   private originalBytes: Uint8Array;
@@ -910,6 +925,58 @@ export class VellumDocument {
    * recognised layer has been read, and reading it twice would stack a second
    * copy of every word on top of the first.
    */
+  /**
+   * The document's own table of contents, if it has one.
+   *
+   * Every entry is resolved to a page here rather than when it is clicked,
+   * because a destination can be a named one that needs another lookup, and
+   * doing that on the click makes a list that sometimes does nothing. An entry
+   * whose destination cannot be resolved keeps its place in the tree with no
+   * page attached, since a heading is still worth reading even when the file
+   * has lost track of where it pointed.
+   */
+  async outline(): Promise<OutlineEntry[]> {
+    const pdf = this.pdfjsDoc;
+    if (!pdf) return [];
+
+    let raw: RawOutline[] | null = null;
+    try {
+      raw = (await pdf.getOutline()) as RawOutline[] | null;
+    } catch {
+      return [];
+    }
+    if (!raw?.length) return [];
+
+    const pageOf = async (dest: RawOutline['dest']): Promise<number | null> => {
+      try {
+        const resolved = typeof dest === 'string' ? await pdf.getDestination(dest) : dest;
+        const ref = Array.isArray(resolved) ? resolved[0] : null;
+        if (!ref) return null;
+        return await pdf.getPageIndex(ref as Parameters<typeof pdf.getPageIndex>[0]);
+      } catch {
+        return null;
+      }
+    };
+
+    const convert = async (items: RawOutline[], depth: number): Promise<OutlineEntry[]> => {
+      // A file can nest these as deeply as it likes, including in a loop.
+      if (depth > 12) return [];
+      const out: OutlineEntry[] = [];
+      for (const item of items) {
+        const title = (item.title ?? '').trim();
+        if (!title) continue;
+        out.push({
+          title,
+          pageIndex: await pageOf(item.dest),
+          children: item.items?.length ? await convert(item.items, depth + 1) : [],
+        });
+      }
+      return out;
+    };
+
+    return convert(raw, 0);
+  }
+
   async pagesNeedingRecognition(): Promise<number[]> {
     const out: number[] = [];
     for (let i = 0; i < this.pageCount; i++) {

@@ -322,6 +322,15 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## The hidden attribute needs help
+
+`hidden` only carries `display: none` from the browser's own stylesheet, which
+any `display` rule in ours outranks. `.thumbs` sets `display: flex`, so the
+thumbnails stayed on screen while marked hidden and the outline drew underneath
+them. There is now one `[hidden] { display: none !important }` rule near the
+top of the stylesheet, which settles it for every element rather than one at a
+time.
+
 ## Printing goes through the PDF, not through the page
 
 `window.print()` on this app prints the app: toolbar, sidebar, and a canvas

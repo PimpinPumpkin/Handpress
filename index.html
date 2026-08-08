@@ -178,8 +178,12 @@
 
       <main class="workspace">
         <aside class="sidebar" id="sidebar">
-          <div class="sidebar-head">Pages</div>
+          <div class="sidebar-head sidebar-tabs" role="tablist">
+            <button class="sidebar-tab is-on" id="tabPages" type="button" role="tab" aria-selected="true">Pages</button>
+            <button class="sidebar-tab" id="tabOutline" type="button" role="tab" aria-selected="false" hidden>Contents</button>
+          </div>
           <div class="thumbs" id="thumbs"></div>
+          <div class="outline" id="outline" hidden></div>
         </aside>
 
         <section class="viewer-wrap">
