@@ -174,11 +174,30 @@ for (const file of files) {
   if (!edited.includes('Vellum')) {
     problems.push(`edit not found on saved page (got ${JSON.stringify(edited.slice(0, 60))})`);
   }
-  if (edited.replace(/\s+/g, ' ').trim() !== expected.replace(/\s+/g, ' ').trim()) {
+  // An edit that makes a line longer can bring it up against the run beside it,
+  // and two runs a couple of points apart on one baseline read as one line. The
+  // edited line then legitimately carries its neighbour's words as well, so the
+  // comparison allows that and the check that nothing went missing is below.
+  const editedText = edited.replace(/\s+/g, ' ').trim();
+  const expectedText = expected.replace(/\s+/g, ' ').trim();
+  const grewIntoNeighbour = editedText.startsWith(expectedText) && editedText.length > expectedText.length;
+  if (editedText !== expectedText && !grewIntoNeighbour) {
     problems.push(`edited line differs: got ${JSON.stringify(edited.slice(0, 70))} want ${JSON.stringify(expected.slice(0, 70))}`);
   }
+
   if (beforeRest.length !== afterRest.length) {
-    problems.push(`line count changed: ${beforeRest.length} -> ${afterRest.length}`);
+    // Only a loss matters. A run that merged into the edited line has left this
+    // list without having gone anywhere, so the whole page is what gets asked.
+    const wholePage = after.map((l) => l.text).join(' ').replace(/\s+/g, ' ');
+    const missing = beforeRest
+      .map((b) => b.text.replace(/\s+/g, ' ').trim())
+      .filter((t) => t.length > 2 && !wholePage.includes(t));
+    if (missing.length) {
+      problems.push(
+        `text went missing: ${missing.length} line${missing.length === 1 ? '' : 's'} no longer on the page, ` +
+          `first ${JSON.stringify(missing[0].slice(0, 40))}`,
+      );
+    }
   } else {
     for (let i = 0; i < beforeRest.length; i++) {
       const b = beforeRest[i];

@@ -950,6 +950,11 @@ export async function applyEdits(
     );
   }
 
+  // Patches are gathered by the stream they land in, not by the path taken to
+  // reach it. A form can be reached by more than one route, and a document
+  // whose forms reference each other reaches the same one at several depths;
+  // writing it once per route means every write but the last is thrown away.
+  const byStream = new Map<string, { streamId: string; patches: Patch[] }>();
   for (const [streamId, patches] of patchesByStream) {
     if (streamId === 'page') continue; // handled above, together with added text
     const entry = walk.streams.get(streamId);
@@ -957,6 +962,15 @@ export async function applyEdits(
       warn({ lineId: streamId, kind: 'stream-missing', detail: 'could not write back form XObject' });
       continue;
     }
+    const key = `${entry.ref.objectNumber} ${entry.ref.generationNumber}`;
+    const existing = byStream.get(key);
+    if (existing) existing.patches.push(...patches);
+    else byStream.set(key, { streamId, patches: [...patches] });
+  }
+
+  for (const { streamId, patches } of byStream.values()) {
+    const entry = walk.streams.get(streamId);
+    if (!entry?.ref) continue; // already reported above
     const updated = applyPatches(entry.bytes, patches, reportShared);
     const newStream = doc.context.flateStream(updated);
     for (const [key, value] of entry.stream.dict.entries()) {

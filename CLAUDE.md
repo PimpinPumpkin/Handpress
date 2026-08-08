@@ -288,6 +288,12 @@ keeps the first patch and reports the rest as a `shared-text` warning instead of
 dropping them in silence, and the overlay marks such lines and says how many
 copies there are before anyone types into one.
 
+The same form can also be reached by more than one route, and a document whose
+forms reference each other reaches the same one at several depths. Patches are
+therefore gathered by the stream they land in rather than by the path taken to
+get there, since writing a stream once per route throws away every write but the
+last.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.
