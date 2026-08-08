@@ -1750,6 +1750,28 @@ export class Viewer {
     this.lifted = [];
   }
 
+  /**
+   * Whether the current tool has claimed the drag for itself.
+   *
+   * A region is dragged out, and so is a stroke or a shape, so a press that
+   * happens to land on a line or an image belongs to the tool rather than to
+   * the thing underneath. Without this, drawing over a paragraph moved the
+   * paragraph.
+   */
+  private toolOwnsDrag(): boolean {
+    return (
+      this.mode === 'erase' ||
+      this.mode === 'redact' ||
+      this.mode === 'highlight' ||
+      this.mode === 'pen' ||
+      this.mode === 'inkErase' ||
+      this.mode === 'line' ||
+      this.mode === 'arrow' ||
+      this.mode === 'rect' ||
+      this.mode === 'ellipse'
+    );
+  }
+
   private makeDraggable(
     box: HTMLElement,
     viewport: { convertToPdfPoint(x: number, y: number): number[] },
@@ -1763,7 +1785,7 @@ export class Viewer {
       if (down.button !== 0) return;
       // In a region mode the drag belongs to the region being drawn, not to
       // whatever object happens to sit under the pointer.
-      if (this.mode === 'erase' || this.mode === 'redact' || this.mode === 'highlight') return;
+      if (this.toolOwnsDrag()) return;
       down.preventDefault();
       down.stopPropagation();
 

@@ -8,6 +8,11 @@ annotate a PDF, but almost none will let you edit the text that is already in
 the file. The ones that do are either desktop apps or put a daily cap on it.
 
 
+## What it does, against Acrobat
+
+[FEATURES.md](FEATURES.md) is the matrix: what Acrobat Pro does, what this
+does, and what it deliberately will not do.
+
 ## Status
 
 Beta. It is used daily on real documents and its engine is checked against a

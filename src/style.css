@@ -2002,3 +2002,25 @@ body {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* While a tool is being dragged out, nothing on the page takes the pointer.
+   The boxes over lines and images sit above the page, so without this a stroke
+   that started on a paragraph moved the paragraph instead of drawing. */
+.page-overlay.drawing .line-box,
+.page-overlay.drawing .note-marker,
+.page-overlay.erasing .line-box,
+.page-overlay.erasing .note-marker {
+  pointer-events: none;
+}
+
+/* Anything that can be picked up says so on approach, which is the only way to
+   find out short of trying it. */
+.line-box:not(.line-locked),
+.note-marker {
+  cursor: grab;
+}
+
+.line-box.dragging,
+.note-marker.dragging {
+  cursor: grabbing;
+}
