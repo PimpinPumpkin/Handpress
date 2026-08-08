@@ -15,6 +15,7 @@ import { zip } from './pdf/zip';
 import { encrypt } from './pdf/encrypt';
 import { AUTOSAVE_LIMIT, forget, howLongAgo, keep, recover } from './app/autosave';
 import { recompressInBrowser } from './app/recompress';
+import { standardTextWidth } from './pdf/fonts';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -984,14 +985,15 @@ async function applyPageChange(changed: boolean): Promise<void> {
 /* ---------------- recognising scanned pages ---------------- */
 
 /**
- * Measures a word using a canvas, which is close enough to Helvetica's own
- * metrics for deciding how far each recognised word has to be stretched.
+ * Measures a word in the font the recognised text will actually be written in.
+ *
+ * This decides how far each recognised word is stretched to sit under the
+ * scanned one it came from, so it has to be Helvetica's own metrics. Asking
+ * the browser measures whatever it decided Helvetica meant on this machine,
+ * and put the same scan's text in different places on different machines.
  */
-const measureCanvas = document.createElement('canvas');
-const measureCtx = measureCanvas.getContext('2d')!;
 function measureHelvetica(text: string, size: number): number {
-  measureCtx.font = `${size}px Helvetica, Arial, sans-serif`;
-  return measureCtx.measureText(text).width;
+  return standardTextWidth('Helvetica', text, size);
 }
 
 els.btnOcr.addEventListener('click', async () => {

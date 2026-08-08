@@ -466,6 +466,41 @@ function defaultStandardWidth(font: LoadedFont, code: number): number {
   return font.serif ? 500 : 556;
 }
 
+/**
+ * Width of text set in one of the fourteen standard fonts, in points.
+ *
+ * For laying out text that will be written in a standard font rather than read
+ * out of a document. The alternative is asking the browser to measure it, which
+ * measures whatever font the browser decided "Helvetica" meant on this machine
+ * and lays the same document out differently on the next one.
+ */
+export function standardTextWidth(name: string, text: string, size: number): number {
+  const cached = metricsCache.get(name);
+  let metrics = cached;
+  if (metrics === undefined) {
+    try {
+      metrics = Font.load(name as FontNames);
+    } catch {
+      metrics = null;
+    }
+    metricsCache.set(name, metrics);
+  }
+  if (!metrics) return text.length * 0.5 * size;
+
+  let width = 0;
+  for (const ch of text) {
+    const point = ch.codePointAt(0) ?? 0;
+    if (!Encodings.WinAnsi.canEncodeUnicodeCodePoint(point)) {
+      width += 500;
+      continue;
+    }
+    const { name: glyph } = Encodings.WinAnsi.encodeUnicodeCodePoint(point);
+    const w = metrics.getWidthOfGlyph(String(glyph));
+    width += typeof w === 'number' && w > 0 ? w : 500;
+  }
+  return (width / 1000) * size;
+}
+
 /** Names as `@pdf-lib/standard-fonts` spells them, which is not how we do. */
 const STANDARD_METRIC_NAMES: Record<string, string> = {
   Helvetica: 'Helvetica',
