@@ -194,7 +194,20 @@ async function openFile(file: File): Promise<void> {
     syncEditState();
 
 
-    if (report.scannedPages.length) {
+    if (!report.canEdit) {
+      // Viewable but not rewritable. Saying so at the door is kinder than
+      // letting somebody edit for ten minutes and fail at the save.
+      showNotice(
+        'This file is damaged in a way the editor cannot work with. Vellum can show it, and can select, ' +
+          'copy and export its pages, but it cannot change or save it.',
+      );
+    }
+
+    if (!report.canEdit) {
+      // Already said in the notice above; the status line should not then
+      // suggest recognition would help, because nothing can be written back.
+      setStatus(`Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}, for reading only.`);
+    } else if (report.scannedPages.length) {
       setStatus(
         report.scannedPages.length === report.pageCount
           ? 'This PDF has no text layer. It looks like a scan, so there is no text to edit; it would need OCR first.'
@@ -438,7 +451,8 @@ window.addEventListener('keydown', (e) => {
 
 function syncEditState(): void {
   const dirty = doc?.hasEdits() ?? false;
-  els.btnSave.disabled = !doc;
+  // Nothing to save from a document the editor's parser could not read.
+  els.btnSave.disabled = !doc || !doc.canEdit;
   els.btnUndo.disabled = !doc?.canUndo();
   els.btnRedo.disabled = !doc?.canRedo();
   els.docTitle.classList.toggle('dirty', dirty);

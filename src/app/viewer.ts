@@ -440,6 +440,18 @@ export class Viewer {
     p.overlay.innerHTML = '';
     if (!p.model || !this.doc) return;
 
+    // A form drawn several times on a page gives each appearance its own line,
+    // all reading the same bytes. Editing any of them rewrites the text
+    // everywhere, so the ones that share are marked as such before anyone
+    // types into them and wonders why the rest changed too.
+    const shared = new Map<string, number>();
+    for (const line of p.model.lines) {
+      const op = line.ops[0];
+      if (!op) continue;
+      const key = `${line.streamId}:${op.start}`;
+      shared.set(key, (shared.get(key) ?? 0) + 1);
+    }
+
     for (const line of p.model.lines) {
       const box = document.createElement('div');
       box.className = 'line-box';
@@ -465,9 +477,14 @@ export class Viewer {
       box.style.height = `${geo.height}px`;
       if (geo.angle) box.style.transform = `rotate(${geo.angle}deg)`;
       box.style.transformOrigin = 'left top';
+      const copies = line.ops[0] ? (shared.get(`${line.streamId}:${line.ops[0].start}`) ?? 1) : 1;
       box.title = line.editable
-        ? this.doc.textFor(p.index, line)
+        ? this.doc.textFor(p.index, line) +
+          (copies > 1
+            ? `\n\nDrawn ${copies} times on this page from one place in the file. Editing it changes every copy.`
+            : '')
         : 'This text uses a font with no reliable character mapping, so it cannot be edited safely.';
+      if (copies > 1) box.classList.add('line-shared');
 
       // Dragging repositions the line; a plain click still opens it for editing.
       // The threshold inside makeDraggable is what keeps the two apart.

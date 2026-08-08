@@ -111,6 +111,15 @@ export interface LoadReport {
   signatures: SignatureReport;
   /** One sentence naming the risk, or null when the document is unsigned. */
   signatureWarning: string | null;
+  /**
+   * False when the editor's parser cannot read the file at all.
+   *
+   * The renderer and the editor are different parsers with different tolerance
+   * for damage, so a file can be perfectly viewable and still be beyond
+   * rewriting. Showing it is better than refusing it, as long as nobody is left
+   * expecting to be able to save.
+   */
+  canEdit: boolean;
 }
 
 export class VellumDocument {
@@ -183,6 +192,8 @@ export class VellumDocument {
   /** Page count of the file as opened, which the plan is expressed against. */
   private originalPageCount = 0;
   lastWarnings: EditWarning[] = [];
+  /** False when the editor's parser could not read the file; see LoadReport. */
+  canEdit = true;
   /** Optional source of real typefaces for substitutions. */
   fontProvider: FontProvider | null = null;
 
@@ -245,8 +256,15 @@ export class VellumDocument {
       });
       signatures = findSignatures(libDoc);
       this.formFields = readForm(libDoc).fields;
+      // Loading is not the same as being usable: a broken page tree parses
+      // happily and then throws the moment anything asks for a page, which is
+      // every single thing the editor does.
+      libDoc.getPage(0);
+      this.canEdit = true;
     } catch {
-      // An unreadable object graph simply reports no signatures.
+      // The renderer opened it, so it can still be looked at; the editor cannot
+      // touch it, and saying so up front beats failing at the save.
+      this.canEdit = false;
     }
 
     return {
@@ -255,6 +273,7 @@ export class VellumDocument {
       wasEncrypted: false,
       signatures,
       signatureWarning: describeSignatures(signatures),
+      canEdit: this.canEdit,
     };
   }
 

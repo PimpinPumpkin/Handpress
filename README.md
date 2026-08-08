@@ -378,6 +378,15 @@ handler families are covered: RC4 40 and 128 bit, AES-128 and AES-256.
 
 A file that genuinely needs a password still needs one, and says so.
 
+### Damaged files
+
+The renderer and the editor are different parsers with different tolerance for
+damage, and a file can be perfectly readable to one and impossible for the
+other. Rather than refuse those, Vellum opens them for reading: the pages show,
+the text can be selected and copied, and the pages export as images. Saving is
+switched off and a notice says why, because finding out at the save is worse
+than being told at the door.
+
 ## Limitations
 
 - **Scanned PDFs have no text to edit** until they are read. Vellum detects this

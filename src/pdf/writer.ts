@@ -129,7 +129,7 @@ export interface FontProvider {
 
 export interface EditWarning {
   lineId: string;
-  kind: 'substituted-font' | 'unencodable' | 'stream-missing';
+  kind: 'substituted-font' | 'unencodable' | 'stream-missing' | 'shared-text';
   detail: string;
 }
 
@@ -137,6 +137,8 @@ interface Patch {
   start: number;
   end: number;
   bytes: Uint8Array;
+  /** The line this patch came from, so a dropped one can be reported. */
+  lineId?: string;
 }
 
 /** A font usable for output, wrapping either the document's own font or a substitute. */
@@ -777,12 +779,28 @@ function buildImageEdit(image: ImageOp, edit: ImageEdit): Uint8Array {
   return bytes(`q ${fmt(s)} 0 0 ${fmt(s)} ${fmt(ux)} ${fmt(uy)} cm /${image.name} Do Q`);
 }
 
-function applyPatches(source: Uint8Array, patches: Patch[]): Uint8Array {
+/**
+ * Splices replacements into a stream.
+ *
+ * Two patches can cover the same bytes, and it is not a mistake in the caller:
+ * a form XObject drawn several times on a page produces a line for each place
+ * it appears, all reading from the one stream. Editing any of them rewrites the
+ * text everywhere it is drawn, because there is only one copy of it. The first
+ * patch wins and the rest are reported, so nothing is lost in silence.
+ */
+function applyPatches(
+  source: Uint8Array,
+  patches: Patch[],
+  onDropped?: (patch: Patch) => void,
+): Uint8Array {
   const sorted = [...patches].sort((a, b) => a.start - b.start);
   const out: Uint8Array[] = [];
   let cursor = 0;
   for (const p of sorted) {
-    if (p.start < cursor) continue; // overlapping patch; first one wins
+    if (p.start < cursor) {
+      onDropped?.(p);
+      continue;
+    }
     out.push(source.subarray(cursor, p.start));
     out.push(p.bytes);
     cursor = p.end;
@@ -844,7 +862,7 @@ export async function applyEdits(
     if (!fragment) continue; // warned already; leave this line untouched
 
     const list = patchesByStream.get(line.streamId) ?? [];
-    list.push({ start: line.ops[0].start, end: line.ops[0].end, bytes: fragment });
+    list.push({ start: line.ops[0].start, end: line.ops[0].end, bytes: fragment, lineId: line.id });
     for (let i = 1; i < line.ops.length; i++) {
       list.push({ start: line.ops[i].start, end: line.ops[i].end, bytes: neutralAdvance(line.ops[i]) });
     }
@@ -857,7 +875,12 @@ export async function applyEdits(
       const overlayFragment = await buildLineFragment(overlay, overlayTexts, resolver, overlayResources, warn, move);
       if (!overlayFragment) continue;
       const overlayList = overlay.streamId === line.streamId ? list : (patchesByStream.get(overlay.streamId) ?? []);
-      overlayList.push({ start: overlay.ops[0].start, end: overlay.ops[0].end, bytes: overlayFragment });
+      overlayList.push({
+        start: overlay.ops[0].start,
+        end: overlay.ops[0].end,
+        bytes: overlayFragment,
+        lineId: line.id,
+      });
       for (let i = 1; i < overlay.ops.length; i++) {
         overlayList.push({ start: overlay.ops[i].start, end: overlay.ops[i].end, bytes: neutralAdvance(overlay.ops[i]) });
       }
@@ -906,9 +929,25 @@ export async function applyEdits(
     }
   }
 
+  // A form drawn more than once gives every appearance its own line, all of
+  // them reading the same bytes. Rewriting one rewrites all, so the caller is
+  // told rather than left wondering where the other edits went.
+  const reportShared = (patch: Patch): void => {
+    warn({
+      lineId: patch.lineId ?? 'page',
+      kind: 'shared-text',
+      detail:
+        'That text is drawn more than once from the same place in the file, so every copy of it now reads the same.',
+    });
+  };
+
   const pagePatches = patchesByStream.get('page') ?? [];
   if (pagePatches.length || addedTail.length) {
-    setPageContent(doc, page, concatBytes([applyPatches(pageContentBytes, pagePatches), addedTail]));
+    setPageContent(
+      doc,
+      page,
+      concatBytes([applyPatches(pageContentBytes, pagePatches, reportShared), addedTail]),
+    );
   }
 
   for (const [streamId, patches] of patchesByStream) {
@@ -918,7 +957,7 @@ export async function applyEdits(
       warn({ lineId: streamId, kind: 'stream-missing', detail: 'could not write back form XObject' });
       continue;
     }
-    const updated = applyPatches(entry.bytes, patches);
+    const updated = applyPatches(entry.bytes, patches, reportShared);
     const newStream = doc.context.flateStream(updated);
     for (const [key, value] of entry.stream.dict.entries()) {
       const name = key.asString().replace(/^\//, '');

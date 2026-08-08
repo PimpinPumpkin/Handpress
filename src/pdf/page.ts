@@ -71,10 +71,26 @@ export function getPageContent(page: PDFPage): PageContent {
     if (b) parts.push(b);
   }
 
-  const resRaw = node.Resources();
-  const resources = resRaw instanceof PDFDict ? resRaw : null;
+  // Both of these ask pdf-lib to walk the page tree, and both throw outright on
+  // a damaged one: a `/Resources` that is a stream, a missing `/MediaBox`, a
+  // `/Parent` chain that loops or points at the wrong kind of object. None of
+  // that should take a document down. A page with no resources is a page with
+  // no editable text, and a page with no media box gets the size everything
+  // else assumes.
+  let resources: PDFDict | null = null;
+  try {
+    const resRaw = node.Resources();
+    if (resRaw instanceof PDFDict) resources = resRaw;
+  } catch {
+    resources = null;
+  }
 
-  const mb = page.getMediaBox();
+  let mb = { x: 0, y: 0, width: 612, height: 792 };
+  try {
+    mb = page.getMediaBox();
+  } catch {
+    // Left at US Letter, which is what a reader falls back to as well.
+  }
   const rotRaw = node.lookup(PDFName.of('Rotate'));
   const rotation = rotRaw instanceof PDFNumber ? ((rotRaw.asNumber() % 360) + 360) % 360 : 0;
 

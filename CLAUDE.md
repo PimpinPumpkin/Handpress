@@ -268,6 +268,26 @@ encrypted file without one.
 handler independently. That is the point of the test: our own decryptor agreeing
 with our own encryptor would prove only that the two halves match.
 
+## A file the renderer can show is not always one the editor can rewrite
+
+pdf.js and pdf-lib are different parsers with different tolerance for damage.
+Two real documents in the pdf.js corpus render perfectly and cannot be loaded
+for editing at all, and refusing them outright turned a file that could at least
+be read into one that would not open. `decryptToBytes` now hands back anything
+its own parser cannot read, and `LoadReport.canEdit` says which state the
+document is in. Loading is not the same as being usable, so the check asks for
+page zero: a broken page tree parses happily and throws the moment anything
+wants a page.
+
+## Text drawn more than once is one piece of text
+
+A form XObject drawn several times on a page gives every appearance its own
+line, all reading the same bytes. Editing any of them rewrites the text
+everywhere it appears, because there is only one copy of it. `applyPatches`
+keeps the first patch and reports the rest as a `shared-text` warning instead of
+dropping them in silence, and the overlay marks such lines and says how many
+copies there are before anyone types into one.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.

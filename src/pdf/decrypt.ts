@@ -278,11 +278,20 @@ export async function decryptToBytes(
   bytes: Uint8Array,
   password = '',
 ): Promise<{ bytes: Uint8Array; wasEncrypted: boolean }> {
-  const probe = await PDFDocument.load(bytes.slice(), {
-    throwOnInvalidObject: false,
-    updateMetadata: false,
-    ignoreEncryption: true,
-  });
+  // A document this parser cannot read at all is handed straight back. It may
+  // still be perfectly viewable, since the renderer is a different parser with
+  // a different tolerance for damage, and refusing here would turn a file that
+  // could at least be looked at into one that will not open.
+  let probe: PDFDocument;
+  try {
+    probe = await PDFDocument.load(bytes.slice(), {
+      throwOnInvalidObject: false,
+      updateMetadata: false,
+      ignoreEncryption: true,
+    });
+  } catch {
+    return { bytes, wasEncrypted: false };
+  }
 
   const handler = await readHandler(probe, password);
   if (!handler) return { bytes, wasEncrypted: false };
