@@ -19,6 +19,17 @@ import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
+/**
+ * What went wrong, in a form fit to show someone.
+ *
+ * Not everything thrown is an Error. A worker that fails to start rejects with
+ * nothing at all, and "Could not read that: undefined" tells nobody anything.
+ */
+const reason = (e: unknown): string => {
+  const message = e instanceof Error ? e.message : typeof e === 'string' ? e : '';
+  return message || 'something went wrong that did not say what it was';
+};
+
 const els = {
   docTitle: $('docTitle'),
   btnOpen: $<HTMLButtonElement>('btnOpen'),
@@ -231,7 +242,7 @@ async function openFile(file: File): Promise<void> {
     if (e instanceof DecryptionError) {
       setStatus(e.message, 'warn');
     } else {
-      setStatus(`Could not open that PDF: ${(e as Error).message}`, 'warn');
+      setStatus(`Could not open that PDF: ${reason(e)}`, 'warn');
     }
   } finally {
     setBusy(false);
@@ -284,7 +295,7 @@ async function openImages(files: File[]): Promise<void> {
     const name = `${files.length} images.pdf`;
     await openFile(new File([bytes as BlobPart], name, { type: 'application/pdf' }));
   } catch (e) {
-    setStatus(`Could not make a PDF from those images: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not make a PDF from those images: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }
@@ -367,7 +378,7 @@ els.btnSave.addEventListener('click', async () => {
     if (signedDocument) parts.push('The saved copy no longer carries a valid digital signature.');
     setStatus(parts.join(' '), signedDocument ? 'warn' : 'info');
   } catch (e) {
-    setStatus(`Could not build the PDF: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not build the PDF: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }
@@ -605,7 +616,7 @@ els.sigFileInput.addEventListener('change', async () => {
     img.alt = 'Signature preview';
     els.sigPreview.replaceChildren(img);
   } catch (e) {
-    setStatus(`Could not read that image: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not read that image: ${reason(e)}`, 'warn');
   }
 });
 
@@ -869,7 +880,7 @@ async function applyPageChange(changed: boolean): Promise<void> {
     await applyZoomChoice();
     void renderThumbs();
   } catch (e) {
-    setStatus(`Could not update pages: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not update pages: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }
@@ -960,7 +971,7 @@ els.btnOcr.addEventListener('click', async () => {
         'The text can now be searched and edited.',
     );
   } catch (e) {
-    setStatus(`Could not read that: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not read that: ${reason(e)}`, 'warn');
   } finally {
     await recogniser?.close();
     setBusy(false);
@@ -1112,7 +1123,7 @@ els.mergeFileInput.addEventListener('change', async () => {
     // Thumbnails for a long document take a while and nothing waits on them.
     void renderThumbs();
   } catch (e) {
-    setStatus(`Could not add those pages: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not add those pages: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }
@@ -1158,7 +1169,7 @@ els.btnPageImage.addEventListener('click', async () => {
     setTimeout(() => URL.revokeObjectURL(url), 20000);
     setStatus(`Saved page ${pageIndex + 1} as a PNG.`);
   } catch (e) {
-    setStatus(`Could not save that page as an image: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not save that page as an image: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }
@@ -1208,7 +1219,7 @@ els.btnCompress.addEventListener('click', async () => {
         `${result.report.shrunk} image${result.report.shrunk === 1 ? '' : 's'} redrawn at the size the page shows.`,
     );
   } catch (e) {
-    setStatus(`Could not compress that: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not compress that: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }
@@ -1254,7 +1265,7 @@ els.btnSplit.addEventListener('click', async () => {
 
     setStatus(`Split into ${pieces.length} files, saved as one zip.`);
   } catch (e) {
-    setStatus(`Could not split that: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not split that: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }
@@ -1337,7 +1348,7 @@ els.protectGo.addEventListener('click', async () => {
 
     setStatus('Saved a locked copy. It needs that password to open, and there is no way back without it.');
   } catch (e) {
-    setStatus(`Could not lock that: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not lock that: ${reason(e)}`, 'warn');
   } finally {
     // The password is not kept a moment longer than it is needed.
     els.protectPassword.value = '';
@@ -1379,7 +1390,7 @@ els.extractGo.addEventListener('click', async () => {
     downloadPdf(bytes, `${base} (pages ${els.extractRange.value.trim()}).pdf`);
     setStatus(`Saved ${positions.length} page${positions.length === 1 ? '' : 's'} as a new PDF.`);
   } catch (e) {
-    setStatus(`Could not extract those pages: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not extract those pages: ${reason(e)}`, 'warn');
   } finally {
     setBusy(false);
   }

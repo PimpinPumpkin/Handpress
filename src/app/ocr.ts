@@ -8,9 +8,12 @@
  * searchable and editable while looking exactly as it did before.
  *
  * Tesseract is large, so it is imported only when somebody actually asks for
- * this, and its worker, wasm core and language data are fetched from a CDN on
- * first use rather than shipped. The page itself is never sent anywhere:
- * recognition runs in a worker on this machine.
+ * this, and its worker, wasm core and language data are loaded on first use
+ * rather than carried by every visit. They come from this app's own origin,
+ * not from a CDN: left to itself tesseract fetches them from two public ones,
+ * which would both break the app offline and tell a stranger that this machine
+ * is reading a document. Nothing about the page leaves the machine either.
+ * Recognition runs in a worker here.
  */
 
 import type { TextInsertion } from '../pdf/writer';
@@ -54,8 +57,22 @@ export async function openRecogniser(
   onProgress?.(0.1, 'Loading the recogniser');
   const { createWorker } = await import('tesseract.js');
 
+  // Served by us, from `public/ocr`, which `npm run ocr-assets` fills. The core
+  // is named as a directory on purpose: the worker picks between three builds
+  // of it depending on what the browser supports.
+  const base = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/ocr`;
+
+  // A file the worker cannot fetch throws inside the worker, where nothing here
+  // can catch it, and the call to start it then never settles: the app would
+  // sit on "Loading the recogniser" for the rest of the session. Asking for the
+  // files first turns a permanent wait into a sentence.
+  await confirmInstalled(base);
+
   let report = onProgress;
   const worker = await createWorker('eng', 1, {
+    workerPath: `${base}/worker.min.js`,
+    corePath: base,
+    langPath: `${base}/lang`,
     logger: (m: { status?: string; progress?: number }) => {
       // The first run downloads a few megabytes of recogniser and language
       // data, which is long enough that saying nothing reads as a hang.
@@ -161,4 +178,39 @@ export function wordsToInsertions(
     });
   }
   return out;
+}
+
+
+/**
+ * Checks that the recogniser's own files are actually being served.
+ *
+ * The core comes in three builds and the worker picks between them by what the
+ * browser supports, so all three have to be there, and which one this browser
+ * would ask for is not known here. `npm run ocr-assets` puts them in place; a
+ * deploy that skipped it is the case worth naming.
+ */
+async function confirmInstalled(base: string): Promise<void> {
+  const files = [
+    `${base}/worker.min.js`,
+    `${base}/tesseract-core-lstm.wasm.js`,
+    `${base}/tesseract-core-simd-lstm.wasm.js`,
+    `${base}/tesseract-core-relaxedsimd-lstm.wasm.js`,
+    `${base}/lang/eng.traineddata.gz`,
+  ];
+  // The status alone is not enough. A dev server, and any host set up to serve
+  // a single page app, answers a missing file with the app's own index.html and
+  // a cheerful 200, so what came back is asked about as well.
+  const found = await Promise.all(
+    files.map((url) =>
+      fetch(url, { method: 'HEAD' })
+        .then((r) => r.ok && !(r.headers.get('content-type') ?? '').startsWith('text/html'))
+        .catch(() => false),
+    ),
+  );
+  if (found.every(Boolean)) return;
+  const missing = files.filter((_, i) => !found[i]).map((url) => url.split('/').pop());
+  throw new Error(
+    `this copy of the app is missing ${missing.join(', ')}, ` +
+      'so there is nothing to read the page with',
+  );
 }

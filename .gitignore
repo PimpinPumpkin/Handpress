@@ -16,3 +16,6 @@ public/test-image.jpg
 public/sample-heavy.pdf
 public/sample-small.pdf
 public/sample-damaged.pdf
+
+# Fetched by npm run ocr-assets, not committed
+public/ocr/

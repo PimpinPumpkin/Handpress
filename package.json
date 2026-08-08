@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "npm run ocr-assets && vite",
+    "build": "npm run ocr-assets && tsc && vite build",
+    "ocr-assets": "node tools/ocr-assets.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

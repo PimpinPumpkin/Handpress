@@ -140,10 +140,14 @@ the line. Words the recogniser is not reasonably sure of are left out rather tha
 written down wrong.
 
 Recognition runs on this machine, in a worker; the page is never uploaded. The
-recogniser itself and its language data are fetched from a CDN the first time
-they are needed, so the first run on a new browser takes a few seconds longer.
-One recogniser is started for the whole document rather than one per page,
-because starting it costs more than reading a page does.
+recogniser itself and its language data come from this app's own origin, not
+from a CDN. Left to itself tesseract fetches both from public ones, which would
+mean the app stopped working without a connection and that a stranger learned
+this machine was reading a document. Twenty-three megabytes are served here
+instead, downloaded once and then kept by the browser, so the first run on a
+new browser takes a few seconds longer and later ones do not. One recogniser is
+started for the whole document rather than one per page, because starting it
+costs more than reading a page does.
 
 ### Finding text
 
@@ -403,6 +407,12 @@ npm run dev
 ```
 
 Build a static bundle with `npm run build`, then check it with `npm run preview`.
+
+Both `dev` and `build` run `npm run ocr-assets` first, which puts the
+recogniser's worker, wasm core and English language data in `public/ocr` so the
+app can serve them itself. The core comes from node_modules; the language data
+is fetched once, from the address tesseract would have used at runtime anyway,
+and checked against a recorded digest. The directory is not committed.
 The output in `dist` is plain files with no backend, so it can be dropped on any
 static host.
 

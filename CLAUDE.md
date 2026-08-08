@@ -294,6 +294,20 @@ therefore gathered by the stream they land in rather than by the path taken to
 get there, since writing a stream once per route throws away every write but the
 last.
 
+## The recogniser is served, not fetched
+
+Tesseract fetches its worker, its wasm core and its language data from two
+public CDNs unless told otherwise. `npm run ocr-assets` puts them in
+`public/ocr` and `openRecogniser` points at that, so an app that promises never
+to upload anything does not announce over the network that it is reading a
+document, and works with no connection at all.
+
+A file the worker cannot fetch throws inside the worker, where nothing can
+catch it, and `createWorker` then never settles. The files are asked for first
+so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
+the recogniser" forever. The check looks at the content type as well as the
+status, because a dev server answers a missing file with index.html and a 200.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.
