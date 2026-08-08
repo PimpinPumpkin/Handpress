@@ -504,15 +504,28 @@ export class Viewer {
       const shown = this.doc.textFor(p.index, line);
       let width = geo.width;
       if (shown !== line.text) {
+        // Scaled by the ratio of measured widths rather than by adding their
+        // difference. The width the line was drawn at and the width its own
+        // font measures are not the same number, so adding one to the other
+        // mixed two scales and barely moved the box. A ratio carries whatever
+        // the measurement gets wrong through both sides. Character counts are
+        // the fallback for a font that cannot be measured at all.
         const horizScale = line.ops[0]?.horizScale ?? 100;
         const was = measure(line.font, line.text, line.fontSize, horizScale);
         const now = measure(line.font, shown, line.fontSize, horizScale);
-        if (was !== null && now !== null) width = Math.max(4, geo.width + (now - was) * this.zoom);
+        width =
+          was !== null && now !== null && was > 0.01
+            ? geo.width * (now / was)
+            : geo.width * (shown.length / Math.max(1, line.text.length));
+        width = Math.max(4, width);
       }
+      // A little past the type on each side, so the outline sits around the
+      // words rather than against them.
+      const sidePad = Math.max(1.5, line.fontSize * this.zoom * 0.08);
 
-      box.style.left = `${geo.left + shift.x}px`;
+      box.style.left = `${geo.left + shift.x - sidePad}px`;
       box.style.top = `${geo.top + shift.y}px`;
-      box.style.width = `${width}px`;
+      box.style.width = `${width + sidePad * 2}px`;
       box.style.height = `${geo.height}px`;
       if (geo.angle) box.style.transform = `rotate(${geo.angle}deg)`;
       box.style.transformOrigin = 'left top';
@@ -1786,9 +1799,14 @@ export class Viewer {
     const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
 
     const size = line.fontSize * this.zoom;
-    const ascent = (line.font.ascent / 1000) * size;
-    const descent = (Math.abs(line.font.descent) / 1000) * size;
-    const height = Math.max(ascent + descent, size * 1.1);
+    // A font's declared ascent is frequently smaller than the glyphs it draws,
+    // and some report none at all, which put the top of every box on the caps.
+    // Floors of roughly the usual ascender and descender keep the box around
+    // the type rather than on it, without moving the baseline, which is the
+    // one number here that has to stay exact.
+    const ascent = Math.max((line.font.ascent / 1000) * size, size * 0.8);
+    const descent = Math.max((Math.abs(line.font.descent) / 1000) * size, size * 0.24);
+    const height = ascent + descent;
 
     return { left: bx, top: by - ascent, width, height, angle, baselineLeft: bx, baselineTop: by };
   }

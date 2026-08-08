@@ -392,6 +392,19 @@ the tails of descenders visible around the edited text, and two sets of glyphs
 half a pixel apart read as the wrong typeface rather than as a leftover. The
 margin scales with the type so it is the same at every zoom.
 
+## A font's declared ascent is not how tall its letters are
+
+`lineGeometry` put the top of every box at `baseline - font.ascent`, and fonts
+routinely declare an ascent smaller than the glyphs they draw, or none at all.
+The box then sat on the caps. There are floors of roughly the usual ascender
+and descender now. The baseline is untouched: it is the one number here that
+has to stay exact, because the editor and the text layer both position from it.
+
+The box for an edited line is scaled by the ratio of measured widths, not by
+adding their difference. The width a line was drawn at and the width its own
+font measures are different numbers, so adding one to the other mixes two
+scales and barely moves the box, which is why it looked unfixed twice.
+
 ## The commit path was not slow where it looked slow
 
 Measured in Chrome, not assumed: rebuilding with pdf-lib is 3 to 27 ms and
