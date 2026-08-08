@@ -403,6 +403,12 @@ export class Viewer {
   }
 
   private buildOverlay(p: RenderedPage, viewport: { convertToViewportPoint(x: number, y: number): number[] }): void {
+    // Never rebuild under an open editor. A page re-renders for reasons that
+    // have nothing to do with what is being typed, and replacing the boxes
+    // mid sentence takes the caret with them: the edit is lost and the click
+    // that started it appears to have done nothing.
+    if (this.activeEditor && this.activePage === p) return;
+
     p.overlay.innerHTML = '';
     if (!p.model || !this.doc) return;
 
@@ -1356,7 +1362,7 @@ export class Viewer {
     editor.style.top = `${iy - baselineOffset(cssFont, lineHeight)}px`;
     editor.style.minWidth = `${sizePx * 4}px`;
 
-    p.overlay.appendChild(editor);
+    p.container.appendChild(editor);
     this.activeEditor = editor;
     this.activeInsertion = insertion;
     this.activePage = p;
@@ -1472,7 +1478,11 @@ export class Viewer {
     if (geo.angle) editor.style.transform = `rotate(${geo.angle}deg)`;
     editor.style.transformOrigin = 'left top';
 
-    p.overlay.append(cover, editor);
+    // Mounted on the page rather than the overlay. The overlay is emptied and
+    // rebuilt every time the page re-renders, which on a long document happens
+    // while thumbnails are still being drawn, and it was taking the editor and
+    // everything typed into it away mid sentence.
+    p.container.append(cover, editor);
     this.activeEditor = editor;
     this.activeLine = line;
     this.activePage = p;
@@ -1520,7 +1530,7 @@ export class Viewer {
       ? this.doc.setInsertionText(page.index, insertion.id, raw)
       : this.doc.setLineText(page.index, line!, raw.replace(/\n/g, ' '));
     editor.remove();
-    page.overlay.querySelector('.edit-cover')?.remove();
+    page.container.querySelector('.edit-cover')?.remove();
 
     if (!changed) return;
 
@@ -1535,6 +1545,10 @@ export class Viewer {
         this.cb.onStatus(substituted[0].detail, 'warn');
       } else if (warnings.length) {
         this.cb.onStatus(warnings[0].detail, 'warn');
+      } else if (this.doc.lastReflow > 1) {
+        // Saying so matters: lines the user did not click on have changed, and
+        // finding that out by noticing is worse than being told.
+        this.cb.onStatus(`Edit applied, and the rest of the paragraph rewrapped.`);
       } else {
         this.cb.onStatus('Edit applied.');
       }
@@ -1551,7 +1565,7 @@ export class Viewer {
       return;
     }
     this.activeEditor.remove();
-    this.activePage?.overlay.querySelector('.edit-cover')?.remove();
+    this.activePage?.container.querySelector('.edit-cover')?.remove();
     this.activeEditor = null;
     this.activeLine = null;
     this.activeInsertion = null;

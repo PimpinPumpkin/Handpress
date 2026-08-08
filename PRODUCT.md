@@ -84,6 +84,9 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Reflow: editing a line re-breaks the rest of its paragraph instead of leaving
+  a ragged hole. Measured with the document's own font against the column its own
+  line breaks imply; refused rather than guessed when the text no longer fits.
 - Notes: a comment attached to a point on the page, written as a real /Text
   annotation so any other reader shows it and can reply to it.
 - Highlighting: drag over anything and it is marked with a multiply blend, so

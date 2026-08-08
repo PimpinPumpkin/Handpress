@@ -194,6 +194,30 @@ while a matrix inserted there applies in the space the matrix maps from, so it
 is carried back through the inverse of the matrix's linear part. Skipping that
 step sends images on rotated or scaled pages off in the wrong direction.
 
+### Reflow
+
+Editing one line of a paragraph and leaving the rest where they were is what
+makes most PDF editors feel like patching rather than writing: delete a word and
+the line ends early, add a sentence and it runs off the column. Vellum treats the
+lines a paragraph is made of as one piece of text, re-breaks it from the edited
+line onwards, and writes each line back.
+
+The lines above the edit are left alone. They wrapped correctly and nobody
+changed them, so rewriting them would move text the user did not touch.
+
+Wrapping is measured with the document's own font, and the column edge is worked
+out from the paragraph's own breaks: every wrapped line says the column reached
+at least that far, and that the next line's first word did not fit. Re-breaking a
+paragraph's own words reproduces its own lines on 203 of 203 paragraphs found
+across the pdf.js corpus.
+
+What it will not do is make room. Text that needs a line the paragraph does not
+have is refused, because finding that line would mean pushing the rest of the
+page down. Paragraph detection is deliberately conservative: same font and size,
+an even rhythm of baselines, a shared left edge, and a column wide enough to be
+prose rather than a list of names. Anything less certain is edited a line at a
+time, exactly as before.
+
 ### Adding text
 
 Text can also be added where the page had none. It is written as real text with

@@ -14,6 +14,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
 import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
+import { groupParagraphs, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
 import {
   applyEdits,
   type EditWarning,
@@ -37,6 +38,8 @@ export interface PageModel {
   height: number;
   rotation: number;
   lines: TextLine[];
+  /** Lines grouped into the paragraphs they were wrapped into, for reflow. */
+  paragraphs: Paragraph[];
   walk: WalkResult;
   contentBytes: Uint8Array;
   /** CSS font-family per line id, taken from pdf.js so editing shows the real font. */
@@ -350,12 +353,71 @@ export class VellumDocument {
       pageEdits = new Map();
       this.edits.set(pageIndex, pageEdits);
     }
-    if (newText === line.text) pageEdits.delete(line.id);
-    else pageEdits.set(line.id, newText);
+
+    const write = (target: TextLine, text: string): void => {
+      if (text === target.text) pageEdits!.delete(target.id);
+      else pageEdits!.set(target.id, text);
+    };
+    write(line, newText);
+
+    // The rest of the paragraph follows the edit. Only the lines after it are
+    // touched: the ones above wrapped correctly and the user did not change
+    // them, so rewriting those would move text nobody asked to move.
+    const rewrapped = this.rewrapAfter(pageIndex, line, (l) =>
+      l.id === line.id ? newText : this.textFor(pageIndex, l),
+    );
+    if (rewrapped) for (const [target, text] of rewrapped) write(target, text);
 
     this.undoStack.push(before);
     this.redoStack = [];
+    this.lastReflow = rewrapped ? rewrapped.length : 0;
     return true;
+  }
+
+  /**
+   * How many lines the last edit rewrapped, so the interface can say so.
+   *
+   * Zero means the line stood alone, or its paragraph could not take the new
+   * text without needing a line it does not have.
+   */
+  lastReflow = 0;
+
+  /**
+   * Re-breaks the paragraph containing a line, from that line onwards.
+   *
+   * Returns null when there is no paragraph to speak of, or when the words no
+   * longer fit the lines available. Making room would mean pushing the rest of
+   * the page down, which is a different and far riskier operation than editing
+   * a line, so the edit is left as it was and the caller can say what happened.
+   */
+  private rewrapAfter(
+    pageIndex: number,
+    line: TextLine,
+    textOf: (line: TextLine) => string,
+  ): Array<[TextLine, string]> | null {
+    const page = this.lineCache.get(pageIndex);
+    if (!page) return null;
+
+    const paragraph = paragraphOf(page.paragraphs, line.id);
+    if (!paragraph) return null;
+
+    const from = paragraph.lines.findIndex((l) => l.id === line.id);
+    if (from < 0 || from >= paragraph.lines.length - 1) return null;
+
+    const tail = paragraph.lines
+      .slice(from)
+      .map((l) => textOf(l).trim())
+      .filter((t) => t.length > 0)
+      .join(' ');
+
+    const result = reflow(paragraph, tail, from);
+    if (!result) return null;
+
+    const out: Array<[TextLine, string]> = [];
+    for (let i = from; i < paragraph.lines.length; i++) {
+      out.push([paragraph.lines[i], result.texts[i - from]]);
+    }
+    return out;
   }
 
   /** Adds new text at a point on a page and returns it. */
@@ -1051,11 +1113,13 @@ export class VellumDocument {
           height: viewport.height,
           rotation: content.rotation,
           lines,
+          paragraphs: groupParagraphs(lines),
           walk,
           contentBytes: content.bytes,
           cssFonts: new Map(),
         };
-      } catch {
+      } catch (e) {
+        console.warn(`[vellum] page ${index + 1} produced no text model:`, e);
         const jsPage = await this.pdfjsDoc.getPage(index + 1).catch(() => null);
         const viewport = jsPage?.getViewport({ scale: 1 });
         model = {
@@ -1064,6 +1128,7 @@ export class VellumDocument {
           height: viewport?.height ?? 792,
           rotation: 0,
           lines: [],
+          paragraphs: [],
           walk: { ops: [], images: [], streams: new Map(), fonts: new Map(), resources: new Map() },
           contentBytes: new Uint8Array(0),
           cssFonts: new Map(),

@@ -150,6 +150,35 @@ The note editor is appended to the page container rather than the overlay,
 because the overlay is discarded and rebuilt on every rebuild of the document
 and took a half typed comment with it.
 
+## Wrap decisions are measured, never taken from the drawn extent
+
+`paragraphs.ts` decides where a line breaks by measuring text in the document's
+own font. The width a line was *drawn* at is not the same number: justified text
+is drawn with stretched spaces, so its drawn extent is wider than the same words
+set normally, and a column taken from it lets one more word onto every line. Both
+sides of every comparison are measured, on words joined by single spaces, because
+a document that puts two spaces after a full stop would otherwise report a wider
+line than the rewrap produces.
+
+The column edge comes from the paragraph's own breaks rather than a guessed
+margin: each wrapped line says the column reached at least that far and that the
+next line's first word did not fit. Those bounds are kept per line, since
+justification, hyphenation and manual breaks leave real paragraphs whose lines
+disagree about where the margin was.
+
+Geometry alone cannot tell prose from a list: names, times and table rows stack
+with even leading and a shared left edge exactly like wrapped text. `wraps()`
+asks what the text is doing instead, and requires a column at least twelve ems
+wide with at least three words to a line.
+
+## An open editor owns its page
+
+`buildOverlay` refuses to run while an editor is open on that page. A page
+re-renders for reasons that have nothing to do with what is being typed, and
+replacing the boxes mid sentence takes the caret with them: the edit is lost and
+the click that started it looks like it did nothing. For the same reason the
+editor and its cover are mounted on the page container, not the overlay.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.
