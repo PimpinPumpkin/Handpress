@@ -35,6 +35,7 @@ const els = {
   docTitle: $('docTitle'),
   btnOpen: $<HTMLButtonElement>('btnOpen'),
   btnSave: $<HTMLButtonElement>('btnSave'),
+  btnPrint: $<HTMLButtonElement>('btnPrint'),
   btnChoose: $<HTMLButtonElement>('btnChoose'),
   btnUndo: $<HTMLButtonElement>('btnUndo'),
   btnRedo: $<HTMLButtonElement>('btnRedo'),
@@ -412,6 +413,106 @@ void offerRecovery();
 
 /* ---------------- saving ---------------- */
 
+/* ---------------- printing ---------------- */
+
+/**
+ * Prints the document as a PDF, rather than printing the page it is shown on.
+ *
+ * The browser's own print command would print this app: toolbar, sidebar,
+ * thumbnails and a canvas cropped to the window. What anyone means by printing
+ * a PDF is the PDF, so the edited bytes are built and handed to the browser's
+ * PDF viewer in an offscreen frame, which prints paper-sized pages at full
+ * resolution with the edits in them.
+ *
+ * A document too damaged to rebuild is printed from the bytes it arrived as.
+ * It cannot be saved, but there is nothing stopping it being printed.
+ */
+async function printDocument(): Promise<void> {
+  if (!doc) return;
+  viewer.closeEditor(false);
+  setBusy(true, 'Preparing to print…');
+
+  let bytes: Uint8Array;
+  try {
+    if (doc.canEdit) {
+      bytes = (await doc.build()).bytes;
+    } else {
+      bytes = doc.bytes;
+    }
+  } catch (e) {
+    setBusy(false);
+    setStatus(`Could not prepare that for printing: ${reason(e)}`, 'warn');
+    return;
+  }
+
+  const copy = new Uint8Array(bytes.length);
+  copy.set(bytes);
+  const url = URL.createObjectURL(new Blob([copy], { type: 'application/pdf' }));
+
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  // Offscreen rather than hidden: a display:none frame is not rendered, and a
+  // frame that was never rendered has nothing to print.
+  frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1px;height:1px;border:0;';
+
+  // Some browsers will not print a PDF from a frame at all. There is no way to
+  // ask beforehand, so the frame gets a moment to do it and the document opens
+  // in a tab if nothing happened.
+  let printed = false;
+  const cleanUp = (): void => {
+    frame.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  frame.addEventListener('load', () => {
+    try {
+      const win = frame.contentWindow;
+      if (!win) throw new Error('the print frame did not open');
+      // A frame fires load for the empty document it starts with as well as
+      // for the one asked for, and printing the first one prints a blank
+      // sheet. Only the document that was asked for counts, and only once.
+      if (printed || win.location.href === 'about:blank') return;
+      win.focus();
+      win.print();
+      printed = true;
+      setBusy(false);
+      setStatus(
+        signedDocument
+          ? 'Sent to the printer. The printed copy carries no digital signature.'
+          : 'Sent to the printer.',
+      );
+      // Long enough for the print dialog to have taken what it needs. Revoking
+      // underneath an open dialog leaves it printing a blank page.
+      window.setTimeout(cleanUp, 60000);
+    } catch {
+      printed = false;
+    }
+  });
+
+  // Source first, then attach: a frame attached empty loads its blank document
+  // before anything else, and there is no reason to make it.
+  frame.src = url;
+  document.body.appendChild(frame);
+
+  window.setTimeout(() => {
+    if (printed) return;
+    setBusy(false);
+    // Opening it is the honest fallback: the document is right there and the
+    // browser's own print command works on it.
+    const opened = window.open(url, '_blank');
+    setStatus(
+      opened
+        ? 'This browser will not print from inside the page, so the PDF is open in a new tab. Print it from there.'
+        : 'This browser will not print from inside the page, and the new tab was blocked. Allow pop-ups, or save a copy and print that.',
+      'warn',
+    );
+    frame.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }, 3000);
+}
+
+els.btnPrint.addEventListener('click', () => void printDocument());
+
 els.btnSave.addEventListener('click', async () => {
   if (!doc) return;
   viewer.closeEditor(false);
@@ -505,6 +606,11 @@ window.addEventListener('keydown', (e) => {
   } else if (key === 's') {
     e.preventDefault();
     els.btnSave.click();
+  } else if (key === 'p') {
+    // Taken over deliberately. The browser would print this app rather than
+    // the document it is showing.
+    e.preventDefault();
+    if (doc) void printDocument();
   } else if (key === 'o') {
     e.preventDefault();
     els.fileInput.click();
@@ -560,6 +666,9 @@ function syncEditState(): void {
     button.disabled = readOnly;
     button.title = readOnly ? 'This file cannot be changed or saved.' : '';
   }
+  // Printing is not writing. A document that cannot be rebuilt can still be
+  // put on paper, from the bytes it arrived as.
+  els.btnPrint.disabled = !doc;
   els.btnUndo.disabled = !doc?.canUndo();
   els.btnRedo.disabled = !doc?.canRedo();
   els.docTitle.classList.toggle('dirty', dirty);

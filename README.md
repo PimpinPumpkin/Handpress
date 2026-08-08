@@ -155,6 +155,20 @@ clipped by every reader there is and otherwise just looks like a sentence that
 stopped. Only the part the edit itself pushed over is counted; documents whose
 text already ran off the page are not blamed on whoever changed a word in one.
 
+### Printing
+
+**Print** prints the PDF, not the page it is shown on. The browser's own print
+command would print this app, so Cmd or Ctrl and P is taken over and handed the
+built document instead: the edits are in it, the pages are page-sized, and the
+resolution is the document's rather than the screen's.
+
+A document too damaged to rebuild is printed from the bytes it arrived as. It
+cannot be saved, but nothing stops it being printed.
+
+Some browsers will not print a PDF from inside a page and there is no way to
+ask beforehand, so if nothing has happened after a moment the document opens in
+a tab to be printed from there.
+
 ### Finding text
 
 Cmd+F, or the box in the toolbar. Every hit is highlighted at once, Enter and

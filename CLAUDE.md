@@ -315,6 +315,23 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## Printing goes through the PDF, not through the page
+
+`window.print()` on this app prints the app: toolbar, sidebar, and a canvas
+cropped to the window. Cmd+P is intercepted and the built bytes are handed to
+the browser's own PDF viewer in an offscreen frame.
+
+Offscreen rather than `display: none`, because a frame that was never rendered
+has nothing to print. The source is set before the frame is attached, and the
+load handler ignores `about:blank` and anything after the first: a frame fires
+load for the empty document it starts with too, and printing that one prints a
+blank sheet, which is exactly what happened first time.
+
+There is no way to ask a browser whether it will print a PDF from a frame, so
+if nothing has printed after three seconds the document opens in a tab instead.
+The `@media print` block in the stylesheet is only for a browser that prints
+the page regardless of all this.
+
 ## Clicking somewhere is intent, not an edit
 
 Placing added text used to add an empty piece of text to the document and then

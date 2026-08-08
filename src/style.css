@@ -1435,3 +1435,51 @@ body {
   background: rgba(255, 235, 59, 0.45);
   border-color: rgba(200, 170, 0, 0.9);
 }
+
+/* Printing goes through the browser's PDF viewer, not through this page, so
+   Cmd+P is taken over and handed the built document instead. This is only for
+   the case where a browser prints the page regardless: better a stack of pages
+   with no furniture around them than a screenshot of an editor. */
+@media print {
+  .topbar,
+  .toolbar,
+  .sidebar,
+  .panel,
+  .statusbar,
+  .modal,
+  .notice,
+  .restore-bar,
+  .dropzone,
+  .busy,
+  .page-overlay,
+  .text-layer,
+  .page-label {
+    display: none !important;
+  }
+
+  html,
+  body,
+  #app,
+  .workspace,
+  .viewer-wrap,
+  .viewer,
+  .page-strip {
+    background: #fff !important;
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .page {
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    break-after: page;
+  }
+
+  .page-canvas {
+    width: 100% !important;
+    height: auto !important;
+  }
+}
