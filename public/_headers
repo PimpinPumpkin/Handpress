@@ -1,0 +1,37 @@
+# Cloudflare Pages reads this file and sends these headers with the matching
+# responses. Ignored by anything that does not, which costs nothing.
+
+# The recogniser's wasm core and language data. Tens of megabytes, fetched the
+# first time somebody reads a scan, and none of it ever changes: the filenames
+# carry the language and the core's build, so a different file means a
+# different name. A year is the longest anything should be told to keep
+# something, and these have earned it.
+/ocr/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Everything the build fingerprints. Same reasoning, less of it.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The page itself is the only thing that changes, and it is what points at
+# everything above, so it must not be held on to.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Nothing here talks to anything but itself, and saying so means a browser
+# enforces it rather than trusting that it stayed true. The whole claim of this
+# app is that a document never leaves the machine it is opened on; connect-src
+# and default-src of 'self' is that claim written where it is checked.
+#
+# blob: appears three times over because three real things need it: tesseract
+# starts its worker from a blob, pdf.js is handed one, and printing loads the
+# built document into a frame as one. 'unsafe-inline' is for style attributes,
+# which is how every box on a page is positioned. There is no eval of any kind:
+# neither pdf.js nor its worker has needed one since version 6.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; frame-src 'self' blob:; child-src 'self' blob:; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: data:

@@ -483,9 +483,34 @@ static host.
 
 CI typechecks and builds every push and uploads `dist` as a workflow artifact.
 It does not publish anywhere: GitHub Pages is not available for private repos on
-the free plan. To get a live URL, either make the repo public and add a Pages
-workflow, or point Cloudflare Pages or Netlify at it with build command
-`npm run build` and output directory `dist`.
+the free plan.
+
+### Putting it somewhere
+
+```bash
+npm run deploy
+```
+
+That builds and uploads `dist` to Cloudflare Pages with wrangler. Building
+locally rather than on the host keeps the language data out of the deploy's
+critical path: it is already on this machine, and a build that has to fetch
+tens of megabytes from a third party is a build that can fail for reasons that
+have nothing to do with the code.
+
+`dist` is around 31 MB with the default set of languages, in 27 files, the
+largest of them 10 MB. Cloudflare's free plan allows 25 MiB per file and 20,000
+files, so there is room for every language at once if `OCR_LANGS=all` is wanted.
+
+`public/_headers` goes with it. It tells the host to hold on to `/ocr` and
+`/assets` for a year, since those filenames change whenever their contents do,
+and never to hold on to the page that points at them. It also carries a content
+policy of `default-src 'self'`, which is the app's one real claim written
+somewhere a browser will enforce it: nothing here may talk to anywhere else.
+That policy was checked by serving the built site under it and using every
+tool, including the recogniser, which starts its worker from a blob. No
+violations, and nothing requested from outside its own origin.
+
+Any other static host works too. There is no backend to arrange.
 
 ## Tests
 

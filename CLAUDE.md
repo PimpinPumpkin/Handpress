@@ -322,6 +322,24 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## The content policy is the privacy claim, checked
+
+`public/_headers` carries `default-src 'self'` with no eval of any kind. The
+whole pitch is that a document never leaves the machine it is opened on, and
+this is the one place a browser will enforce that rather than take our word.
+
+`blob:` is allowed in three places because three real things need it: tesseract
+starts its worker from a blob, pdf.js is handed one, and printing loads the
+built document into a frame as one. `style-src` needs `'unsafe-inline'` because
+every box on a page is positioned with a style attribute. Nothing needs eval:
+neither pdf.js nor its worker has used one since version 6, so `unsafe-eval` is
+absent and should stay absent.
+
+A policy nobody tested is a guess, so it was checked by serving the built site
+with the real headers and driving every tool through it: open, edit, save,
+print, split, outline and a full recognition run. No violations, and no request
+to anything but its own origin.
+
 ## The hidden attribute needs help
 
 `hidden` only carries `display: none` from the browser's own stylesheet, which

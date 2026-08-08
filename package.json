@@ -7,7 +7,8 @@
     "dev": "npm run ocr-assets && vite",
     "build": "npm run ocr-assets && tsc && vite build",
     "ocr-assets": "node tools/ocr-assets.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name vellum"
   },
   "devDependencies": {
     "tsx": "^4.23.5",
