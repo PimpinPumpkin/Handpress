@@ -546,8 +546,19 @@ async function buildLineFragment(
 
   for (let i = 0; i < line.segments.length; i++) {
     const seg = line.segments[i];
-    const text = segTexts[i] ?? '';
+    let text = segTexts[i] ?? '';
     if (!text) continue;
+
+    // The space that stands for the gap before the next segment is not drawn.
+    // Nothing drew it in the original, and the gap below is emitted as a
+    // positioning offset, so drawing it too counts the gap twice and slides
+    // everything after it along. Changing one digit of a mileage moved the
+    // separator and the VIN after it by a space width each.
+    const nextText = segTexts[i + 1] ?? '';
+    if (seg.syntheticTrailingSpace && text.endsWith(' ') && i + 1 < line.segments.length && nextText) {
+      text = text.slice(0, -1);
+      if (!text) continue;
+    }
 
     // Preserve the horizontal gap the producer left before this segment, so
     // columns and tabs survive while edited text still reflows naturally.

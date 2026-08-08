@@ -554,6 +554,8 @@ export interface TextSegment {
   /** Character offsets of this segment within the parent line's text. */
   start: number;
   end: number;
+  /** True when this segment's last space stands for a gap nothing drew. */
+  syntheticTrailingSpace?: boolean;
   /**
    * Width in 1/1000 em of the gaps that read as spaces in this segment.
    *
@@ -750,6 +752,7 @@ export function groupLines(ops: ShowOp[]): TextLine[] {
       const last = segments[segments.length - 1];
       if (last && prev && sameStyle(prev, o)) {
         last.text += lead + o.text;
+        last.syntheticTrailingSpace = false;
         last.ops.push(o);
         last.u1 = uEnd;
         last.end = text.length + lead.length + o.text.length;
@@ -760,6 +763,11 @@ export function groupLines(ops: ShowOp[]): TextLine[] {
         if (last && lead) {
           last.text += lead;
           last.end += lead.length;
+          // Recorded, because nothing drew this space: it stands for the gap
+          // before the next segment. The writer reproduces that gap as a
+          // positioning offset, so drawing the space as well would count it
+          // twice and slide the rest of the line along.
+          last.syntheticTrailingSpace = true;
           if (leadPerMille > 0) gapWidths.push(leadPerMille);
         }
         if (last) applyGapWidth(last);

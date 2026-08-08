@@ -1830,11 +1830,14 @@ export class Viewer {
     // descenders showing around the live text, and two sets of glyphs half a
     // pixel apart read as the wrong font rather than as a leftover. The margin
     // scales with the type so it is the same at every zoom.
+    // More room above than below. A line's measured box sits close under the
+    // cap height, so ascenders and the outline drawn around them are what runs
+    // out of the top; descenders have more room to begin with.
     const pad = Math.max(2, lineHeight * 0.12);
     cover.style.left = `${geo.left - pad}px`;
-    cover.style.top = `${geo.top - pad * 0.5}px`;
+    cover.style.top = `${geo.top - pad * 1.4}px`;
     cover.style.width = `${geo.width + pad * 2.5}px`;
-    cover.style.height = `${geo.height + pad}px`;
+    cover.style.height = `${geo.height + pad * 2.2}px`;
     if (geo.angle) cover.style.transform = `rotate(${geo.angle}deg)`;
     cover.style.transformOrigin = 'left top';
 

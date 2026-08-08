@@ -392,6 +392,19 @@ the tails of descenders visible around the edited text, and two sets of glyphs
 half a pixel apart read as the wrong typeface rather than as a leftover. The
 margin scales with the type so it is the same at every zoom.
 
+## A gap is drawn once, not twice
+
+A space that stands for a positioning gap is a reading convenience: nothing in
+the file drew it. The writer already reproduces the gap as a `TJ` offset, so
+drawing the space as well counted it twice and slid everything after it along.
+Changing one digit of a mileage moved the separator after it by a space width
+and the VIN after that by two.
+
+`groupLines` marks the segment with `syntheticTrailingSpace`, and clears it if
+more text is added to that segment, so the writer can tell a space nothing drew
+from one somebody typed. Corpus tests never caught this because they check that
+*other lines* do not drift; this is drift inside the edited line.
+
 ## Type 3 fonts measure in their own units
 
 A Type 3 font declares its glyph space with `/FontMatrix` and its `/Widths` are

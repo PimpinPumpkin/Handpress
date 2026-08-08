@@ -460,7 +460,8 @@ body {
 .line-editor {
   position: absolute;
   margin: 0;
-  padding: 0;
+  /* Room above the type for the outline, which was sitting on the ascenders. */
+  padding: 2px 0 1px;
   border: 0;
   outline: 2px solid var(--accent);
   outline-offset: 1px;
