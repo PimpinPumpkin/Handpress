@@ -226,6 +226,18 @@ the browser half lives in `app/recompress.ts`. That keeps the engine testable
 under Node, where the test stands in a fixed JPEG and checks which images were
 chosen rather than the quality of a resize.
 
+## Recovery keeps the document, not the edit list
+
+`autosave.ts` writes the built bytes to IndexedDB a couple of seconds after the
+last change. Serialising the edit list instead would mean serialising placed
+images, merged documents and the undo stack, and restoring it would exercise a
+path nothing else uses. Keeping the document means restoring is just opening a
+file. The undo history goes, and the offer says so.
+
+Failure is swallowed on purpose: private windows, a full disk and storage turned
+off all end up in the same catch, and none of them is a reason to interrupt
+somebody who is editing. Anything over 80 MB is not attempted, and says so.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.

@@ -194,6 +194,19 @@ while a matrix inserted there applies in the space the matrix maps from, so it
 is carried back through the inverse of the matrix's linear part. Skipping that
 step sends images on rotated or scaled pages off in the wrong direction.
 
+### If the tab goes away
+
+Everything happens in the browser, so there is no account to save to and nothing
+on a server to come back to. A closed tab, a crash or a stray reload would
+otherwise take an afternoon's editing with it, and the warning on the way out is
+only worth anything if there is something behind it.
+
+The document as it currently stands is written aside a couple of seconds after
+the last change, and offered back the next time Vellum is opened. What is kept
+is the document, not the list of edits that made it, so restoring is exactly the
+same as opening a file, which is the best tested path there is. The cost is the
+undo history, which the offer says plainly.
+
 ### Making a file smaller
 
 Almost all the weight in a large PDF is images stored at far more detail than

@@ -11,6 +11,7 @@ import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/s
 import { OCR_SCALE, openRecogniser, wordsToInsertions, type Recogniser } from './app/ocr';
 import { looksLikeImage, pdfFromImages } from './pdf/images';
 import { compress } from './pdf/compress';
+import { AUTOSAVE_LIMIT, forget, howLongAgo, keep, recover } from './app/autosave';
 import { recompressInBrowser } from './app/recompress';
 import type { TextLine } from './pdf/content';
 
@@ -85,6 +86,10 @@ const els = {
   notice: $('notice'),
   noticeText: $('noticeText'),
   noticeClose: $<HTMLButtonElement>('noticeClose'),
+  restoreBar: $('restoreBar'),
+  restoreText: $('restoreText'),
+  restoreGo: $<HTMLButtonElement>('restoreGo'),
+  restoreDiscard: $<HTMLButtonElement>('restoreDiscard'),
   busyText: $('busyText'),
 };
 
@@ -127,7 +132,7 @@ const viewer = new Viewer(els.viewer, {
   onEdited: () => {
     syncEditState();
     if (matches.length) void runSearch();
-
+    scheduleAutosave();
     void renderThumbs();
   },
   onStatus: setStatus,
@@ -160,6 +165,7 @@ async function openFile(file: File): Promise<void> {
     if (localFonts.enabled) doc.fontProvider = localFonts;
 
     els.dropzone.hidden = true;
+    els.restoreBar.hidden = true;
     showNotice(report.signatureWarning);
     els.docTitle.textContent = name;
     els.docTitle.classList.remove('dirty');
@@ -257,6 +263,53 @@ async function openImages(files: File[]): Promise<void> {
     setBusy(false);
   }
 }
+
+/* ---------------- keeping the work ---------------- */
+
+/**
+ * Writes the document aside a moment after the last change.
+ *
+ * Debounced because a rewrap touches a dozen lines at once and a save on each
+ * would copy the whole file a dozen times. Two seconds of quiet is long enough
+ * to be past the burst and short enough that little is at risk.
+ */
+let autosaveTimer: number | undefined;
+
+function scheduleAutosave(): void {
+  window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => {
+    if (!doc?.hasEdits()) return;
+    void keep(doc.name, doc.bytes).then((kept) => {
+      if (!kept && doc && doc.bytes.length > AUTOSAVE_LIMIT) {
+        setStatus('This document is too large to keep for you, so save a copy before closing the tab.', 'warn');
+      }
+    });
+  }, 2000);
+}
+
+/** Offers back whatever the last session left behind. */
+async function offerRecovery(): Promise<void> {
+  const saved = await recover();
+  if (!saved || doc) return;
+
+  els.restoreText.textContent =
+    `Vellum still has ${saved.name}, as it stood ${howLongAgo(saved.saved)}. ` +
+    'Restoring reopens the document with those changes already in it; the undo history is not kept.';
+  els.restoreBar.hidden = false;
+
+  els.restoreGo.addEventListener('click', () => {
+    els.restoreBar.hidden = true;
+    void openFile(new File([saved.bytes as BlobPart], saved.name, { type: 'application/pdf' })).then(() =>
+      setStatus('Restored the document from your last session.'),
+    );
+  });
+  els.restoreDiscard.addEventListener('click', () => {
+    els.restoreBar.hidden = true;
+    void forget();
+  });
+}
+
+void offerRecovery();
 
 /* ---------------- saving ---------------- */
 

@@ -1204,6 +1204,34 @@ body {
   text-align: center;
 }
 
+/* ---------- restore bar ---------- */
+
+/* Above the dropzone, which covers the whole area while no document is open
+   and would otherwise paint straight over the offer. */
+.notice-restore {
+  position: relative;
+  z-index: 2;
+  background: rgba(61, 139, 253, 0.14);
+  border-bottom-color: rgba(61, 139, 253, 0.45);
+  color: var(--ink);
+}
+
+.notice-action {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.notice-action:hover {
+  background: var(--accent-dim);
+}
+
 /* ---------- selectable text ---------- */
 
 /* An invisible copy of the page's words, so the page can be selected, copied

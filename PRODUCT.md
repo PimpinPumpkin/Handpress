@@ -84,6 +84,8 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Recovery: the document is written aside a couple of seconds after each change
+  and offered back next time, so a closed tab does not cost an afternoon.
 - Compress: images redrawn at the size the page shows them, which is where
   nearly all the weight in a large PDF is. A 215 KB page came back at 46 KB with
   the same layout.
