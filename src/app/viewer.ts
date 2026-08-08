@@ -12,6 +12,7 @@
 
 import type { PageModel, VellumDocument } from './model';
 import { charPosition } from '../pdf/content';
+import { standardTextWidth } from '../pdf/fonts';
 import type { TextLine } from '../pdf/content';
 import type { TextInsertion } from '../pdf/writer';
 import { NOTE_SIZE, type PageNote } from '../pdf/notes';
@@ -1128,8 +1129,9 @@ export class Viewer {
    * Draws a hit that falls inside added text.
    *
    * Added text has no styled segments to interpolate through, so the span is
-   * measured with the same canvas metrics the insertion was laid out against,
-   * which is close enough for a highlight and costs nothing.
+   * measured in the font it is written in. Asking a canvas instead measures
+   * whatever the machine decided Helvetica meant, which is not what ends up in
+   * the file, and the box drifts further along the line the later the hit is.
    */
   private matchBoxForInsertion(
     p: RenderedPage,
@@ -1141,10 +1143,16 @@ export class Viewer {
     if (!insertion || !viewport) return null;
 
     const scale = (insertion.horizScale ?? 100) / 100;
-    const measure = (text: string): number => {
-      Viewer.measureCtx.font = `${insertion.size}px Helvetica, Arial, sans-serif`;
-      return Viewer.measureCtx.measureText(text).width * scale;
-    };
+    const face =
+      'Helvetica' +
+      (insertion.bold && insertion.italic
+        ? 'BoldOblique'
+        : insertion.bold
+          ? 'Bold'
+          : insertion.italic
+            ? 'Oblique'
+            : '');
+    const measure = (text: string): number => standardTextWidth(face, text, insertion.size) * scale;
     const x0 = insertion.x + measure(insertion.text.slice(0, match.start));
     const x1 = insertion.x + measure(insertion.text.slice(0, match.end));
     const descent = insertion.size * 0.22;
@@ -1490,7 +1498,12 @@ export class Viewer {
     const viewport = jsPage.getViewport({ scale: this.zoom });
     const [px, py] = viewport.convertToPdfPoint(event.clientX - rect.left, event.clientY - rect.top);
 
-    const insertion = this.doc.addInsertion(p.index, {
+    // Not added to the document yet. Clicking somewhere is a statement of
+    // intent, not an edit, and adding it here meant a click followed by Escape
+    // left an empty piece of text behind: counted as an edit, sitting in the
+    // undo history, and invisible because it had nothing to draw.
+    const draft: TextInsertion = {
+      id: 'draft',
       x: px,
       y: py,
       size: this.addSize,
@@ -1498,10 +1511,13 @@ export class Viewer {
       text: '',
       bold: false,
       italic: false,
-    });
-    this.cb.onEdited();
-    this.openInsertionEditor(p, insertion, viewport);
+    };
+    this.draftInsertion = true;
+    this.openInsertionEditor(p, draft, viewport);
   }
+
+  /** Whether the open editor belongs to text not yet added to the document. */
+  private draftInsertion = false;
 
   private openInsertionEditor(
     p: RenderedPage,
@@ -1509,7 +1525,9 @@ export class Viewer {
     viewport: { convertToViewportPoint(x: number, y: number): number[] },
   ): void {
     if (!this.doc) return;
+    const draft = this.draftInsertion;
     this.closeEditor(true);
+    this.draftInsertion = draft;
 
     const [ix, iy] = viewport.convertToViewportPoint(insertion.x, insertion.y);
     const sizePx = insertion.size * this.zoom;
@@ -1692,8 +1710,14 @@ export class Viewer {
     this.activePage = null;
 
     const raw = editor.textContent ?? '';
+    const draft = this.draftInsertion;
+    this.draftInsertion = false;
     const changed = insertion
-      ? this.doc.setInsertionText(page.index, insertion.id, raw)
+      ? draft
+        ? // Text typed into a fresh box joins the document now. A box left
+          // empty never existed as far as the document is concerned.
+          raw.trim().length > 0 && !!this.doc.addInsertion(page.index, { ...insertion, text: raw })
+        : this.doc.setInsertionText(page.index, insertion.id, raw)
       : this.doc.setLineText(page.index, line!, raw.replace(/\n/g, ' '));
     editor.remove();
     page.container.querySelector('.edit-cover')?.remove();
@@ -1744,6 +1768,7 @@ export class Viewer {
     this.activeLine = null;
     this.activeInsertion = null;
     this.activePage = null;
+    this.draftInsertion = false;
   }
 
   scrollToPage(index: number): void {

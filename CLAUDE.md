@@ -308,6 +308,16 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## Clicking somewhere is intent, not an edit
+
+Placing added text used to add an empty piece of text to the document and then
+open an editor over it. A click followed by Escape left that empty text behind:
+counted as an edit, sitting in the undo history, and invisible, because it had
+nothing to draw. The box is now a draft held by the viewer, and `commit` adds it
+only if something was typed into it. `draftInsertion` says which kind the open
+editor is; `openInsertionEditor` closes any previous editor first, so it carries
+the flag across that call deliberately.
+
 ## The fourteen standard fonts have real metrics, so use them
 
 A non-embedded standard font usually omits `Widths`, because every reader is

@@ -474,9 +474,11 @@ function defaultStandardWidth(font: LoadedFont, code: number): number {
  * measures whatever font the browser decided "Helvetica" meant on this machine
  * and lays the same document out differently on the next one.
  */
-export function standardTextWidth(name: string, text: string, size: number): number {
-  const cached = metricsCache.get(name);
-  let metrics = cached;
+export function standardTextWidth(alias: string, text: string, size: number): number {
+  // Callers name fonts the way `standardFontAlias` does, which is how pdf-lib
+  // spells them when embedding, not how the metrics package spells them.
+  const name = STANDARD_METRIC_NAMES[alias] ?? alias;
+  let metrics = metricsCache.get(name);
   if (metrics === undefined) {
     try {
       metrics = Font.load(name as FontNames);
