@@ -84,6 +84,9 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Images in and out: a dropped picture becomes a PDF page of its own size, and
+  the page on screen saves out as a PNG. Two of the most searched for things a
+  PDF tool can do, and neither needs a server.
 - Selecting and copying text, with the words laid over the canvas at their real
   positions so the browser handles selection, copy and screen readers.
 - Reflow: editing a line re-breaks the rest of its paragraph instead of leaving

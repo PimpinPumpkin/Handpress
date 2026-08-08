@@ -9,6 +9,7 @@ import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import { DecryptionError } from './pdf/decrypt';
 import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/signature';
 import { OCR_SCALE, openRecogniser, wordsToInsertions, type Recogniser } from './app/ocr';
+import { looksLikeImage, pdfFromImages } from './pdf/images';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -43,6 +44,7 @@ const els = {
   searchPrev: $<HTMLButtonElement>('searchPrev'),
   searchNext: $<HTMLButtonElement>('searchNext'),
   btnExtract: $<HTMLButtonElement>('btnExtract'),
+  btnPageImage: $<HTMLButtonElement>('btnPageImage'),
   mergeFileInput: $<HTMLInputElement>('mergeFileInput'),
   extractModal: $('extractModal'),
   extractRange: $<HTMLInputElement>('extractRange'),
@@ -131,22 +133,32 @@ const viewer = new Viewer(els.viewer, {
 /* ---------------- opening ---------------- */
 
 async function openFile(file: File): Promise<void> {
-  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
-    setStatus('That does not look like a PDF.', 'warn');
+  const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+  if (!isPdf && !looksLikeImage(file)) {
+    setStatus('That is not a PDF or an image.', 'warn');
     return;
   }
 
   setBusy(true, `Opening ${file.name}…`);
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const { doc: opened, report } = await VellumDocument.open(file.name, bytes);
+    let bytes: Uint8Array<ArrayBuffer> = new Uint8Array(await file.arrayBuffer());
+    let name = file.name;
+
+    // A picture becomes a one page PDF of its own size. Turning an image into a
+    // PDF is one of the most common things anyone wants, and once it is a page
+    // every other tool here applies to it.
+    if (!isPdf) {
+      bytes = (await pdfFromImages([{ name: file.name, bytes }])) as Uint8Array<ArrayBuffer>;
+      name = file.name.replace(/\.[^.]+$/, '') + '.pdf';
+    }
+    const { doc: opened, report } = await VellumDocument.open(name, bytes);
     doc = opened;
     signedDocument = report.signatures.signatures.length > 0;
     if (localFonts.enabled) doc.fontProvider = localFonts;
 
     els.dropzone.hidden = true;
     showNotice(report.signatureWarning);
-    els.docTitle.textContent = file.name;
+    els.docTitle.textContent = name;
     els.docTitle.classList.remove('dirty');
     els.pageTotal.textContent = `/ ${report.pageCount}`;
     els.pageInput.value = '1';
@@ -212,9 +224,36 @@ for (const type of ['dragleave', 'drop']) {
   });
 }
 window.addEventListener('drop', (e) => {
-  const f = (e as DragEvent).dataTransfer?.files?.[0];
-  if (f) void openFile(f);
+  const files = [...((e as DragEvent).dataTransfer?.files ?? [])];
+  if (!files.length) return;
+
+  // Several images at once become one PDF, a page each, in the order they were
+  // dropped. Dropping a folder of scans and getting a document is the whole
+  // point of the gesture.
+  const images = files.filter(looksLikeImage);
+  if (images.length > 1 && images.length === files.length) {
+    void openImages(images);
+    return;
+  }
+  void openFile(files[0]);
 });
+
+/** Builds one PDF from several dropped images and opens it. */
+async function openImages(files: File[]): Promise<void> {
+  setBusy(true, `Making a PDF from ${files.length} images…`);
+  try {
+    const images = await Promise.all(
+      files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })),
+    );
+    const bytes = await pdfFromImages(images);
+    const name = `${files.length} images.pdf`;
+    await openFile(new File([bytes as BlobPart], name, { type: 'application/pdf' }));
+  } catch (e) {
+    setStatus(`Could not make a PDF from those images: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+}
 
 /* ---------------- saving ---------------- */
 
@@ -231,7 +270,10 @@ els.btnSave.addEventListener('click', async () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = doc.name.replace(/\.pdf$/i, '') + ' (edited).pdf';
+    // A copy of an untouched document is a copy, not an edit. Saying otherwise
+    // in the filename is a small lie that gets filed away and believed later.
+    const suffix = doc.hasEdits() ? ' (edited)' : ' (copy)';
+    a.download = doc.name.replace(/\.pdf$/i, '') + suffix + '.pdf';
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1005,6 +1047,40 @@ function openExtract(): void {
   els.extractRange.select();
 }
 
+/**
+ * Saves the page on screen as a PNG.
+ *
+ * Rendered at twice the page size, which is about 150 dots per inch: sharp
+ * enough to read and to print small, without producing a file nobody can email.
+ */
+els.btnPageImage.addEventListener('click', async () => {
+  if (!doc?.pdfjs) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  const pageIndex = viewer.currentPageIndex();
+  setBusy(true, 'Rendering the page…');
+  try {
+    const canvas = await viewer.rasterise(pageIndex, 2);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('the page could not be turned into an image');
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${doc.name.replace(/\.pdf$/i, '')} page ${pageIndex + 1}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+    setStatus(`Saved page ${pageIndex + 1} as a PNG.`);
+  } catch (e) {
+    setStatus(`Could not save that page as an image: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
+
 els.btnExtract.addEventListener('click', openExtract);
 els.extractCancel.addEventListener('click', () => {
   els.extractModal.hidden = true;
@@ -1115,7 +1191,15 @@ if (import.meta.env.DEV) {
   if (sample) {
     void fetch(sample)
       .then((r) => r.arrayBuffer())
-      .then((b) => openFile(new File([b], sample.split('/').pop() ?? 'sample.pdf', { type: 'application/pdf' })))
+      .then((b) => {
+        const name = sample.split('/').pop() ?? 'sample.pdf';
+        const type = /\.png$/i.test(name)
+          ? 'image/png'
+          : /\.jpe?g$/i.test(name)
+            ? 'image/jpeg'
+            : 'application/pdf';
+        return openFile(new File([b], name, { type }));
+      })
       .catch((e) => setStatus(`Could not load sample: ${e.message}`, 'warn'));
   }
 }

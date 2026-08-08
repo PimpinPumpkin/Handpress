@@ -104,6 +104,10 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="12" height="16" rx="1.5" /><path d="M18 10v8" /><path d="M14 14h8" /></svg>
             <span>Add pages</span>
           </button>
+          <button class="tool" id="btnPageImage" type="button" title="Save the page you are looking at as a PNG image">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="M21 16l-5-5-6 6-3-3-4 4" /></svg>
+            <span>Page as image</span>
+          </button>
           <button class="tool" id="btnExtract" type="button" title="Save a range of pages as a new PDF">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="11" height="16" rx="1.5" /><path d="M17 8l4 4-4 4" /><path d="M21 12h-7" /></svg>
             <span>Extract</span>
@@ -179,9 +183,9 @@
                 <path d="M13.4 3.6v4.6h4.4" />
               </svg>
               <h1>Edit the text in a PDF</h1>
-              <p class="lede">Click any line, retype it, and save. Vellum reuses the document's own fonts.</p>
-              <button class="btn btn-primary btn-lg" id="btnChoose" type="button">Choose a PDF</button>
-              <p class="hint">or drop one anywhere on this window</p>
+              <p class="lede">Click any line, retype it, and save. Vellum reuses the document's own fonts. Drop in images and they become a PDF.</p>
+              <button class="btn btn-primary btn-lg" id="btnChoose" type="button">Choose a file</button>
+              <p class="hint">or drop PDFs or images anywhere on this window</p>
               <p class="privacy">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
                 Your file never leaves this browser. No server, no upload, no account.
@@ -216,7 +220,7 @@
       </footer>
     </div>
 
-    <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+    <input type="file" id="fileInput" accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg" hidden />
     <input type="file" id="sigFileInput" accept="image/*" hidden />
     <input type="file" id="mergeFileInput" accept="application/pdf,.pdf" multiple hidden />
 

@@ -194,6 +194,17 @@ while a matrix inserted there applies in the space the matrix maps from, so it
 is carried back through the inverse of the matrix's linear part. Skipping that
 step sends images on rotated or scaled pages off in the wrong direction.
 
+### Images in and out
+
+Drop a picture on the window and it becomes a PDF: one page, the size of the
+image, so nothing is cropped to a paper size nobody asked for. Drop several and
+they become one document, a page each, in the order they were dropped. Once it
+is a page, every other tool here applies to it, recognition included.
+
+**Page as image** goes the other way, writing the page on screen out as a PNG at
+twice its size, which is about 150 dots per inch: sharp enough to read and to
+print small, without producing a file nobody can email.
+
 ### Selecting and copying
 
 A canvas has no text in it, so a rendered page cannot be selected or copied out,
