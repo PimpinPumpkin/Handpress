@@ -14,7 +14,8 @@
   "devDependencies": {
     "tsx": "^4.23.5",
     "typescript": "~6.0.2",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "wrangler": "^4.120.0"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
