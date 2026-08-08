@@ -259,6 +259,25 @@
       </div>
     </div>
 
+    <div class="modal" id="splitModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="splitTitle">
+        <h2 id="splitTitle">Split into separate PDFs</h2>
+        <p class="modal-sub">
+          The pieces are saved together as one zip. The document you are working on is left exactly as it is.
+        </p>
+        <label class="sig-check" for="splitEvery">Pages in each file</label>
+        <input class="range-input" id="splitEvery" type="number" min="1" step="1" value="1" />
+        <label class="sig-check" for="splitRange">Which pages, if not all of them</label>
+        <input class="range-input" id="splitRange" type="text" placeholder="for example 1-3, 5, 8-" />
+        <p class="sig-hint" id="splitHint"></p>
+        <div class="modal-actions">
+          <span class="modal-spacer"></span>
+          <button class="btn" id="splitCancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="splitGo" type="button">Split it</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal" id="protectModal" hidden>
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="protectTitle">
         <h2 id="protectTitle">Put a password on a copy</h2>

@@ -15,6 +15,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
 import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
 import { groupParagraphs, overflowOf, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
+import { splitChunks } from '../pdf/split';
 import {
   applyEdits,
   type EditWarning,
@@ -639,7 +640,19 @@ export class VellumDocument {
    * every edit twenty times to produce twenty single page files is the same
    * answer for twenty times the work.
    */
-  async splitPages(perFile = 1): Promise<Array<{ name: string; bytes: Uint8Array; from: number; to: number }>> {
+  /**
+   * Cuts the document into separate PDFs.
+   *
+   * `perFile` is how many pages each piece gets. `only` limits it to a chosen
+   * set of pages, given as positions from zero; the pieces are still cut in
+   * order and named for the pages they actually hold, so splitting 1-3 and 8-10
+   * two at a time gives "page 1-2", "page 3", "page 8-9", "page 10" rather than
+   * a numbering that only makes sense to whoever typed the range.
+   */
+  async splitPages(
+    perFile = 1,
+    only?: number[],
+  ): Promise<Array<{ name: string; bytes: Uint8Array; from: number; to: number }>> {
     const { bytes } = await this.build();
     const full = await PDFDocument.load(bytes, { throwOnInvalidObject: false, updateMetadata: false });
     const total = full.getPageCount();
@@ -647,19 +660,24 @@ export class VellumDocument {
     const base = this.name.replace(/\.pdf$/i, '');
     const out: Array<{ name: string; bytes: Uint8Array; from: number; to: number }> = [];
 
-    for (let start = 0; start < total; start += size) {
-      const wanted = [];
-      for (let i = start; i < Math.min(start + size, total); i++) wanted.push(i);
+    const pages = (only ?? Array.from({ length: total }, (_, i) => i)).filter(
+      (i) => i >= 0 && i < total,
+    );
+
+    for (const wanted of splitChunks(pages, size)) {
+      if (!wanted.length) continue;
 
       const piece = await PDFDocument.create();
       const copied = await piece.copyPages(full, wanted);
       for (const page of copied) piece.addPage(page);
 
-      const from = start + 1;
-      const to = start + wanted.length;
-      // Numbers are padded so the files sort the way the pages read.
+      const from = wanted[0] + 1;
+      const to = wanted[wanted.length - 1] + 1;
+      // Both numbers padded, so the files sort the way the pages read. Padding
+      // only the first gave "page 01-2".
       const width = String(total).length;
-      const label = from === to ? `${from}`.padStart(width, '0') : `${from}`.padStart(width, '0') + `-${to}`;
+      const pad = (n: number): string => `${n}`.padStart(width, '0');
+      const label = from === to ? pad(from) : `${pad(from)}-${pad(to)}`;
       out.push({ name: `${base} page ${label}.pdf`, bytes: await piece.save(), from, to });
     }
 

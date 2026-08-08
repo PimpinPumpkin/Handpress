@@ -227,10 +227,17 @@ reader would prove the two halves agree with each other and nothing more.
 
 ### Splitting
 
-**Split** saves every page as its own PDF, gathered into one archive. One
-archive rather than a download each, because browsers throttle a run of
-downloads, ask about them, and scatter them through a folder in whatever order
-they finish. Names are zero padded so the files sort the way the pages read.
+**Split** cuts the document into separate PDFs, gathered into one archive. It
+asks how many pages go in each file and which pages to take, and says how many
+files that will be before writing any of them. One archive rather than a
+download each, because browsers throttle a run of downloads, ask about them,
+and scatter them through a folder in whatever order they finish. Names are zero
+padded so the files sort the way the pages read.
+
+Gaps are cut before sizes are. Asking for pages 1-3 and 8-10 two at a time
+gives 1-2, 3, 8-9 and 10, not a file called "page 3-8" holding two pages that
+are six apart. The count in the dialog and the split itself come from the same
+function, so a promise made before the work is the one kept by it.
 
 The archive is written here rather than by a library: entries are stored rather
 than deflated, since a PDF is already compressed and deflating it again buys a

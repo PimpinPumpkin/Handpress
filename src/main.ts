@@ -4,6 +4,7 @@
 
 import './style.css';
 import { VellumDocument, type PageModel, type SearchMatch } from './app/model';
+import { splitChunks } from './pdf/split';
 import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import { DecryptionError } from './pdf/decrypt';
@@ -72,6 +73,12 @@ const els = {
   btnPageImage: $<HTMLButtonElement>('btnPageImage'),
   btnCompress: $<HTMLButtonElement>('btnCompress'),
   btnSplit: $<HTMLButtonElement>('btnSplit'),
+  splitModal: $('splitModal'),
+  splitEvery: $<HTMLInputElement>('splitEvery'),
+  splitRange: $<HTMLInputElement>('splitRange'),
+  splitHint: $('splitHint'),
+  splitCancel: $<HTMLButtonElement>('splitCancel'),
+  splitGo: $<HTMLButtonElement>('splitGo'),
   btnProtect: $<HTMLButtonElement>('btnProtect'),
   unlockModal: $('unlockModal'),
   unlockPassword: $<HTMLInputElement>('unlockPassword'),
@@ -1492,7 +1499,42 @@ function sizeOf(bytes: number): string {
  * downloads, ask about them, and scatter them through a folder in whatever
  * order they finish.
  */
-els.btnSplit.addEventListener('click', async () => {
+/** What the dialog is currently asking for, and whether it makes sense. */
+function splitPlan(): { pages: number[]; perFile: number; files: number } {
+  const total = doc?.pageCount ?? 0;
+  const typed = els.splitRange.value.trim();
+  const pages = typed
+    ? parseRange(typed, total)
+    : Array.from({ length: total }, (_, i) => i);
+  const perFile = Math.max(1, Math.floor(Number(els.splitEvery.value) || 1));
+  // The same grouping the split itself uses, so the count promised here is the
+  // count that comes out.
+  return { pages, perFile, files: splitChunks(pages, perFile).length };
+}
+
+function describeSplit(): void {
+  const { pages, perFile, files } = splitPlan();
+  if (!pages.length) {
+    els.splitHint.textContent = els.splitRange.value.trim()
+      ? 'That range does not name any pages in this document.'
+      : '';
+    els.splitGo.disabled = true;
+    return;
+  }
+  els.splitGo.disabled = false;
+  els.splitHint.textContent =
+    `${pages.length} page${pages.length === 1 ? '' : 's'} into ` +
+    `${files} file${files === 1 ? '' : 's'}` +
+    (perFile === 1 ? ', one page each.' : `, ${perFile} pages each.`);
+}
+
+els.splitEvery.addEventListener('input', describeSplit);
+els.splitRange.addEventListener('input', describeSplit);
+els.splitCancel.addEventListener('click', () => {
+  els.splitModal.hidden = true;
+});
+
+els.btnSplit.addEventListener('click', () => {
   if (!doc) {
     setStatus('Open a PDF first.', 'warn');
     return;
@@ -1501,11 +1543,25 @@ els.btnSplit.addEventListener('click', async () => {
     setStatus('There is only one page, so there is nothing to split.', 'warn');
     return;
   }
-
   viewer.closeEditor(false);
-  setBusy(true, `Splitting ${doc.pageCount} pages…`);
+  els.splitRange.value = '';
+  els.splitEvery.value = '1';
+  els.splitEvery.max = String(doc.pageCount);
+  describeSplit();
+  els.splitModal.hidden = false;
+  els.splitEvery.focus();
+});
+
+els.splitGo.addEventListener('click', async () => {
+  if (!doc) return;
+  const { pages, perFile, files } = splitPlan();
+  if (!pages.length) return;
+  els.splitModal.hidden = true;
+
+  setBusy(true, `Splitting ${pages.length} pages into ${files} files…`);
   try {
-    const pieces = await doc.splitPages();
+    const whole = pages.length === doc.pageCount;
+    const pieces = await doc.splitPages(perFile, whole ? undefined : pages);
     const archive = zip(pieces.map((p) => ({ name: p.name, bytes: p.bytes })));
 
     const copy = new Uint8Array(archive.length);
@@ -1519,7 +1575,9 @@ els.btnSplit.addEventListener('click', async () => {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 20000);
 
-    setStatus(`Split into ${pieces.length} files, saved as one zip.`);
+    setStatus(
+      `Split into ${pieces.length} file${pieces.length === 1 ? '' : 's'}, saved as one zip.`,
+    );
   } catch (e) {
     setStatus(`Could not split that: ${reason(e)}`, 'warn');
   } finally {
