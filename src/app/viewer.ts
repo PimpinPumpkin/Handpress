@@ -154,6 +154,10 @@ export class Viewer {
   private mode: ViewerMode = 'edit';
   /** Name attached to new notes. Empty until the user gives one. */
   noteAuthor = '';
+  /** Copies of moved objects, shown until the page has really been redrawn. */
+  private lifted: HTMLElement[] = [];
+  private liftTimer = 0;
+
   /** Insertion being edited, when the active editor belongs to added text. */
   private activeInsertion: TextInsertion | null = null;
   /** Defaults applied to newly added text. */
@@ -509,6 +513,7 @@ export class Viewer {
           if (line.editable) this.openEditor(p, line, viewport);
           else this.cb.onStatus('That text uses a font Handpress cannot map to characters, so editing it is disabled.', 'warn');
         },
+        p,
       );
 
       p.overlay.appendChild(box);
@@ -586,11 +591,17 @@ export class Viewer {
       });
       box.appendChild(remove);
 
-      this.makeDraggable(box, viewport as never, (dx, dy) => {
-        if (!this.doc) return;
-        if (!this.doc.moveStamp(p.index, stamp.id, dx, dy)) return;
-        void this.rebuild(p.index).then(() => this.cb.onEdited());
-      });
+      this.makeDraggable(
+        box,
+        viewport as never,
+        (dx, dy) => {
+          if (!this.doc) return;
+          if (!this.doc.moveStamp(p.index, stamp.id, dx, dy)) return;
+          void this.rebuild(p.index).then(() => this.cb.onEdited());
+        },
+        undefined,
+        p,
+      );
       p.overlay.appendChild(box);
     }
 
@@ -617,6 +628,7 @@ export class Viewer {
           void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
         () => this.openInsertionEditor(p, insertion, viewport),
+        p,
       );
       p.overlay.appendChild(box);
     }
@@ -799,6 +811,9 @@ export class Viewer {
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
       () => this.openNoteEditor(p, note, viewport),
+      // Deliberately not lifted. A note is an annotation, so the marker is our
+      // own drawing rather than page pixels; copying the canvas underneath it
+      // would float whatever the page happens to have there.
     );
     p.overlay.appendChild(marker);
   }
@@ -1068,10 +1083,16 @@ export class Viewer {
     });
     box.appendChild(remove);
 
-    this.makeDraggable(box, viewport as never, (dx, dy) => {
-      if (!this.doc?.moveErasure(p.index, erasure.id, dx, dy)) return;
-      void this.rebuild(p.index).then(() => this.cb.onEdited());
-    });
+    this.makeDraggable(
+      box,
+      viewport as never,
+      (dx, dy) => {
+        if (!this.doc?.moveErasure(p.index, erasure.id, dx, dy)) return;
+        void this.rebuild(p.index).then(() => this.cb.onEdited());
+      },
+      undefined,
+      p,
+    );
     p.overlay.appendChild(box);
   }
 
@@ -1303,10 +1324,16 @@ export class Viewer {
     });
     box.appendChild(handle);
 
-    this.makeDraggable(box, viewport as never, (dx, dy) => {
-      if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
-      void this.rebuild(p.index).then(() => this.cb.onEdited());
-    });
+    this.makeDraggable(
+      box,
+      viewport as never,
+      (dx, dy) => {
+        if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
+        void this.rebuild(p.index).then(() => this.cb.onEdited());
+      },
+      undefined,
+      p,
+    );
 
     p.overlay.appendChild(box);
   }
@@ -1329,11 +1356,79 @@ export class Viewer {
    * state lived on the old element is simply lost. Nothing here is kept on the
    * element, so the gesture survives the page being redrawn under it.
    */
+  /**
+   * Freezes how part of a page looks so a move can be seen straight away.
+   *
+   * Moving anything rebuilds the document and hands it back to pdf.js before a
+   * single pixel can change, which is a few hundred milliseconds during which
+   * the outline has moved and the artwork has not. So the object's own pixels
+   * are lifted off the canvas into a floating copy, the space it left is
+   * covered with the page's colour, and the copy is what follows the pointer.
+   * When the real render lands, both are dropped.
+   *
+   * The copies live on the page container rather than the overlay, which is
+   * emptied and rebuilt whenever the page redraws.
+   */
+  private lift(p: RenderedPage, rect: DOMRect): { ghost: HTMLCanvasElement; cover: HTMLElement } | null {
+    const cssWidth = parseFloat(p.canvas.style.width);
+    if (!cssWidth || rect.width < 1 || rect.height < 1) return null;
+    const scale = p.canvas.width / cssWidth;
+
+    const ghost = document.createElement('canvas');
+    ghost.className = 'lifted';
+    ghost.width = Math.max(1, Math.round(rect.width * scale));
+    ghost.height = Math.max(1, Math.round(rect.height * scale));
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+    ghost.style.left = `${rect.left}px`;
+    ghost.style.top = `${rect.top}px`;
+    try {
+      ghost.getContext('2d')!.drawImage(
+        p.canvas,
+        Math.round(rect.left * scale),
+        Math.round(rect.top * scale),
+        ghost.width,
+        ghost.height,
+        0,
+        0,
+        ghost.width,
+        ghost.height,
+      );
+    } catch {
+      return null;
+    }
+
+    const cover = document.createElement('div');
+    cover.className = 'lifted-gap';
+    cover.style.left = `${rect.left}px`;
+    cover.style.top = `${rect.top}px`;
+    cover.style.width = `${rect.width}px`;
+    cover.style.height = `${rect.height}px`;
+    cover.style.background = sampleBackground(p.canvas, rect, scale);
+
+    p.container.append(cover, ghost);
+    this.lifted.push(cover, ghost);
+    // A backstop. If a rebuild never finishes, a stale copy sitting over the
+    // page claims a move happened that did not, which is a worse lie than a
+    // slow redraw.
+    window.clearTimeout(this.liftTimer);
+    this.liftTimer = window.setTimeout(() => this.dropLifted(), 8000);
+    return { ghost, cover };
+  }
+
+  /** Puts back whatever was lifted, once the page has really been redrawn. */
+  private dropLifted(): void {
+    window.clearTimeout(this.liftTimer);
+    for (const el of this.lifted) el.remove();
+    this.lifted = [];
+  }
+
   private makeDraggable(
     box: HTMLElement,
     viewport: { convertToPdfPoint(x: number, y: number): number[] },
     onDrop: (dx: number, dy: number) => void,
     onClick?: () => void,
+    page?: RenderedPage,
   ): void {
     const THRESHOLD = 3;
 
@@ -1347,14 +1442,23 @@ export class Viewer {
 
       const parent = box.parentElement;
       let moved = false;
+      let lifted: { ghost: HTMLCanvasElement; cover: HTMLElement } | null = null;
 
       const move = (e: PointerEvent): void => {
         const dx = e.clientX - down.clientX;
         const dy = e.clientY - down.clientY;
         if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
+        if (!moved && page) {
+          // Lifted on the first real movement rather than on the press, so a
+          // click that was never a drag costs nothing.
+          const b = box.getBoundingClientRect();
+          const c = page.container.getBoundingClientRect();
+          lifted = this.lift(page, new DOMRect(b.left - c.left, b.top - c.top, b.width, b.height));
+        }
         moved = true;
         box.classList.add('dragging');
         box.style.transform = `translate(${dx}px, ${dy}px)`;
+        if (lifted) lifted.ghost.style.transform = `translate(${dx}px, ${dy}px)`;
       };
 
       const up = (e: PointerEvent): void => {
@@ -1367,6 +1471,10 @@ export class Viewer {
           onClick?.();
           return;
         }
+        // The copy stays where it was let go, so the object appears to have
+        // moved at once. dropLifted removes it when the page has really been
+        // redrawn underneath it.
+
         if (!parent) return;
         const rect = parent.getBoundingClientRect();
         const [x0, y0] = viewport.convertToPdfPoint(down.clientX - rect.left, down.clientY - rect.top);
@@ -1533,6 +1641,11 @@ export class Viewer {
       } catch (e) {
         if (Viewer.isCancellation(e)) return;
         this.cb.onStatus(`Could not apply that: ${(e as Error).message}`, 'warn');
+      } finally {
+        // Unconditionally. A copy left floating over a page that was never
+        // redrawn is worse than the wait it was there to hide, because it
+        // shows the move as done when nothing happened.
+        this.dropLifted();
       }
     });
     this.rebuildQueue = run.catch(() => undefined);
@@ -1786,6 +1899,7 @@ export class Viewer {
       // Only the page that was typed on. A reflowed paragraph stays on its own
       // page, so nothing else on screen can have changed.
       await this.refreshRendered(page.index);
+      this.dropLifted();
       this.cb.onEdited();
       const substituted = warnings.filter((w) => w.kind === 'substituted-font');
       if (substituted.length) {

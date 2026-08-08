@@ -1883,3 +1883,22 @@ body {
   border-radius: 4px;
   outline: none;
 }
+
+/* ---------- moving something ---------- */
+
+/* A copy of the object's own pixels, lifted off the canvas so a move is seen
+   at once instead of after the document has been rebuilt. It sits above the
+   page and below anything being typed into. */
+.lifted {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+}
+
+/* The space the object left, filled with the page's own colour so the original
+   does not sit there looking like a duplicate while the copy is being moved. */
+.lifted-gap {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+}

@@ -392,6 +392,24 @@ the tails of descenders visible around the edited text, and two sets of glyphs
 half a pixel apart read as the wrong typeface rather than as a leftover. The
 margin scales with the type so it is the same at every zoom.
 
+## Moving something shows its own pixels, not a promise
+
+Any move rebuilds the document and hands it back to pdf.js before a pixel can
+change. That is a few hundred milliseconds in which the outline has moved and
+the artwork has not, which reads as the app being broken rather than busy.
+
+`lift` copies the object's pixels off the canvas into a floating canvas, covers
+the space it left with the page's own colour, and lets the copy follow the
+pointer. It stays where it was dropped, so the move looks finished, and
+`dropLifted` removes it once the page has really been redrawn underneath.
+
+The copy is taken on the first movement rather than on the press, so a click
+that was never a drag costs nothing. Cleanup is in a `finally` with an eight
+second backstop: a copy left floating over a page that was never redrawn claims
+a move that did not happen, which is a worse lie than a slow redraw. Note
+markers are deliberately excluded, because a note is an annotation and its
+marker is our own drawing rather than page pixels.
+
 ## A change to one page is not a reason to redraw the others
 
 `refreshRendered` took an argument. Dragging an image on page one invalidated
