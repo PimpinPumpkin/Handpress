@@ -1724,6 +1724,14 @@ export class Viewer {
         // Saying so matters: lines the user did not click on have changed, and
         // finding that out by noticing is worse than being told.
         this.cb.onStatus(`Edit applied, and the rest of the paragraph rewrapped.`);
+      } else if (this.doc.lastOverflow > 0) {
+        // The end of the line is on the page but off the paper, which looks
+        // from here like text that simply stopped.
+        this.cb.onStatus(
+          `Edit applied, but the line now runs ${Math.round(this.doc.lastOverflow)} pt past the ` +
+            'edge of the page, so the end of it will not be printed or shown.',
+          'warn',
+        );
       } else {
         this.cb.onStatus('Edit applied.');
       }

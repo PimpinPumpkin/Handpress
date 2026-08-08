@@ -14,7 +14,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent } from '../pdf/page';
 import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
-import { groupParagraphs, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
+import { groupParagraphs, overflowOf, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
 import {
   applyEdits,
   type EditWarning,
@@ -390,8 +390,26 @@ export class VellumDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     this.lastReflow = rewrapped ? rewrapped.length : 0;
+    // Text drawn past the edge of the page is clipped by every reader there
+    // is, so a line made too long simply loses its end with nothing to show
+    // for it. A paragraph that rewrapped has already been held to its column
+    // and cannot be over the edge.
+    // Against the page's own width, not the viewport's: a page turned a
+    // quarter turn is shown with its sides swapped, but the text still runs
+    // along the same axis it always did.
+    const page = this.lineCache.get(pageIndex);
+    const across = page ? (page.rotation % 180 ? page.height : page.width) : 612;
+    this.lastOverflow = rewrapped ? 0 : overflowOf(line, newText, across);
     return true;
   }
+
+  /**
+   * How far past the right edge of the page the last edit ran, in points.
+   *
+   * Zero when it fits. The edit is applied either way: refusing it would be
+   * worse than letting someone see what they have done and undo it.
+   */
+  lastOverflow = 0;
 
   /**
    * How many lines the last edit rewrapped, so the interface can say so.

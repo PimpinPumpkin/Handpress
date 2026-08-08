@@ -308,6 +308,23 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## A line can be edited off the page
+
+Text drawn past the edge is clipped by every reader there is, so a line made
+too long loses its end and looks like text that simply stopped. The edit still
+applies, since refusing it would be worse than letting somebody see what they
+did and undo it, but `lastOverflow` says how far over it went and the status
+line says so.
+
+Two things make that measurement honest. It measures the change rather than the
+width, because a line drawn with kerning ends somewhere its glyph widths do not
+predict, and adding the difference between old text and new to where the line
+actually ends cancels an error that would otherwise be the whole answer. And it
+counts only what the edit itself put over the edge: files exist whose text
+already runs off the paper, and blaming somebody for the document they were
+given is how a warning gets ignored. Both halves are checked by
+`tools/test-overflow.ts`, which found 150 false alarms in the first version.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.

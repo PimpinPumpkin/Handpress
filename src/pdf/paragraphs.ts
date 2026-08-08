@@ -195,8 +195,38 @@ function brokeOnPurpose(previous: TextLine, line: TextLine, current: TextLine[])
   return measuredEnd(previous) + space + wordWidth <= column + 0.01;
 }
 
-function startAlong(line: TextLine): number {
+export function startAlong(line: TextLine): number {
   return line.startX * line.dirX + line.startY * line.dirY;
+}
+
+/**
+ * How far past the edge of the page a line would run if it said this instead.
+ *
+ * Zero when it still fits. Only horizontal text is judged: a line set sideways
+ * or on a slant runs against a different edge, and guessing which would be
+ * worse than saying nothing. Text that cannot be measured at all counts as
+ * fitting, since a warning nobody can act on is just noise.
+ *
+ * What is measured is the change, not the width. A line drawn with kerning, or
+ * with a word spacing the font knows nothing about, ends somewhere its glyph
+ * widths do not predict, and against a page edge that error is the whole
+ * answer. Adding the difference between the old text and the new to where the
+ * line actually ends cancels it: whatever the measurement gets wrong, it gets
+ * wrong about both.
+ *
+ * And only what the edit itself put over the edge is counted. Files exist
+ * whose text already runs off the paper, and telling somebody who changed one
+ * word that their line is off the page, when it was off the page before they
+ * touched it, is blaming them for the document they were given.
+ */
+export function overflowOf(line: TextLine, text: string, pageWidth: number): number {
+  if (Math.abs(line.dirX - 1) > 0.01 || Math.abs(line.dirY) > 0.01) return 0;
+  const horizScale = line.ops[0]?.horizScale ?? 100;
+  const before = measure(line.font, line.text, line.fontSize, horizScale);
+  const after = measure(line.font, text, line.fontSize, horizScale);
+  if (before === null || after === null) return 0;
+  const wasEnd = endAlong(line);
+  return Math.max(0, wasEnd + (after - before) - Math.max(pageWidth, wasEnd));
 }
 
 function endAlong(line: TextLine): number {

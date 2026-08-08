@@ -149,6 +149,12 @@ new browser takes a few seconds longer and later ones do not. One recogniser is
 started for the whole document rather than one per page, because starting it
 costs more than reading a page does.
 
+A line can be made longer than the page will hold. That edit still applies, but
+it says how far past the edge the line now runs, because text off the paper is
+clipped by every reader there is and otherwise just looks like a sentence that
+stopped. Only the part the edit itself pushed over is counted; documents whose
+text already ran off the page are not blamed on whoever changed a word in one.
+
 ### Finding text
 
 Cmd+F, or the box in the toolbar. Every hit is highlighted at once, Enter and
