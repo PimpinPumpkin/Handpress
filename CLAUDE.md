@@ -308,6 +308,17 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## A locked file can be opened, not just refused
+
+`Protect` writes documents that need a password, and until now opening one only
+reported that it needed a password, with no way to give it. `openFile` takes an
+optional password, a wrong one re-asks rather than starting over, and the file
+is held only while the question is on screen. The password is passed to
+`decryptToBytes` and never stored.
+
+The copy saved afterwards is not locked, which is said on opening. Handing back
+an unprotected file without mentioning it would be worse than useless.
+
 ## Read only means the tools are off, not just the save
 
 A document whose page tree pdf-lib cannot read still renders through pdf.js, so

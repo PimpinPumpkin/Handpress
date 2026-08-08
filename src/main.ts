@@ -64,6 +64,11 @@ const els = {
   btnCompress: $<HTMLButtonElement>('btnCompress'),
   btnSplit: $<HTMLButtonElement>('btnSplit'),
   btnProtect: $<HTMLButtonElement>('btnProtect'),
+  unlockModal: $('unlockModal'),
+  unlockPassword: $<HTMLInputElement>('unlockPassword'),
+  unlockHint: $('unlockHint'),
+  unlockCancel: $<HTMLButtonElement>('unlockCancel'),
+  unlockGo: $<HTMLButtonElement>('unlockGo'),
   protectModal: $('protectModal'),
   protectPassword: $<HTMLInputElement>('protectPassword'),
   protectConfirm: $<HTMLInputElement>('protectConfirm'),
@@ -164,7 +169,7 @@ const viewer = new Viewer(els.viewer, {
 
 /* ---------------- opening ---------------- */
 
-async function openFile(file: File): Promise<void> {
+async function openFile(file: File, password?: string): Promise<void> {
   const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
   if (!isPdf && !looksLikeImage(file)) {
     setStatus('That is not a PDF or an image.', 'warn');
@@ -183,7 +188,7 @@ async function openFile(file: File): Promise<void> {
       bytes = (await pdfFromImages([{ name: file.name, bytes }])) as Uint8Array<ArrayBuffer>;
       name = file.name.replace(/\.[^.]+$/, '') + '.pdf';
     }
-    const { doc: opened, report } = await VellumDocument.open(name, bytes);
+    const { doc: opened, report } = await VellumDocument.open(name, bytes, password);
     doc = opened;
     signedDocument = report.signatures.signatures.length > 0;
     if (localFonts.enabled) doc.fontProvider = localFonts;
@@ -226,9 +231,15 @@ async function openFile(file: File): Promise<void> {
         'warn',
       );
     } else if (report.wasEncrypted) {
+      // Two different locks, and confusing them would matter: one was opened
+      // without asking, the other took the password just typed in. Either way
+      // the copy comes out unlocked, which is the part worth saying, because
+      // quietly handing back an unprotected file would be worse than useless.
       setStatus(
-        `Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}. This PDF was permission locked; ` +
-          'it has been unlocked and the copy you save will not be locked.',
+        `Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}. ` +
+          (password === undefined
+            ? 'This PDF was permission locked; it has been unlocked and the copy you save will not be locked.'
+            : 'The copy you save will not ask for that password. Use Protect to put one back on it.'),
       );
     } else if (doc.hasForm()) {
       setStatus(
@@ -240,7 +251,9 @@ async function openFile(file: File): Promise<void> {
     }
   } catch (e) {
     if (e instanceof DecryptionError) {
-      setStatus(e.message, 'warn');
+      // Vellum can put a password on a document, so it had better be able to
+      // take one off. Asking is the whole of it: the file is already in hand.
+      askForPassword(file, password !== undefined);
     } else {
       setStatus(`Could not open that PDF: ${reason(e)}`, 'warn');
     }
@@ -248,6 +261,54 @@ async function openFile(file: File): Promise<void> {
     setBusy(false);
   }
 }
+
+/**
+ * Asks for the password of a document that will not open without one.
+ *
+ * The file is held only for as long as the question is on screen, and the
+ * password is passed straight to the opener and never stored. `again` is true
+ * when a password was already tried, which is the difference between asking
+ * and saying it was wrong.
+ */
+let lockedFile: File | null = null;
+
+function askForPassword(file: File, again: boolean): void {
+  lockedFile = file;
+  els.unlockHint.textContent = again ? 'That password did not open it. Try another.' : '';
+  els.unlockPassword.value = '';
+  els.unlockModal.hidden = false;
+  els.unlockPassword.focus();
+}
+
+function closeUnlock(): void {
+  els.unlockModal.hidden = true;
+  els.unlockPassword.value = '';
+  lockedFile = null;
+}
+
+els.unlockCancel.addEventListener('click', () => {
+  closeUnlock();
+  setStatus('That document stays locked.');
+});
+
+els.unlockGo.addEventListener('click', () => {
+  const file = lockedFile;
+  const password = els.unlockPassword.value;
+  if (!file) return;
+  if (!password) {
+    els.unlockHint.textContent = 'A password with nothing in it will not open it.';
+    return;
+  }
+  els.unlockModal.hidden = true;
+  els.unlockPassword.value = '';
+  lockedFile = null;
+  void openFile(file, password);
+});
+
+els.unlockPassword.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') els.unlockGo.click();
+  if (e.key === 'Escape') els.unlockCancel.click();
+});
 
 els.btnOpen.addEventListener('click', () => els.fileInput.click());
 els.btnChoose.addEventListener('click', () => els.fileInput.click());

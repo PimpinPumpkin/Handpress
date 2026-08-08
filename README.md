@@ -386,7 +386,15 @@ it came from is consumed in the process. So the file is decrypted at the byte
 level first, and everything downstream sees an ordinary document. All four
 handler families are covered: RC4 40 and 128 bit, AES-128 and AES-256.
 
-A file that genuinely needs a password still needs one, and says so.
+A file that genuinely needs a password asks for one. The password is used to
+open the file and nothing else: it is not stored, not remembered between files,
+and not sent anywhere, because there is nowhere to send it. A wrong one says so
+and asks again.
+
+Vellum can put a password on a document, so it had better be able to take one
+off, and the copy it saves does not ask for the password the original did.
+That is said out loud on opening rather than discovered later. **Protect** puts
+one back on.
 
 ### Damaged files
 

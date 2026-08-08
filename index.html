@@ -277,6 +277,24 @@
       </div>
     </div>
 
+    <div class="modal" id="unlockModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="unlockTitle">
+        <h2 id="unlockTitle">This document needs a password</h2>
+        <p class="modal-sub">
+          The password is used here and nowhere else. Nothing is sent anywhere, and it is not kept once the
+          document is open.
+        </p>
+        <label class="sig-check" for="unlockPassword">Password</label>
+        <input class="range-input" id="unlockPassword" type="password" autocomplete="current-password" />
+        <p class="sig-hint" id="unlockHint"></p>
+        <div class="modal-actions">
+          <span class="modal-spacer"></span>
+          <button class="btn" id="unlockCancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="unlockGo" type="button">Open it</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal" id="sigModal" hidden>
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sigTitle">
         <h2 id="sigTitle">Your signature</h2>

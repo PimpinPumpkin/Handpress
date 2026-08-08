@@ -210,8 +210,12 @@ export class VellumDocument {
    * ordinary ones, so nothing downstream has to know about encryption. Throws
    * DecryptionError when the file genuinely needs a password.
    */
-  static async open(name: string, bytes: Uint8Array): Promise<{ doc: VellumDocument; report: LoadReport }> {
-    const { bytes: plain, wasEncrypted } = await decryptToBytes(bytes);
+  static async open(
+    name: string,
+    bytes: Uint8Array,
+    password?: string,
+  ): Promise<{ doc: VellumDocument; report: LoadReport }> {
+    const { bytes: plain, wasEncrypted } = await decryptToBytes(bytes, password);
     const doc = new VellumDocument(name, plain);
     const report = await doc.reload();
     report.wasEncrypted = wasEncrypted;
