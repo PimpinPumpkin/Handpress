@@ -238,6 +238,16 @@ Failure is swallowed on purpose: private windows, a full disk and storage turned
 off all end up in the same catch, and none of them is a reason to interrupt
 somebody who is editing. Anything over 80 MB is not attempted, and says so.
 
+## The zip is written here, and checked by something else
+
+`zip.ts` is about eighty lines and has no dependencies. Entries are stored
+rather than deflated: a PDF is already compressed, so deflating buys a percent
+or two for the cost of carrying a compressor into the bundle. `tools/test-zip.ts`
+hands its output to the system `unzip`, which verifies every CRC and the whole
+central directory, because an archive only this code can read proves nothing.
+The CRC table is checked against the standard `123456789` value first, so a
+broken table is caught before anything else gets blamed.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.

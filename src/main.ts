@@ -11,6 +11,7 @@ import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/s
 import { OCR_SCALE, openRecogniser, wordsToInsertions, type Recogniser } from './app/ocr';
 import { looksLikeImage, pdfFromImages } from './pdf/images';
 import { compress } from './pdf/compress';
+import { zip } from './pdf/zip';
 import { AUTOSAVE_LIMIT, forget, howLongAgo, keep, recover } from './app/autosave';
 import { recompressInBrowser } from './app/recompress';
 import type { TextLine } from './pdf/content';
@@ -49,6 +50,7 @@ const els = {
   btnExtract: $<HTMLButtonElement>('btnExtract'),
   btnPageImage: $<HTMLButtonElement>('btnPageImage'),
   btnCompress: $<HTMLButtonElement>('btnCompress'),
+  btnSplit: $<HTMLButtonElement>('btnSplit'),
   mergeFileInput: $<HTMLInputElement>('mergeFileInput'),
   extractModal: $('extractModal'),
   extractRange: $<HTMLInputElement>('extractRange'),
@@ -1190,6 +1192,48 @@ els.btnCompress.addEventListener('click', async () => {
 function sizeOf(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
+
+/**
+ * Saves every page as its own PDF, gathered into one archive.
+ *
+ * One archive rather than a download each: browsers throttle a run of
+ * downloads, ask about them, and scatter them through a folder in whatever
+ * order they finish.
+ */
+els.btnSplit.addEventListener('click', async () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  if (doc.pageCount < 2) {
+    setStatus('There is only one page, so there is nothing to split.', 'warn');
+    return;
+  }
+
+  viewer.closeEditor(false);
+  setBusy(true, `Splitting ${doc.pageCount} pages…`);
+  try {
+    const pieces = await doc.splitPages();
+    const archive = zip(pieces.map((p) => ({ name: p.name, bytes: p.bytes })));
+
+    const copy = new Uint8Array(archive.length);
+    copy.set(archive);
+    const url = URL.createObjectURL(new Blob([copy], { type: 'application/zip' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = doc.name.replace(/\.pdf$/i, '') + ' pages.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+
+    setStatus(`Split into ${pieces.length} files, saved as one zip.`);
+  } catch (e) {
+    setStatus(`Could not split that: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
 
 els.btnExtract.addEventListener('click', openExtract);
 els.extractCancel.addEventListener('click', () => {

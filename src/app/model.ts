@@ -591,6 +591,40 @@ export class VellumDocument {
     return out.save({ useObjectStreams: false });
   }
 
+  /**
+   * Splits the document into one file per page, or per group of pages.
+   *
+   * Built once and copied from, rather than rebuilt for each piece: replaying
+   * every edit twenty times to produce twenty single page files is the same
+   * answer for twenty times the work.
+   */
+  async splitPages(perFile = 1): Promise<Array<{ name: string; bytes: Uint8Array; from: number; to: number }>> {
+    const { bytes } = await this.build();
+    const full = await PDFDocument.load(bytes, { throwOnInvalidObject: false, updateMetadata: false });
+    const total = full.getPageCount();
+    const size = Math.max(1, Math.floor(perFile));
+    const base = this.name.replace(/\.pdf$/i, '');
+    const out: Array<{ name: string; bytes: Uint8Array; from: number; to: number }> = [];
+
+    for (let start = 0; start < total; start += size) {
+      const wanted = [];
+      for (let i = start; i < Math.min(start + size, total); i++) wanted.push(i);
+
+      const piece = await PDFDocument.create();
+      const copied = await piece.copyPages(full, wanted);
+      for (const page of copied) piece.addPage(page);
+
+      const from = start + 1;
+      const to = start + wanted.length;
+      // Numbers are padded so the files sort the way the pages read.
+      const width = String(total).length;
+      const label = from === to ? `${from}`.padStart(width, '0') : `${from}`.padStart(width, '0') + `-${to}`;
+      out.push({ name: `${base} page ${label}.pdf`, bytes: await piece.save(), from, to });
+    }
+
+    return out;
+  }
+
   /** Turns a page by a quarter turn, positive being clockwise. */
   rotatePage(position: number, degrees: number): boolean {
     const plan = this.plan();

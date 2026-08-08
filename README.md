@@ -159,6 +159,19 @@ ones it covers; a line that mixes a bold label with body text is not evenly
 spaced, so interpolating across the whole line would put the highlight in the
 wrong place.
 
+### Splitting
+
+**Split** saves every page as its own PDF, gathered into one archive. One
+archive rather than a download each, because browsers throttle a run of
+downloads, ask about them, and scatter them through a folder in whatever order
+they finish. Names are zero padded so the files sort the way the pages read.
+
+The archive is written here rather than by a library: entries are stored rather
+than deflated, since a PDF is already compressed and deflating it again buys a
+percent or two for the cost of carrying a compressor. The test hands the result
+to the system's own `unzip`, because an archive only this code can read is worth
+nothing.
+
 ### Page operations
 
 Pages can be rotated, deleted and reordered from the thumbnail rail, by dragging

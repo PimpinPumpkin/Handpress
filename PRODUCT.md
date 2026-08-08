@@ -84,6 +84,8 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Split: every page as its own PDF, in one archive, with names that sort the way
+  the pages read.
 - Recovery: the document is written aside a couple of seconds after each change
   and offered back next time, so a closed tab does not cost an afternoon.
 - Compress: images redrawn at the size the page shows them, which is where
