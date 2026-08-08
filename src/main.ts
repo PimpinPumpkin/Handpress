@@ -207,16 +207,16 @@ async function openFile(file: File): Promise<void> {
 
     if (!report.canEdit) {
       // Viewable but not rewritable. Saying so at the door is kinder than
-      // letting somebody edit for ten minutes and fail at the save.
+      // letting somebody edit for ten minutes and fail at the save, and the
+      // tools that would fail are turned off in syncEditState above. Splitting
+      // and extracting are not offered here: both rebuild the file, which is
+      // the thing that cannot be done.
       showNotice(
-        'This file is damaged in a way the editor cannot work with. Vellum can show it, and can select, ' +
-          'copy and export its pages, but it cannot change or save it.',
+        'This file is damaged in a way the editor cannot work with. Vellum can show it, its text can be ' +
+          'selected and copied, and its pages can be saved as images, but it cannot be changed or saved as a PDF.',
       );
-    }
-
-    if (!report.canEdit) {
-      // Already said in the notice above; the status line should not then
-      // suggest recognition would help, because nothing can be written back.
+      // The status line should not then suggest recognition would help,
+      // because nothing can be written back.
       setStatus(`Opened ${report.pageCount} page${report.pageCount === 1 ? '' : 's'}, for reading only.`);
     } else if (report.scannedPages.length) {
       setStatus(
@@ -460,10 +460,44 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+/**
+ * Everything that needs to write a PDF back out.
+ *
+ * All of it goes through the same parser, so on a document that parser could
+ * not read, all of it fails. Reading the file, selecting its text and saving a
+ * page as a picture go through pdf.js instead and keep working.
+ */
+const WRITERS = [
+  'btnSave',
+  'btnModeEdit',
+  'btnModeAdd',
+  'btnErase',
+  'btnHighlight',
+  'btnNote',
+  'btnRedact',
+  'btnSign',
+  'btnOcr',
+  'btnLocalFonts',
+  'btnAddPages',
+  'btnProtect',
+  'btnSplit',
+  'btnCompress',
+  'btnExtract',
+] as const;
+
 function syncEditState(): void {
   const dirty = doc?.hasEdits() ?? false;
-  // Nothing to save from a document the editor's parser could not read.
-  els.btnSave.disabled = !doc || !doc.canEdit;
+  // Nothing can be written back from a document the editor's parser could not
+  // read, so the tools that would try are turned off rather than left to fail
+  // one at a time, each in its own words. Saying so at the door only helps if
+  // the door is actually shut.
+  const readOnly = !doc || !doc.canEdit;
+  for (const id of WRITERS) {
+    const button = document.getElementById(id) as HTMLButtonElement | null;
+    if (!button) continue;
+    button.disabled = readOnly;
+    button.title = readOnly ? 'This file cannot be changed or saved.' : '';
+  }
   els.btnUndo.disabled = !doc?.canUndo();
   els.btnRedo.disabled = !doc?.canRedo();
   els.docTitle.classList.toggle('dirty', dirty);

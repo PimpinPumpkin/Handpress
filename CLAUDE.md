@@ -308,6 +308,20 @@ so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading
 the recogniser" forever. The check looks at the content type as well as the
 status, because a dev server answers a missing file with index.html and a 200.
 
+## Read only means the tools are off, not just the save
+
+A document whose page tree pdf-lib cannot read still renders through pdf.js, so
+it opens and can be read. Everything that writes a PDF back out goes through
+the parser that failed, so all of it fails: the `WRITERS` list in `main.ts` is
+turned off together rather than left to fail one tool at a time, each in its
+own words. One of them was reporting `_this.catalog.Pages is not a function` to
+whoever pressed Compress.
+
+What still works is selecting and copying text and saving a page as a picture,
+both of which go through pdf.js. The notice says that and nothing more:
+splitting and extracting sound like exports but rebuild the file, which is the
+thing that cannot be done.
+
 ## A line can be edited off the page
 
 Text drawn past the edge is clipped by every reader there is, so a line made
