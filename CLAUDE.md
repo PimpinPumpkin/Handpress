@@ -302,6 +302,13 @@ public CDNs unless told otherwise. `npm run ocr-assets` puts them in
 to upload anything does not announce over the network that it is reading a
 document, and works with no connection at all.
 
+The paths handed to tesseract are absolute, resolved against `document.baseURI`.
+The build uses a relative base so the site works from any path, but the worker
+runs from a blob URL and resolves a relative path against the blob rather than
+against the page, so it would ask for the core somewhere that does not exist.
+Dev never showed this: there the base is `/` and the paths came out absolute
+anyway. Verified by serving `dist` under a subpath.
+
 A file the worker cannot fetch throws inside the worker, where nothing can
 catch it, and `createWorker` then never settles. The files are asked for first
 so a deploy that skipped `ocr-assets` says so rather than sitting on "Loading

@@ -60,7 +60,12 @@ export async function openRecogniser(
   // Served by us, from `public/ocr`, which `npm run ocr-assets` fills. The core
   // is named as a directory on purpose: the worker picks between three builds
   // of it depending on what the browser supports.
-  const base = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/ocr`;
+  //
+  // Absolute, deliberately. The build uses a relative base so the site works
+  // from any path, but the worker is started from a blob URL and resolves a
+  // relative path against the blob rather than against the page, so it would
+  // ask for the core somewhere that does not exist.
+  const base = new URL('ocr', document.baseURI).href;
 
   // A file the worker cannot fetch throws inside the worker, where nothing here
   // can catch it, and the call to start it then never settles: the app would
