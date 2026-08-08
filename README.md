@@ -194,6 +194,22 @@ while a matrix inserted there applies in the space the matrix maps from, so it
 is carried back through the inverse of the matrix's linear part. Skipping that
 step sends images on rotated or scaled pages off in the wrong direction.
 
+### Making a file smaller
+
+Almost all the weight in a large PDF is images stored at far more detail than
+the page ever shows: a phone photograph dropped into a report, or a scan made at
+600 dots per inch and printed two inches wide. **Compress** finds those and
+redraws them at the size they are actually shown, which is the whole trick. How
+much detail an image needs is decided by how big it is on the page, not by how
+big it arrived.
+
+An image already at or below the detail its placement calls for is left exactly
+as it is, and so is anything carrying transparency, since JPEG has no alpha
+channel and redrawing it would fill the see-through parts with black. A redraw
+that comes back no smaller is thrown away. The result is offered as a download
+rather than swapped in, because this throws detail away and the version being
+worked on should stay the good one.
+
 ### Images in and out
 
 Drop a picture on the window and it becomes a PDF: one page, the size of the

@@ -84,6 +84,9 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Compress: images redrawn at the size the page shows them, which is where
+  nearly all the weight in a large PDF is. A 215 KB page came back at 46 KB with
+  the same layout.
 - Images in and out: a dropped picture becomes a PDF page of its own size, and
   the page on screen saves out as a PNG. Two of the most searched for things a
   PDF tool can do, and neither needs a server.

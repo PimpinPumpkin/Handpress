@@ -210,6 +210,22 @@ because absolutely positioned elements are all one line as far as
 It is inert except in the select tool, and it sits above the overlay so that a
 drag there reaches the words rather than the boxes drawn over them.
 
+## Compression is decided by the drawn size, not the stored size
+
+`compress.ts` asks how wide each image is painted on the page, using the fact
+that an image XObject is always drawn into the unit square so the matrix in
+effect is its size. Detail beyond what that placement can show is what gets
+thrown away; an image already at or under the target is left untouched, because
+redrawing it could only make it worse. Resource names come from the lexer
+without their slash and from a `PDFName` with one, which is worth remembering:
+the two failing to match made every image look undrawn and nothing was ever
+compressed.
+
+Redrawing needs a canvas, so `compress.ts` takes an injected `Recompressor` and
+the browser half lives in `app/recompress.ts`. That keeps the engine testable
+under Node, where the test stands in a fixed JPEG and checks which images were
+chosen rather than the quality of a resize.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.

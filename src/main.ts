@@ -10,6 +10,8 @@ import { DecryptionError } from './pdf/decrypt';
 import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/signature';
 import { OCR_SCALE, openRecogniser, wordsToInsertions, type Recogniser } from './app/ocr';
 import { looksLikeImage, pdfFromImages } from './pdf/images';
+import { compress } from './pdf/compress';
+import { recompressInBrowser } from './app/recompress';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -45,6 +47,7 @@ const els = {
   searchNext: $<HTMLButtonElement>('searchNext'),
   btnExtract: $<HTMLButtonElement>('btnExtract'),
   btnPageImage: $<HTMLButtonElement>('btnPageImage'),
+  btnCompress: $<HTMLButtonElement>('btnCompress'),
   mergeFileInput: $<HTMLInputElement>('mergeFileInput'),
   extractModal: $('extractModal'),
   extractRange: $<HTMLInputElement>('extractRange'),
@@ -1080,6 +1083,60 @@ els.btnPageImage.addEventListener('click', async () => {
     setBusy(false);
   }
 });
+
+/**
+ * Saves a smaller copy.
+ *
+ * Every edit is applied first, so what is compressed is the document as it now
+ * stands rather than the file as it arrived. The result is offered as a
+ * download rather than swapped in: this throws detail away, and the version
+ * being worked on should stay the good one.
+ */
+els.btnCompress.addEventListener('click', async () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  viewer.closeEditor(false);
+  setBusy(true, 'Looking for oversized images…');
+  try {
+    const { bytes } = await doc.build();
+    const result = await compress(bytes, recompressInBrowser);
+
+    if (result.report.after >= result.report.before) {
+      setStatus(
+        `Nothing worth compressing: ${result.report.kept} image${result.report.kept === 1 ? '' : 's'} ` +
+          'already fit the size the page shows them.',
+      );
+      return;
+    }
+
+    const copy = new Uint8Array(result.bytes.length);
+    copy.set(result.bytes);
+    const url = URL.createObjectURL(new Blob([copy], { type: 'application/pdf' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = doc.name.replace(/\.pdf$/i, '') + ' (smaller).pdf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+
+    const saved = Math.round((1 - result.report.after / result.report.before) * 100);
+    setStatus(
+      `Saved a copy ${saved}% smaller, ${sizeOf(result.report.before)} down to ${sizeOf(result.report.after)}. ` +
+        `${result.report.shrunk} image${result.report.shrunk === 1 ? '' : 's'} redrawn at the size the page shows.`,
+    );
+  } catch (e) {
+    setStatus(`Could not compress that: ${(e as Error).message}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
+
+function sizeOf(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+}
 
 els.btnExtract.addEventListener('click', openExtract);
 els.extractCancel.addEventListener('click', () => {
