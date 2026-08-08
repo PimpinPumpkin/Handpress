@@ -298,10 +298,10 @@ export class Viewer {
   /** Re-renders every already-rendered page, used after an edit changes the file. */
   async refreshRendered(): Promise<void> {
     const token = ++this.renderToken;
-    for (const p of this.pages) {
-      p.renderedZoom = 0;
-      p.model = null;
-    }
+    // Only the drawn scale is invalidated. The text model comes from the
+    // original bytes and never changes, so throwing it away here only widened
+    // the window in which a page had no model to click into.
+    for (const p of this.pages) p.renderedZoom = 0;
     if (token !== this.renderToken) return;
     await this.renderVisible();
   }
@@ -392,10 +392,15 @@ export class Viewer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
 
+    // The text model is read before the render rather than after it. It does
+    // not depend on the render at all, and a render abandoned because the token
+    // moved on used to leave the page drawn but with no model: every line then
+    // selected on click and refused to open, with nothing to say why.
+    p.model = await this.doc.getPage(index);
+
     await jsPage.render({ canvasContext: ctx, viewport: renderViewport, canvas: p.canvas }).promise;
     if (token !== this.renderToken) return;
 
-    p.model = await this.doc.getPage(index);
     p.renderedZoom = drawnZoom;
     p.viewport = viewport;
     this.buildOverlay(p, viewport);
@@ -1093,6 +1098,16 @@ export class Viewer {
    * pages. A small threshold separates a drag from a click, because these boxes
    * are also click targets and a few stray pixels should not count as a move.
    */
+  /**
+   * Makes a box draggable, and a plain click on it do something else.
+   *
+   * The move and release are listened for on the window rather than the box.
+   * A page re-renders for its own reasons, and on a long document that can
+   * happen between pressing and releasing the mouse: the box the press landed
+   * on is replaced, the release lands on its brand new twin, and a click whose
+   * state lived on the old element is simply lost. Nothing here is kept on the
+   * element, so the gesture survives the page being redrawn under it.
+   */
   private makeDraggable(
     box: HTMLElement,
     viewport: { convertToPdfPoint(x: number, y: number): number[] },
@@ -1100,59 +1115,46 @@ export class Viewer {
     onClick?: () => void,
   ): void {
     const THRESHOLD = 3;
-    let startX = 0;
-    let startY = 0;
-    let moved = false;
-    let dragging = false;
 
-    box.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
+    box.addEventListener('pointerdown', (down) => {
+      if (down.button !== 0) return;
       // In a region mode the drag belongs to the region being drawn, not to
       // whatever object happens to sit under the pointer.
-      if (this.mode === 'erase' || this.mode === 'redact') return;
-      e.preventDefault();
-      e.stopPropagation();
-      dragging = true;
-      moved = false;
-      startX = e.clientX;
-      startY = e.clientY;
-      try {
-        box.setPointerCapture(e.pointerId);
-      } catch {
-        // Capture is optional; dragging still works without it.
-      }
-    });
+      if (this.mode === 'erase' || this.mode === 'redact' || this.mode === 'highlight') return;
+      down.preventDefault();
+      down.stopPropagation();
 
-    box.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
-      moved = true;
-      box.classList.add('dragging');
-      box.style.transform = `translate(${dx}px, ${dy}px)`;
-    });
+      const parent = box.parentElement;
+      let moved = false;
 
-    const finish = (e: PointerEvent): void => {
-      if (!dragging) return;
-      dragging = false;
-      box.classList.remove('dragging');
-      box.style.transform = '';
-      if (!moved) {
-        onClick?.();
-        return;
-      }
-      const rect = box.parentElement!.getBoundingClientRect();
-      const [x0, y0] = viewport.convertToPdfPoint(startX - rect.left, startY - rect.top);
-      const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
-      onDrop(x1 - x0, y1 - y0);
-    };
+      const move = (e: PointerEvent): void => {
+        const dx = e.clientX - down.clientX;
+        const dy = e.clientY - down.clientY;
+        if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
+        moved = true;
+        box.classList.add('dragging');
+        box.style.transform = `translate(${dx}px, ${dy}px)`;
+      };
 
-    box.addEventListener('pointerup', finish);
-    box.addEventListener('pointercancel', () => {
-      dragging = false;
-      box.classList.remove('dragging');
-      box.style.transform = '';
+      const up = (e: PointerEvent): void => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        box.classList.remove('dragging');
+        box.style.transform = '';
+
+        if (!moved) {
+          onClick?.();
+          return;
+        }
+        if (!parent) return;
+        const rect = parent.getBoundingClientRect();
+        const [x0, y0] = viewport.convertToPdfPoint(down.clientX - rect.left, down.clientY - rect.top);
+        const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
+        onDrop(x1 - x0, y1 - y0);
+      };
+
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
     });
   }
 

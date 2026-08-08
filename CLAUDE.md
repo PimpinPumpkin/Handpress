@@ -171,6 +171,25 @@ with even leading and a shared left edge exactly like wrapped text. `wraps()`
 asks what the text is doing instead, and requires a column at least twelve ems
 wide with at least three words to a line.
 
+## A page's text model must not depend on its render
+
+`drawPage` reads the model before rendering, and `refreshRendered` no longer
+throws models away. Both come from the same bug: the model used to be attached
+after the render and skipped entirely when the render token had moved on, which
+left a page drawn and looking fine with `p.model` null. Every line on it then
+selected on click and refused to open an editor, silently, with nothing in the
+console to say why. It showed up on long documents, where thumbnails keep the
+render queue busy long enough for the window to be seconds wide.
+
+## Gestures keep no state on the element
+
+A page re-renders for reasons that have nothing to do with the pointer, and on a
+long document that can happen between pressing and releasing the mouse: the box
+the press landed on is replaced and the release lands on its new twin. Anything
+remembered on the old element goes with it, and the click is lost. `makeDraggable`
+therefore listens for move and release on the window and keeps its state in the
+closure of the press.
+
 ## An open editor owns its page
 
 `buildOverlay` refuses to run while an editor is open on that page. A page
