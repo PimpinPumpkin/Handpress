@@ -1861,3 +1861,25 @@ body {
     display: none;
   }
 }
+
+/* Renaming happens in place, in the title itself, because that is where the
+   name is and a dialog for one field is a ceremony. */
+.doc-title {
+  cursor: text;
+}
+
+#app.no-document .doc-title {
+  cursor: default;
+}
+
+.doc-title-input {
+  width: min(38ch, 60vw);
+  padding: 2px 6px;
+  font: inherit;
+  text-align: inherit;
+  color: var(--ink);
+  background: var(--chrome-3);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+}

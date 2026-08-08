@@ -760,6 +760,52 @@ function markOutlinePosition(pageIndex: number): void {
   for (const entry of outlineEntries) entry.button.classList.toggle('is-here', entry.button === best);
 }
 
+/* ---------------- renaming the document ---------------- */
+
+/**
+ * Renames the open document by clicking its title.
+ *
+ * It only ever affects what the saved file is called: nothing inside the PDF
+ * carries this name, so there is no document to change, and saying so in the
+ * tooltip is cheaper than a dialog explaining it. The extension is kept out of
+ * the way, since every save path adds its own.
+ */
+function beginRename(): void {
+  if (!doc || els.docTitle.querySelector('input')) return;
+
+  const current = doc.name.replace(/\.pdf$/i, '');
+  const input = document.createElement('input');
+  input.className = 'doc-title-input';
+  input.value = current;
+  input.setAttribute('aria-label', 'Document name');
+
+  const finish = (keep: boolean): void => {
+    if (!input.isConnected) return;
+    const typed = input.value.trim();
+    input.remove();
+    if (keep && typed && typed !== current && doc) {
+      doc.name = `${typed}.pdf`;
+      setStatus(`Renamed to ${doc.name}. The name is used the next time you save.`);
+    }
+    els.docTitle.textContent = doc?.name ?? 'No document open';
+    syncEditState();
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', () => finish(true));
+
+  els.docTitle.textContent = '';
+  els.docTitle.appendChild(input);
+  input.focus();
+  input.select();
+}
+
+els.docTitle.addEventListener('click', () => beginRename());
+
 function syncEditState(): void {
   const dirty = doc?.hasEdits() ?? false;
   // Nothing can be written back from a document the editor's parser could not
@@ -788,7 +834,7 @@ function syncEditState(): void {
   els.btnPrint.disabled = !doc;
   els.btnUndo.disabled = !doc?.canUndo();
   els.btnRedo.disabled = !doc?.canRedo();
-  els.docTitle.classList.toggle('dirty', dirty);
+  if (!els.docTitle.querySelector('input')) els.docTitle.classList.toggle('dirty', dirty);
   const n = doc?.editCount() ?? 0;
   els.editCount.textContent = n ? `${n} edit${n === 1 ? '' : 's'}` : '';
 }

@@ -320,12 +320,18 @@ export class Viewer {
   }
 
   /** Re-renders every already-rendered page, used after an edit changes the file. */
-  async refreshRendered(): Promise<void> {
+  async refreshRendered(onlyPage?: number): Promise<void> {
     const token = ++this.renderToken;
     // Only the drawn scale is invalidated. The text model comes from the
     // original bytes and never changes, so throwing it away here only widened
     // the window in which a page had no model to click into.
-    for (const p of this.pages) p.renderedZoom = 0;
+    //
+    // A change to one page is not a reason to redraw the others. Dragging an
+    // image on page one used to invalidate every page in view and draw them
+    // all again before the image appeared where it was dropped.
+    for (const p of this.pages) {
+      if (onlyPage === undefined || p.index === onlyPage) p.renderedZoom = 0;
+    }
     if (token !== this.renderToken) return;
     await this.renderVisible();
   }
@@ -496,7 +502,7 @@ export class Viewer {
         (dx, dy) => {
           if (!this.doc || !line.editable) return;
           if (!this.doc.moveLine(p.index, line.id, dx, dy)) return;
-          void this.rebuild().then(() => this.cb.onEdited());
+          void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
         () => {
           this.select(line, p);
@@ -541,7 +547,7 @@ export class Viewer {
       remove.addEventListener('click', (e) => {
         e.stopPropagation();
         if (!this.doc?.removeRedaction(p.index, area.id)) return;
-        void this.rebuild().then(() => {
+        void this.rebuild(p.index).then(() => {
           this.cb.onStatus('Redaction removed.');
           this.cb.onEdited();
         });
@@ -583,7 +589,7 @@ export class Viewer {
       this.makeDraggable(box, viewport as never, (dx, dy) => {
         if (!this.doc) return;
         if (!this.doc.moveStamp(p.index, stamp.id, dx, dy)) return;
-        void this.rebuild().then(() => this.cb.onEdited());
+        void this.rebuild(p.index).then(() => this.cb.onEdited());
       });
       p.overlay.appendChild(box);
     }
@@ -608,7 +614,7 @@ export class Viewer {
         (dx, dy) => {
           if (!this.doc) return;
           if (!this.doc.moveInsertion(p.index, insertion.id, dx, dy)) return;
-          void this.rebuild().then(() => this.cb.onEdited());
+          void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
         () => this.openInsertionEditor(p, insertion, viewport),
       );
@@ -790,7 +796,7 @@ export class Viewer {
       (dx, dy) => {
         if (!this.doc) return;
         if (!this.doc.moveNote(p.index, note.id, dx, dy)) return;
-        void this.rebuild().then(() => this.cb.onEdited());
+        void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
       () => this.openNoteEditor(p, note, viewport),
     );
@@ -995,7 +1001,7 @@ export class Viewer {
 
       if (kind === 'highlight') {
         this.doc.addErasure(p.index, { ...area, color: { ...this.highlightColor }, blend: true });
-        await this.rebuild();
+        await this.rebuild(p.index);
         this.cb.onStatus('Highlighted.');
         this.cb.onEdited();
         return;
@@ -1004,7 +1010,7 @@ export class Viewer {
       if (kind === 'redact') {
         this.doc.addRedaction(p.index, area);
         const removed = this.doc.countRedactedChars(p.index);
-        await this.rebuild();
+        await this.rebuild(p.index);
         this.cb.onStatus(
           removed
             ? `Redacted. ${removed} character${removed === 1 ? '' : 's'} deleted from the file, not just covered.`
@@ -1020,7 +1026,7 @@ export class Viewer {
         : { r: 1, g: 1, b: 1 };
 
       this.doc.addErasure(p.index, { ...area, color: rgb });
-      await this.rebuild();
+      await this.rebuild(p.index);
       this.cb.onStatus('Erased. The text underneath is covered, not removed.');
       this.cb.onEdited();
     };
@@ -1064,7 +1070,7 @@ export class Viewer {
 
     this.makeDraggable(box, viewport as never, (dx, dy) => {
       if (!this.doc?.moveErasure(p.index, erasure.id, dx, dy)) return;
-      void this.rebuild().then(() => this.cb.onEdited());
+      void this.rebuild(p.index).then(() => this.cb.onEdited());
     });
     p.overlay.appendChild(box);
   }
@@ -1293,13 +1299,13 @@ export class Viewer {
       const factor = Math.max(0.15, (widthPx + (e.clientX - startX)) / widthPx);
       if (Math.abs(factor - 1) < 0.01) return;
       if (!this.doc?.editImage(p.index, id, { scale: factor })) return;
-      void this.rebuild().then(() => this.cb.onEdited());
+      void this.rebuild(p.index).then(() => this.cb.onEdited());
     });
     box.appendChild(handle);
 
     this.makeDraggable(box, viewport as never, (dx, dy) => {
       if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
-      void this.rebuild().then(() => this.cb.onEdited());
+      void this.rebuild(p.index).then(() => this.cb.onEdited());
     });
 
     p.overlay.appendChild(box);
@@ -1497,7 +1503,7 @@ export class Viewer {
 
     // Rebuild before announcing the change: the callback repaints thumbnails,
     // and pdf.js cannot draw the same page into two canvases at once.
-    await this.rebuild();
+    await this.rebuild(p.index);
     this.cb.onStatus('Signature placed. Click again to place another, or switch tools when you are done.');
     this.cb.onEdited();
   }
@@ -1514,7 +1520,7 @@ export class Viewer {
   }
 
   /** Rebuilds the document and repaints, shared by anything that changes it. */
-  private async rebuild(): Promise<void> {
+  private async rebuild(onlyPage?: number): Promise<void> {
     const run = this.rebuildQueue.then(async () => {
       if (!this.doc) return;
       try {
@@ -1523,7 +1529,7 @@ export class Viewer {
         // leaving half a page behind.
         await this.settleRenders();
         await this.doc.refresh();
-        await this.refreshRendered();
+        await this.refreshRendered(onlyPage);
       } catch (e) {
         if (Viewer.isCancellation(e)) return;
         this.cb.onStatus(`Could not apply that: ${(e as Error).message}`, 'warn');
@@ -1683,10 +1689,16 @@ export class Viewer {
     const rect = new DOMRect(geo.left, geo.top, geo.width, geo.height);
     const backingScale = p.canvas.width / Math.max(1, parseFloat(p.canvas.style.width));
     cover.style.background = sampleBackground(p.canvas, rect, backingScale);
-    cover.style.left = `${geo.left - 1}px`;
-    cover.style.top = `${geo.top}px`;
-    cover.style.width = `${geo.width + 4}px`;
-    cover.style.height = `${geo.height}px`;
+    // Sized a little larger than the line was drawn. A cover cut exactly to
+    // the measured extent leaves the tips of ascenders and the tails of
+    // descenders showing around the live text, and two sets of glyphs half a
+    // pixel apart read as the wrong font rather than as a leftover. The margin
+    // scales with the type so it is the same at every zoom.
+    const pad = Math.max(2, lineHeight * 0.12);
+    cover.style.left = `${geo.left - pad}px`;
+    cover.style.top = `${geo.top - pad * 0.5}px`;
+    cover.style.width = `${geo.width + pad * 2.5}px`;
+    cover.style.height = `${geo.height + pad}px`;
     if (geo.angle) cover.style.transform = `rotate(${geo.angle}deg)`;
     cover.style.transformOrigin = 'left top';
 
@@ -1771,7 +1783,9 @@ export class Viewer {
     try {
       await this.settleRenders();
       const warnings = await this.doc.refresh();
-      await this.refreshRendered();
+      // Only the page that was typed on. A reflowed paragraph stays on its own
+      // page, so nothing else on screen can have changed.
+      await this.refreshRendered(page.index);
       this.cb.onEdited();
       const substituted = warnings.filter((w) => w.kind === 'substituted-font');
       if (substituted.length) {

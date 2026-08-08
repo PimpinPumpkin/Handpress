@@ -384,6 +384,20 @@ them. There is now one `[hidden] { display: none !important }` rule near the
 top of the stylesheet, which settles it for every element rather than one at a
 time.
 
+## The cover has to be bigger than the line
+
+`openEditor` lays a patch of page colour over the original glyphs so only the
+live text shows. Cut to the measured extent it leaves the tips of ascenders and
+the tails of descenders visible around the edited text, and two sets of glyphs
+half a pixel apart read as the wrong typeface rather than as a leftover. The
+margin scales with the type so it is the same at every zoom.
+
+## A change to one page is not a reason to redraw the others
+
+`refreshRendered` took an argument. Dragging an image on page one invalidated
+every page in view and drew them all again before the image appeared where it
+was dropped. Every caller that knows its page now says so.
+
 ## Added content must start from the page's own coordinates
 
 Signatures, added text, erasures, highlights and redaction boxes are appended

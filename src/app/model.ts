@@ -143,7 +143,12 @@ interface RawOutline {
 }
 
 export class HandpressDocument {
-  readonly name: string;
+  /**
+   * What the document is called. Not readonly: it names every file this
+   * produces, from a saved copy to the pieces of a split, so renaming it here
+   * is the one place that has to change.
+   */
+  name: string;
   private originalBytes: Uint8Array;
   /** pageIndex -> lineId -> replacement text. */
   private edits = new Map<number, Map<string, string>>();
