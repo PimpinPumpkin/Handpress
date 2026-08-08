@@ -943,10 +943,22 @@ export async function applyEdits(
 
   const pagePatches = patchesByStream.get('page') ?? [];
   if (pagePatches.length || addedTail.length) {
+    const patched = applyPatches(pageContentBytes, pagePatches, reportShared);
+    // Anything added goes after the page's own drawing, which means it inherits
+    // whatever transformation the page left in effect. Plenty of real files end
+    // with a scale or a translation still applied, because nothing required
+    // them to put it back, and a signature placed halfway down the page then
+    // landed somewhere else at the wrong size.
+    //
+    // Wrapping the original in q/Q gives the added content the page's default
+    // coordinates. The extra q also absorbs a stream that restores more times
+    // than it saves, which would otherwise underflow into our own state.
     setPageContent(
       doc,
       page,
-      concatBytes([applyPatches(pageContentBytes, pagePatches, reportShared), addedTail]),
+      addedTail.length
+        ? concatBytes([bytes('q\n'), patched, bytes('\nQ\n'), addedTail])
+        : patched,
     );
   }
 

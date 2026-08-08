@@ -384,6 +384,21 @@ them. There is now one `[hidden] { display: none !important }` rule near the
 top of the stylesheet, which settles it for every element rather than one at a
 time.
 
+## Added content must start from the page's own coordinates
+
+Signatures, added text, erasures, highlights and redaction boxes are appended
+after the page's own drawing, which means they inherit whatever transformation
+the page left in effect. Nothing requires a content stream to put its matrix
+back, and plenty of real files do not: a signature asked for at 150x60 at
+(200, 500) arrived at 75x30 at (100, 250).
+
+The original content is therefore wrapped in `q`/`Q` whenever anything is
+appended. The leading `q` also absorbs a stream that restores more times than
+it saves, which would otherwise underflow into our own state.
+`tools/test-stamp-ctm.ts` builds pages that end mid-transformation and checks
+where the stamp actually lands; with the wrap removed, three of its five cases
+fail, which is the point of it.
+
 ## Every edit used to redraw the whole document
 
 `onEdited` called `renderThumbs`, which rasterised every page in the document,
