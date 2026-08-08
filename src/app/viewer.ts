@@ -792,18 +792,21 @@ export class Viewer {
     const viewport = jsPage.getViewport({ scale: this.zoom });
     const [px, py] = viewport.convertToPdfPoint(event.clientX - rect.left, event.clientY - rect.top);
 
-    const note = this.doc.addNote(p.index, {
+    // A draft, for the same reason a placed piece of text is one: putting a
+    // note on the page and then thinking better of it should leave nothing
+    // behind, not an empty comment counted as an edit.
+    const note: PageNote = {
+      id: 'draftNote',
       x: px,
       y: py,
       text: '',
       author: this.noteAuthor,
       written: Date.now(),
-    });
+    };
     // Drawn straight away rather than waiting for the next rebuild, so the note
     // is visibly there while its comment is still being typed.
     this.addNoteMarker(p, note, viewport);
-    this.cb.onEdited();
-    this.openNoteEditor(p, note, viewport);
+    this.openNoteEditor(p, note, viewport, true);
   }
 
   /**
@@ -818,6 +821,7 @@ export class Viewer {
     p: RenderedPage,
     note: PageNote,
     viewport: { convertToViewportPoint(x: number, y: number): number[] },
+    draft = false,
   ): void {
     if (!this.doc) return;
     this.closeEditor(true);
@@ -849,10 +853,31 @@ export class Viewer {
     panel.appendChild(row);
 
     const close = (): void => panel.remove();
+
+    /** Takes back a draft's marker, which was drawn before the note existed. */
+    const abandon = (message?: string): void => {
+      close();
+      void this.rebuild().then(() => {
+        if (message) this.cb.onStatus(message);
+      });
+    };
+
     const save = (): void => {
       if (!this.doc) return;
       const text = area.value;
       close();
+      if (draft) {
+        if (!text.trim()) {
+          abandon();
+          return;
+        }
+        this.doc.addNote(p.index, { ...note, text });
+        void this.rebuild().then(() => {
+          this.cb.onStatus('Note saved.');
+          this.cb.onEdited();
+        });
+        return;
+      }
       if (!this.doc.setNoteText(p.index, note.id, text)) return;
       void this.rebuild().then(() => {
         this.cb.onStatus(text.trim() ? 'Note saved.' : 'Empty note removed.');
@@ -864,6 +889,10 @@ export class Viewer {
     remove.addEventListener('click', () => {
       if (!this.doc) return;
       close();
+      if (draft) {
+        abandon();
+        return;
+      }
       if (!this.doc.removeNote(p.index, note.id)) return;
       void this.rebuild().then(() => {
         this.cb.onStatus('Note removed.');
@@ -875,7 +904,8 @@ export class Viewer {
     area.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        close();
+        if (draft) abandon();
+        else close();
       }
       e.stopPropagation();
     });

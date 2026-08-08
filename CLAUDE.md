@@ -318,6 +318,12 @@ only if something was typed into it. `draftInsertion` says which kind the open
 editor is; `openInsertionEditor` closes any previous editor first, so it carries
 the flag across that call deliberately.
 
+Notes work the same way and had the same fault. A draft note is drawn straight
+away so it is visibly there while its comment is typed, but it joins the
+document only when the comment does; abandoning one rebuilds the page to take
+the marker back. Editing a note that already exists still goes through
+`setNoteText`, where emptying it removes it.
+
 ## The fourteen standard fonts have real metrics, so use them
 
 A non-embedded standard font usually omits `Widths`, because every reader is
