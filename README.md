@@ -173,6 +173,19 @@ clipped by every reader there is and otherwise just looks like a sentence that
 stopped. Only the part the edit itself pushed over is counted; documents whose
 text already ran off the page are not blamed on whoever changed a word in one.
 
+### Drawing on a page
+
+**Draw** is a freehand pen: colour, four widths, and what it draws becomes part
+of the page, so it saves, prints and flattens with everything else rather than
+being an annotation a reader can turn off. **Rub out** removes strokes, and
+only strokes: it will not touch the document underneath.
+
+A stroke is stored as the points the pointer visited and written as a curve
+through the midpoints of consecutive samples, which passes through the drawing
+rather than near it. The line previews on a canvas of its own while it is being
+drawn, because the page canvas holds pdf.js output of the real bytes and
+nothing else writes to it.
+
 ### Printing
 
 **Print** prints the PDF, not the page it is shown on. The browser's own print

@@ -24,6 +24,7 @@ import {
   type ImageEdit,
   type LineEdit,
   type RectFill,
+  type InkStroke,
   type TextInsertion,
 } from '../pdf/writer';
 import { decryptToBytes } from '../pdf/decrypt';
@@ -52,6 +53,7 @@ interface EditState {
   lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
   imageEdits: Map<number, Map<string, ImageEdit>>;
   erasures: Map<number, Map<string, RectFill>>;
+  ink: Map<number, Map<string, InkStroke>>;
   redactions: Map<number, Map<string, RedactionArea>>;
   insertions: Map<number, Map<string, TextInsertion>>;
   stamps: Map<number, Map<string, ImageStamp>>;
@@ -162,6 +164,8 @@ export class HandpressDocument {
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
   /** pageIndex -> erasure id -> a rectangle painted over the page. */
   private erasures = new Map<number, Map<string, RectFill>>();
+  private ink = new Map<number, Map<string, InkStroke>>();
+  private nextInkId = 1;
   /** pageIndex -> redaction id -> a region whose text is deleted. */
   private redactions = new Map<number, Map<string, RedactionArea>>();
   /** pageIndex -> insertion id -> text added where the page had none. */
@@ -339,6 +343,7 @@ export class HandpressDocument {
     for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.imageEdits.values()) if (m.size) return true;
     for (const m of this.erasures.values()) if (m.size) return true;
+    for (const m of this.ink.values()) if (m.size) return true;
     for (const m of this.redactions.values()) if (m.size) return true;
     if (this.hasPageChanges()) return true;
     for (const m of this.insertions.values()) if (m.size) return true;
@@ -361,6 +366,7 @@ export class HandpressDocument {
     for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.imageEdits.values()) n += m.size;
     for (const m of this.erasures.values()) n += m.size;
+    for (const m of this.ink.values()) n += m.size;
     for (const m of this.redactions.values()) n += m.size;
     // Page operations count as one change however many pages they touched,
     // since they are performed and undone as single actions.
@@ -386,6 +392,7 @@ export class HandpressDocument {
       lineOffsets: new Map([...this.lineOffsets].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       imageEdits: new Map([...this.imageEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       erasures: new Map([...this.erasures].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
+      ink: new Map([...this.ink].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o, points: o.points.map((q) => ({ ...q })) }]))])),
       redactions: new Map([...this.redactions].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       insertions: new Map([...this.insertions].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
@@ -401,6 +408,7 @@ export class HandpressDocument {
     this.lineOffsets = state.lineOffsets;
     this.imageEdits = state.imageEdits;
     this.erasures = state.erasures;
+    this.ink = state.ink;
     this.redactions = state.redactions;
     this.insertions = state.insertions;
     this.stamps = state.stamps;
@@ -519,6 +527,55 @@ export class HandpressDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return created;
+  }
+
+  /* ---------------- freehand ink ---------------- */
+
+  /** Adds a stroke to a page and returns it. */
+  addInk(pageIndex: number, stroke: Omit<InkStroke, 'id'>): InkStroke | null {
+    if (!stroke.points.length) return null;
+    const before = this.snapshot();
+    const created: InkStroke = { ...stroke, id: `ink${this.nextInkId++}` };
+    let page = this.ink.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.ink.set(pageIndex, page);
+    }
+    page.set(created.id, created);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return created;
+  }
+
+  inkFor(pageIndex: number): InkStroke[] {
+    return [...(this.ink.get(pageIndex)?.values() ?? [])];
+  }
+
+  removeInk(pageIndex: number, id: string): boolean {
+    const page = this.ink.get(pageIndex);
+    if (!page?.has(id)) return false;
+    const before = this.snapshot();
+    page.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** Rubs out every stroke crossing a point, which is what an eraser is. */
+  eraseInkAt(pageIndex: number, x: number, y: number, radius: number): boolean {
+    const page = this.ink.get(pageIndex);
+    if (!page?.size) return false;
+    const hit: string[] = [];
+    for (const [id, stroke] of page) {
+      const reach = radius + stroke.width / 2;
+      if (stroke.points.some((p) => Math.hypot(p.x - x, p.y - y) <= reach)) hit.push(id);
+    }
+    if (!hit.length) return false;
+    const before = this.snapshot();
+    for (const id of hit) page.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
   }
 
   /* ---------------- notes ---------------- */
@@ -1129,6 +1186,7 @@ export class HandpressDocument {
       ...this.insertions.keys(),
       ...this.stamps.keys(),
       ...this.notes.keys(),
+      ...this.ink.keys(),
     ]);
     for (const pageIndex of touchedPages) {
       const pageEdits = this.edits.get(pageIndex) ?? new Map<string, string>();
@@ -1139,6 +1197,11 @@ export class HandpressDocument {
       const pageErasures = [...(this.erasures.get(pageIndex)?.values() ?? [])];
       const pageRedactions = [...(this.redactions.get(pageIndex)?.values() ?? [])];
       const pageNotes = [...(this.notes.get(pageIndex)?.values() ?? [])];
+      const pageInk = [...(this.ink.get(pageIndex)?.values() ?? [])];
+      // Every kind of edit has to be listed here. A page reaches this loop
+      // because it is in one of the maps above, and then leaves it again if
+      // this test does not know about that map: freehand strokes were recorded
+      // and counted and then quietly dropped on the way to the file.
       if (
         !pageEdits.size &&
         !pageOffsets.size &&
@@ -1147,7 +1210,8 @@ export class HandpressDocument {
         !pageImages.length &&
         !pageErasures.length &&
         !pageRedactions.length &&
-        !pageNotes.length
+        !pageNotes.length &&
+        !pageInk.length
       ) {
         continue;
       }
@@ -1214,6 +1278,7 @@ export class HandpressDocument {
           pageStamps,
           pageImages,
           pageErasures,
+          pageInk,
         );
         warnings.push(...result.warnings);
       } catch (e) {

@@ -1960,3 +1960,22 @@ body {
   letter-spacing: 0.4px;
   text-transform: uppercase;
 }
+
+/* The stroke being drawn, shown above the page while the pointer is down. The
+   page canvas holds pdf.js output of the real bytes and nothing else writes to
+   it, so the preview gets a canvas of its own and goes away once the stroke is
+   in the file. */
+.ink-preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* A drag is the whole gesture while drawing, so the browser must not take it
+   for a scroll. */
+.page-overlay.drawing {
+  cursor: crosshair;
+  touch-action: none;
+}

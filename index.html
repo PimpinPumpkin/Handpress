@@ -81,6 +81,21 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z" /></svg>
             <span>Note</span>
           </button>
+          <button class="tool" id="btnPen" type="button" title="Draw on the page freehand">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 9.5-9.5a2.1 2.1 0 0 0-3-3L5 16z" /><path d="M14 6.5l3.5 3.5" /></svg>
+            <span>Draw</span>
+          </button>
+          <input type="color" class="add-color" id="penColor" value="#e02020" title="Ink colour" />
+          <select class="zoom-select" id="penWidth" title="Ink width">
+            <option value="1">Fine</option>
+            <option value="2.5" selected>Medium</option>
+            <option value="5">Thick</option>
+            <option value="10">Marker</option>
+          </select>
+          <button class="tool" id="btnInkErase" type="button" title="Rub out strokes you have drawn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19h12" /><path d="M14.5 5.5l4 4-8 8H6.5l-1.5-4z" /></svg>
+            <span>Rub out</span>
+          </button>
           <button class="tool" id="btnRedact" type="button" title="Drag over text to delete it from the file, not just hide it">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="9" width="18" height="6" rx="1" /><path d="M6 4h12" /><path d="M6 20h12" /></svg>
             <span>Redact</span>

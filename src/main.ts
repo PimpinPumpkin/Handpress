@@ -64,6 +64,10 @@ const els = {
   btnSign: $<HTMLButtonElement>('btnSign'),
   btnErase: $<HTMLButtonElement>('btnErase'),
   btnRedact: $<HTMLButtonElement>('btnRedact'),
+  btnPen: $<HTMLButtonElement>('btnPen'),
+  btnInkErase: $<HTMLButtonElement>('btnInkErase'),
+  penColor: $<HTMLInputElement>('penColor'),
+  penWidth: $<HTMLSelectElement>('penWidth'),
   btnHighlight: $<HTMLButtonElement>('btnHighlight'),
   btnNote: $<HTMLButtonElement>('btnNote'),
   btnOcr: $<HTMLButtonElement>('btnOcr'),
@@ -670,6 +674,8 @@ const WRITERS = [
   'btnHighlight',
   'btnNote',
   'btnRedact',
+  'btnPen',
+  'btnInkErase',
   'btnSign',
   'btnOcr',
   'btnLocalFonts',
@@ -806,6 +812,27 @@ function beginRename(): void {
 
 els.docTitle.addEventListener('click', () => beginRename());
 
+/* ---------------- drawing on the page ---------------- */
+
+const readPenColor = (): void => {
+  const hex = els.penColor.value;
+  viewer.penColor = {
+    r: parseInt(hex.slice(1, 3), 16) / 255,
+    g: parseInt(hex.slice(3, 5), 16) / 255,
+    b: parseInt(hex.slice(5, 7), 16) / 255,
+  };
+};
+
+els.penColor.addEventListener('input', readPenColor);
+els.penWidth.addEventListener('change', () => {
+  viewer.penWidth = parseFloat(els.penWidth.value) || 2.5;
+});
+readPenColor();
+viewer.penWidth = parseFloat(els.penWidth.value) || 2.5;
+
+els.btnPen.addEventListener('click', () => setMode('pen'));
+els.btnInkErase.addEventListener('click', () => setMode('inkErase'));
+
 function syncEditState(): void {
   const dirty = doc?.hasEdits() ?? false;
   // Nothing can be written back from a document the editor's parser could not
@@ -841,7 +868,19 @@ function syncEditState(): void {
 
 /* ---------------- editing mode ---------------- */
 
-function setMode(mode: 'edit' | 'select' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight'): void {
+function setMode(
+  mode:
+    | 'edit'
+    | 'select'
+    | 'add'
+    | 'sign'
+    | 'note'
+    | 'erase'
+    | 'redact'
+    | 'highlight'
+    | 'pen'
+    | 'inkErase',
+): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
   els.btnModeSelect.classList.toggle('tool-active', mode === 'select');
@@ -851,8 +890,12 @@ function setMode(mode: 'edit' | 'select' | 'add' | 'sign' | 'note' | 'erase' | '
   els.btnRedact.classList.toggle('tool-active', mode === 'redact');
   els.btnHighlight.classList.toggle('tool-active', mode === 'highlight');
   els.btnNote.classList.toggle('tool-active', mode === 'note');
+  els.btnPen.classList.toggle('tool-active', mode === 'pen');
+  els.btnInkErase.classList.toggle('tool-active', mode === 'inkErase');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
+    pen: 'Draw anywhere on the page. What you draw becomes part of it.',
+    inkErase: 'Drag over anything you have drawn to rub it out.',
     select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',

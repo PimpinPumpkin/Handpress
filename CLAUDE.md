@@ -392,6 +392,23 @@ the tails of descenders visible around the edited text, and two sets of glyphs
 half a pixel apart read as the wrong typeface rather than as a leftover. The
 margin scales with the type so it is the same at every zoom.
 
+## Freehand strokes are page content, not annotations
+
+`InkStroke` is a list of points in page coordinates, drawn by `buildInk` as a
+polyline smoothed through the midpoints of consecutive samples, which is the
+same trick the signature pad uses: a midpoint is guaranteed to lie on the path,
+so the curve goes through the drawing rather than near it. Round caps and joins,
+because a pen has a round nib. A single point is drawn as a zero length line so
+a tap leaves a dot, which an empty path does not.
+
+The stroke previews on a canvas of its own above the page while the pointer is
+down. Nothing but pdf.js output of the real bytes may write to the page canvas.
+
+`build()` has a guard that skips a page with no edits, and that guard has to
+name every kind of edit there is. Ink was in `touchedPages` and then dropped
+again on the next line, so strokes were recorded, counted, and never written.
+Add a kind and this is the second place to change.
+
 ## A font's declared ascent is not how tall its letters are
 
 `lineGeometry` put the top of every box at `baseline - font.ascent`, and fonts

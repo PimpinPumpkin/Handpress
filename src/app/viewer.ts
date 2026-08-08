@@ -24,7 +24,17 @@ import type { SearchMatch } from './model';
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
 
-export type ViewerMode = 'edit' | 'select' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight';
+export type ViewerMode =
+  | 'edit'
+  | 'select'
+  | 'add'
+  | 'sign'
+  | 'note'
+  | 'erase'
+  | 'redact'
+  | 'highlight'
+  | 'pen'
+  | 'inkErase';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -164,6 +174,10 @@ export class Viewer {
   /** Defaults applied to newly added text. */
   addSize = 12;
   addColor = { r: 0, g: 0, b: 0 };
+  /** Ink settings for the pen. */
+  penColor = { r: 0.88, g: 0.13, b: 0.13 };
+  penWidth = 2.5;
+
   /** Colour used by the highlighter, a marker-pen yellow by default. */
   highlightColor = { r: 1, g: 0.92, b: 0.23 };
   /** Signature waiting to be placed, and the width it is placed at, in points. */
@@ -208,6 +222,7 @@ export class Viewer {
     for (const p of this.pages) {
       p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign' || mode === 'note');
       p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact' || mode === 'highlight');
+      p.overlay.classList.toggle('drawing', mode === 'pen' || mode === 'inkErase');
       p.textLayer.classList.toggle('active', mode === 'select');
     }
   }
@@ -253,6 +268,10 @@ export class Viewer {
 
       // Erasing is a drag rather than a click, so it needs the pointer directly.
       overlay.addEventListener('pointerdown', (e) => {
+        if (this.mode === 'pen' || this.mode === 'inkErase') {
+          this.beginStroke(this.pages[i], e);
+          return;
+        }
         if (this.mode !== 'erase' && this.mode !== 'redact' && this.mode !== 'highlight') return;
         this.beginRegion(this.pages[i], e, this.mode);
       });
@@ -998,6 +1017,108 @@ export class Viewer {
    * on tinted or coloured paper disappears instead of leaving a white scar. It
    * covers rather than deletes, which the interface says plainly.
    */
+  /**
+   * Draws a freehand stroke, or rubs strokes out.
+   *
+   * The line is previewed on a canvas of its own above the page, because the
+   * page canvas holds pdf.js output of the real bytes and nothing else may
+   * write to it. On release the points are handed to the document in page
+   * coordinates and the page is rebuilt, at which point the preview is dropped
+   * and the stroke is in the file rather than over it.
+   */
+  private beginStroke(p: RenderedPage, down: PointerEvent): void {
+    if (!this.doc || !p.viewport) return;
+    down.preventDefault();
+    const rubbing = this.mode === 'inkErase';
+    const rect = p.overlay.getBoundingClientRect();
+    const viewport = p.viewport;
+    const points: Array<{ x: number; y: number }> = [];
+
+    const preview = document.createElement('canvas');
+    preview.className = 'ink-preview';
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    preview.width = Math.floor(rect.width * dpr);
+    preview.height = Math.floor(rect.height * dpr);
+    preview.style.width = `${rect.width}px`;
+    preview.style.height = `${rect.height}px`;
+    const ctx = preview.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = `rgb(${Math.round(this.penColor.r * 255)},${Math.round(this.penColor.g * 255)},${Math.round(this.penColor.b * 255)})`;
+    ctx.lineWidth = this.penWidth * this.zoom;
+    if (!rubbing) p.container.appendChild(preview);
+
+    let rubbed = false;
+    const at = (e: PointerEvent): { sx: number; sy: number } => ({
+      sx: e.clientX - rect.left,
+      sy: e.clientY - rect.top,
+    });
+
+    const take = (e: PointerEvent): void => {
+      const { sx, sy } = at(e);
+      const [px, py] = viewport.convertToPdfPoint(sx, sy);
+      if (rubbing) {
+        // A rub is a radius in page units, so it feels the same at any zoom.
+        if (this.doc?.eraseInkAt(p.index, px, py, 6 / this.zoom)) rubbed = true;
+        return;
+      }
+      const last = points[points.length - 1];
+      // Samples closer together than a third of a point say nothing new and
+      // make the saved path longer for no reason.
+      if (last && Math.hypot(px - last.x, py - last.y) < 0.3) return;
+      points.push({ x: px, y: py });
+
+      if (points.length === 1) {
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+      } else {
+        ctx.lineTo(sx, sy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+      }
+    };
+
+    take(down);
+
+    const move = (e: PointerEvent): void => take(e);
+    // Release and cancel share a handler, and a pointer can deliver both. A
+    // second run would add the same stroke to the document twice.
+    let finished = false;
+    const up = (e: PointerEvent): void => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      take(e);
+
+      if (rubbing) {
+        preview.remove();
+        if (rubbed) void this.rebuild(p.index).then(() => this.cb.onEdited());
+        return;
+      }
+      if (!points.length || !this.doc) {
+        preview.remove();
+        return;
+      }
+      this.doc.addInk(p.index, { color: { ...this.penColor }, width: this.penWidth, points });
+      // Left up until the page has really been redrawn with the stroke in it,
+      // for the same reason a moved object keeps its copy: taking it away first
+      // makes the stroke vanish and come back.
+      void this.rebuild(p.index).then(() => {
+        preview.remove();
+        this.cb.onStatus('Drawn. It is part of the page now, so it saves and prints with it.');
+        this.cb.onEdited();
+      });
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+
   private beginRegion(p: RenderedPage, down: PointerEvent, kind: 'erase' | 'redact' | 'highlight'): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();

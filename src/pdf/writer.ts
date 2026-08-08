@@ -58,6 +58,15 @@ export interface ImageStamp {
  * why this is called erase and not redaction. Anything that must genuinely be
  * gone has to remove the operators that drew it.
  */
+/** One freehand stroke, in page coordinates. */
+export interface InkStroke {
+  id: string;
+  color: { r: number; g: number; b: number };
+  /** Line width in points. */
+  width: number;
+  points: Array<{ x: number; y: number }>;
+}
+
 export interface RectFill {
   id: string;
   x: number;
@@ -272,6 +281,48 @@ function addExtGStateResource(resources: PDFDict, name: string, dict: PDFDict): 
 }
 
 /** Paints one rectangle, isolated so it cannot leak its state into the page. */
+/**
+ * Builds the drawing operators for one freehand stroke.
+ *
+ * A stroke is a polyline through the points the pointer visited, smoothed by
+ * running each curve through the midpoint of consecutive samples. That is the
+ * same trick the signature pad uses: the midpoints are guaranteed to lie on the
+ * path, so the curve passes through the drawing rather than near it, and no
+ * point needs a tangent worked out for it.
+ *
+ * Round caps and joins because a pen has a round nib; without them every change
+ * of direction shows a notch.
+ */
+function buildInk(stroke: InkStroke): Uint8Array {
+  const pts = stroke.points;
+  if (pts.length < 2 || stroke.width <= 0) {
+    // A tap with no travel still deserves a dot, which a zero length line with
+    // a round cap draws and an empty path does not.
+    if (pts.length === 1) {
+      const p = pts[0];
+      return bytes(
+        `\nq 1 J 1 j ${fmt(stroke.width)} w ${fmt(stroke.color.r)} ${fmt(stroke.color.g)} ${fmt(stroke.color.b)} RG ` +
+          `${fmt(p.x)} ${fmt(p.y)} m ${fmt(p.x)} ${fmt(p.y)} l S Q\n`,
+      );
+    }
+    return new Uint8Array(0);
+  }
+
+  let path = `${fmt(pts[0].x)} ${fmt(pts[0].y)} m `;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mid = { x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2 };
+    path += `${fmt(pts[i].x)} ${fmt(pts[i].y)} ${fmt(mid.x)} ${fmt(mid.y)} v `;
+  }
+  const last = pts[pts.length - 1];
+  path += `${fmt(last.x)} ${fmt(last.y)} l `;
+
+  return bytes(
+    `\nq 1 J 1 j ${fmt(stroke.width)} w ` +
+      `${fmt(stroke.color.r)} ${fmt(stroke.color.g)} ${fmt(stroke.color.b)} RG ` +
+      `${path}S Q\n`,
+  );
+}
+
 function buildRect(rect: RectFill, resources: PDFDict | null): Uint8Array {
   if (rect.width <= 0 || rect.height <= 0) return new Uint8Array(0);
 
@@ -841,6 +892,7 @@ export async function applyEdits(
   stamps: ImageStamp[] = [],
   imageEdits: ImageEdit[] = [],
   rects: RectFill[] = [],
+  ink: InkStroke[] = [],
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
@@ -919,13 +971,14 @@ export async function applyEdits(
   // Added text is drawn after everything else so it sits on top, and it is
   // built here so it lands in the same rewrite as any edits to the page.
   let addedTail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
-  if (insertions.length || stamps.length || rects.length) {
+  if (insertions.length || stamps.length || rects.length || ink.length) {
     const pageResources = walk.resources.get('page') ?? null;
     if (pageResources) {
       const built: Uint8Array[] = [];
       // Erasures go down first, then images, then text. That ordering is what
       // lets somebody cover something up and then write over the top of it.
       for (const rect of rects) built.push(buildRect(rect, pageResources));
+      for (const stroke of ink) built.push(buildInk(stroke));
       const imageCache = new Map<string, string>();
       for (const stamp of stamps) {
         built.push(await buildStamp(stamp, doc, pageResources, imageCache, warn));
