@@ -384,6 +384,24 @@ them. There is now one `[hidden] { display: none !important }` rule near the
 top of the stylesheet, which settles it for every element rather than one at a
 time.
 
+## Every edit used to redraw the whole document
+
+`onEdited` called `renderThumbs`, which rasterised every page in the document,
+and `refresh` destroyed the pdf.js worker and started a new one. So committing
+one word to one line meant: rebuild the file, boot a worker, reparse the whole
+document, redraw the visible pages, and rasterise twenty-three thumbnails. On
+a real document that is the second between letting go of an image and seeing
+it move.
+
+Thumbnails now draw when they scroll into view, like the pages already did, and
+the worker is kept across reloads and released in `close()` when a different
+document is opened. `close()` matters: without it a reused worker leaks a
+thread per file opened in a session.
+
+Not measured before and after in a browser. A Node benchmark of the same calls
+is misleading here, because pdf.js runs on a fake worker there and never pays
+the startup this was about.
+
 ## Grid items fall into the first free column
 
 Twice now: hide the sidebar and panel, or position them, and the document lands

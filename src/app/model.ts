@@ -186,6 +186,8 @@ export class HandpressDocument {
 
   private pdfjsDoc: PDFDocumentProxy | null = null;
   private loadingTask: PDFDocumentLoadingTask | null = null;
+  /** Kept across reloads; see the note in `reload`. */
+  private worker: InstanceType<typeof pdfjs.PDFWorker> | null = null;
   /**
    * Text models keyed by page, always derived from the original file.
    *
@@ -244,17 +246,21 @@ export class HandpressDocument {
 
   private async reload(): Promise<LoadReport> {
     if (this.loadingTask) {
-      // Tearing down the old worker before starting a new one keeps memory flat
-      // across the many reloads that editing produces.
+      // The document is torn down, but the worker it ran in is kept and handed
+      // to the next one. Every committed edit reloads, and starting a fresh
+      // worker each time means booting a thread and loading two megabytes of
+      // pdf.js script before the edit can be seen.
       await this.loadingTask.destroy().catch(() => undefined);
       this.loadingTask = null;
       this.pdfjsDoc = null;
     }
+    if (!this.worker) this.worker = new pdfjs.PDFWorker();
     // Line models survive a reload; only the pdf.js-derived font names reset.
     this.cssFontCache.clear();
 
     // pdf.js takes ownership of the buffer it is given, so it gets a copy.
     this.loadingTask = pdfjs.getDocument({
+      worker: this.worker,
       data: this.currentBytes.slice(),
       useSystemFonts: true,
     });
@@ -1272,6 +1278,21 @@ export class HandpressDocument {
   }
 
   /** Rebuilds and re-renders so the canvas shows exactly what a save would produce. */
+  /**
+   * Lets go of the pdf.js worker and document.
+   *
+   * The worker is kept across reloads of the same document, so opening a new
+   * one has to release the old one or every file opened in a session leaves a
+   * thread behind it.
+   */
+  async close(): Promise<void> {
+    await this.loadingTask?.destroy().catch(() => undefined);
+    this.loadingTask = null;
+    this.pdfjsDoc = null;
+    this.worker?.destroy();
+    this.worker = null;
+  }
+
   async refresh(): Promise<EditWarning[]> {
     const { bytes, warnings } = await this.build();
     this.currentBytes = bytes;

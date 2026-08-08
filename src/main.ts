@@ -210,6 +210,9 @@ async function openFile(file: File, password?: string): Promise<void> {
       name = file.name.replace(/\.[^.]+$/, '') + '.pdf';
     }
     const { doc: opened, report } = await HandpressDocument.open(name, bytes, password);
+    // Only once the new one is known to have opened, so a file that fails to
+    // load does not take the working document down with it.
+    void doc?.close();
     doc = opened;
     signedDocument = report.signatures.signatures.length > 0;
     if (localFonts.enabled) doc.fontProvider = localFonts;
@@ -1095,6 +1098,7 @@ els.viewer.addEventListener('scroll', () => {
 /* ---------------- thumbnails ---------------- */
 
 let thumbToken = 0;
+let thumbWatcher: IntersectionObserver | null = null;
 
 /**
  * The gap between two pages, which is somewhere a page can be added.
@@ -1191,26 +1195,49 @@ async function renderThumbs(): Promise<void> {
     els.thumbs.appendChild(insertHere(i + 1));
   }
 
-  // Thumbnails go through the viewer's own render queue rather than calling
-  // pdf.js directly. They draw the same pages the main view is drawing, and
-  // pdf.js will not render one page twice at once: rendering a thumbnail of a
-  // page the viewer was already drawing never returned, which left the whole
-  // open stuck behind it.
-  for (let i = 0; i < doc.pageCount; i++) {
+  // Thumbnails draw when they come into view, not all at once. Every edit
+  // rebuilds this strip, and rasterising a whole document each time is what
+  // made dragging an image feel like the picture arrived a second after the
+  // outline did. Only what somebody can actually see is worth drawing.
+  thumbWatcher?.disconnect();
+  thumbWatcher = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const el = entry.target as HTMLElement;
+        thumbWatcher?.unobserve(el);
+        void drawThumb(Number(el.dataset.page), token);
+      }
+    },
+    { root: els.thumbs, rootMargin: '200px 0px' },
+  );
+  for (const el of els.thumbs.querySelectorAll('.thumb')) thumbWatcher.observe(el);
+}
+
+/**
+ * Draws one thumbnail.
+ *
+ * Through the viewer's own render queue rather than pdf.js directly: they draw
+ * the same pages the main view is drawing, and pdf.js will not render one page
+ * twice at once. A thumbnail of a page the viewer was already drawing never
+ * returned, which left the whole open stuck behind it.
+ */
+async function drawThumb(index: number, token: number): Promise<void> {
+  if (!doc?.pdfjs || token !== thumbToken || !Number.isFinite(index)) return;
+  try {
+    const page = await doc.pdfjs.getPage(index + 1);
+    const base = page.getViewport({ scale: 1 });
+    const canvas = els.thumbs
+      .querySelectorAll('.thumb')
+      [index]?.querySelector('canvas') as HTMLCanvasElement | null;
+    if (!canvas) return;
+    const image = await viewer.rasterise(index, 150 / base.width);
     if (token !== thumbToken) return;
-    try {
-      const page = await doc.pdfjs.getPage(i + 1);
-      const base = page.getViewport({ scale: 1 });
-      const canvas = els.thumbs.querySelectorAll('.thumb')[i]?.querySelector('canvas');
-      if (!canvas) continue;
-      const image = await viewer.rasterise(i, 150 / base.width);
-      if (token !== thumbToken) return;
-      canvas.width = image.width;
-      canvas.height = image.height;
-      canvas.getContext('2d')!.drawImage(image, 0, 0);
-    } catch {
-      // A thumbnail that will not render is not worth failing the session over.
-    }
+    canvas.width = image.width;
+    canvas.height = image.height;
+    canvas.getContext('2d')!.drawImage(image, 0, 0);
+  } catch {
+    // A thumbnail that will not render is not worth failing the session over.
   }
 }
 
@@ -1902,8 +1929,10 @@ window.addEventListener('resize', () => {
   resizeTimer = window.setTimeout(() => void applyZoomChoice(), 180);
 });
 
-const versionLabel = document.getElementById('appVersion');
-if (versionLabel) versionLabel.textContent = __APP_VERSION__;
+for (const id of ['appVersion', 'statusVersion']) {
+  const label = document.getElementById(id);
+  if (label) label.textContent = __APP_VERSION__;
+}
 
 syncEditState();
 
