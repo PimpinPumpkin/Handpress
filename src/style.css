@@ -60,6 +60,16 @@ body {
   overflow: hidden;
 }
 
+/* A grid item's automatic minimum size is its min-content width, so any row
+   whose contents will not fit widens the single column and every other row
+   with it. That is how a phone ended up drawing a 462px app in a 375px
+   window, with the save button and most of the toolbar clipped off the right
+   and no way to scroll to them. Each row is told it may shrink; the ones with
+   more in them than will fit say for themselves what to do about it. */
+#app > * {
+  min-width: 0;
+}
+
 /* ---------- top bar ---------- */
 
 .topbar {
@@ -1279,6 +1289,26 @@ body {
     width: 30px;
     height: 30px;
   }
+
+  /* A finger on the page has to scroll it. Text lines cover almost all of a
+     page, and with touch-action none on every one of them the document could
+     only be scrolled from its margins. Dragging a line to move it stays a
+     mouse and stylus gesture; the browser cancels the drag as soon as it
+     decides the gesture is a scroll, which is the right way round.
+
+     Things put on the page deliberately keep their drag: a signature or a
+     piece of added text is small, there are few of them, and nudging one into
+     place is most of the point of having placed it. */
+  .line-box:not(.line-added):not(.line-stamp):not(.image-box):not(.erase-box):not(.redact-box) {
+    touch-action: pan-x pan-y;
+  }
+
+  /* The opposite case. While a region is being drawn, the drag is the whole
+     gesture, and letting the browser take it for a scroll makes erasing,
+     redacting and highlighting impossible with a finger. */
+  .page-overlay.erasing {
+    touch-action: none;
+  }
 }
 
 /* Vertical scrolling belongs to the page; a two finger pinch is taken by the
@@ -1580,4 +1610,92 @@ body {
   padding: 12px;
   font-size: 12px;
   color: var(--ink-faint);
+}
+
+/* ---------- narrow screens ---------- */
+
+/* A phone. Everything still has to be reachable, so what goes is decoration
+   rather than function: the wordmark beside the icon, and some of the spacing
+   between things. Nothing here hides a control. */
+@media (max-width: 700px) {
+  .topbar {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  /* The filename gives way first. It is the one thing on this row that can be
+     read from the document itself, and every other item is a button. */
+  .doc-title {
+    min-width: 0;
+  }
+
+  .topbar-actions {
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  /* The tool strip scrolls sideways rather than shrinking its targets. Twenty
+     tools will not fit a phone at any size worth tapping, and a row that
+     scrolls is honest about that where a row of unreadable icons is not. */
+  .toolbar {
+    padding: 0 8px;
+    scroll-padding: 0 8px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  /* A visible edge, so it reads as a strip that moves rather than one that
+     happens to be cut off. */
+  .toolbar::after {
+    content: '';
+    flex: 0 0 8px;
+  }
+
+  .statusbar {
+    padding: 0 8px;
+    gap: 8px;
+  }
+
+  /* The pages and properties columns become drawers over the document rather
+     than neighbours beside it. Sharing a 375px row three ways left the viewer
+     185px wide with one open and nothing at all with both: the document itself
+     disappeared while its two side panels sat there. */
+  .workspace,
+  .workspace.show-sidebar,
+  .workspace.show-panel,
+  .workspace.show-sidebar.show-panel {
+    position: relative;
+    grid-template-columns: 0 minmax(0, 1fr) 0;
+  }
+
+  .sidebar,
+  .panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 5;
+    width: 0;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.45);
+  }
+
+  /* Named rather than left to fall where it may. Positioning the two drawers
+     takes them out of the grid, and auto-placement then puts the document in
+     the first free cell, which is the empty column the sidebar used to sit in. */
+  .viewer-wrap {
+    grid-column: 2;
+  }
+
+  .workspace.show-sidebar .sidebar {
+    left: 0;
+    width: min(76vw, 260px);
+  }
+
+  .workspace.show-panel .panel {
+    right: 0;
+    width: min(76vw, 280px);
+  }
 }

@@ -340,6 +340,41 @@ with the real headers and driving every tool through it: open, edit, save,
 print, split, outline and a full recognition run. No violations, and no request
 to anything but its own origin.
 
+## On a phone
+
+Three things had to be true and none of them were.
+
+A grid item's automatic minimum size is its min-content width, so the top bar,
+which will not fold, widened the single column of `#app` and every row with it:
+a 462px app inside a 375px window, with the save button and most of the toolbar
+clipped off the right and no way to reach them. `#app > * { min-width: 0 }`
+lets each row shrink and decide for itself what to do about not fitting. The
+tool strip scrolls sideways, which is honest where a row of unreadable icons
+would not be.
+
+`touch-action: none` on `.line-box` exists so dragging a line moves it. Text
+lines cover nearly all of a page, so on a touch screen that meant the document
+could only be scrolled from its margins. Ordinary lines now allow panning and
+lose drag-to-move on touch; things placed deliberately, a signature or added
+text, keep it, because nudging one into place is most of the point. While a
+region is being drawn the overlay takes `touch-action: none` for the opposite
+reason: there the drag is the whole gesture.
+
+The pages and properties columns become drawers over the document rather than
+neighbours beside it. Sharing 375px three ways left the viewer 185px wide with
+one open and zero with both. Positioning them takes them out of the grid, so
+`.viewer-wrap` names its column rather than letting auto-placement drop it into
+the empty one the sidebar left behind.
+
+## The pinch that never let go
+
+`watchPinch` tracked its fingers in a map and cleaned them up on pointerup
+bound to the page. A finger that starts a pinch on the page can leave it before
+it lifts, and a release over the toolbar never reached that listener, so the
+pointer stayed in the map for the rest of the session. The next one finger drag
+then counted two fingers and zoomed instead of scrolling. Release is watched on
+the window now, with `blur` as a backstop.
+
 ## The hidden attribute needs help
 
 `hidden` only carries `display: none` from the browser's own stylesheet, which

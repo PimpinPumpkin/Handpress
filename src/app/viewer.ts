@@ -718,7 +718,13 @@ export class Viewer {
       { capture: true },
     );
 
-    this.root.addEventListener(
+    // Movement and release are watched on the window, not on the page. A finger
+    // that starts a pinch on the page can perfectly well leave it before it
+    // lifts, and a release over the toolbar never reaches a listener on the
+    // page: that pointer then stays in `active` for the rest of the session,
+    // and the next single finger drag is read as the second half of a pinch
+    // and zooms instead of scrolling.
+    window.addEventListener(
       'pointermove',
       (e) => {
         if (!active.has(e.pointerId)) return;
@@ -750,8 +756,15 @@ export class Viewer {
       }
     };
 
-    this.root.addEventListener('pointerup', release, { capture: true });
-    this.root.addEventListener('pointercancel', release, { capture: true });
+    window.addEventListener('pointerup', release, { capture: true });
+    window.addEventListener('pointercancel', release, { capture: true });
+    // A gesture interrupted by the tab going away leaves nothing behind either.
+    window.addEventListener('blur', () => {
+      active.clear();
+      startGap = 0;
+      scale = 1;
+      if (this.strip) this.strip.style.transform = '';
+    });
   }
 
   /** Draws one note's marker and wires dragging and editing to it. */

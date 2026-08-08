@@ -453,6 +453,18 @@ the text can be selected and copied, and the pages export as images. Saving is
 switched off and a notice says why, because finding out at the save is worse
 than being told at the door.
 
+### On a phone
+
+The layout folds rather than shrinking: the wordmark goes, the tool strip
+scrolls sideways rather than shrinking its targets, and the pages and
+properties columns become drawers over the document instead of neighbours
+beside it, so the document keeps the full width of the screen with either open.
+
+A finger scrolls the page by dragging anywhere on it, including across text.
+Dragging a line to move it is a mouse and stylus gesture; a signature or a
+piece of added text can still be dragged with a finger, since those are small,
+few, and were put there to be moved. Two fingers pinch to zoom.
+
 ## Limitations
 
 - **Scanned PDFs have no text to edit** until they are read. Vellum detects this

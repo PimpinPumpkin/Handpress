@@ -993,7 +993,10 @@ async function applyZoomChoice(): Promise<void> {
     if (!doc?.pdfjs) return;
     const page = await doc.pdfjs.getPage(1);
     const vp = page.getViewport({ scale: 1 });
-    const available = els.viewer.clientWidth - 48;
+    // The gutter is a comfort on a desk and a waste on a phone, where it would
+    // spend an eighth of the screen on grey.
+    const gutter = els.viewer.clientWidth < 700 ? 16 : 48;
+    const available = els.viewer.clientWidth - gutter;
     await viewer.setZoom(Math.max(0.25, available / vp.width));
   } else {
     await viewer.setZoom(parseFloat(value));
