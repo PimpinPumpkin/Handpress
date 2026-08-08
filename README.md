@@ -143,11 +143,21 @@ Recognition runs on this machine, in a worker; the page is never uploaded. The
 recogniser itself and its language data come from this app's own origin, not
 from a CDN. Left to itself tesseract fetches both from public ones, which would
 mean the app stopped working without a connection and that a stranger learned
-this machine was reading a document. Twenty-three megabytes are served here
-instead, downloaded once and then kept by the browser, so the first run on a
-new browser takes a few seconds longer and later ones do not. One recogniser is
-started for the whole document rather than one per page, because starting it
-costs more than reading a page does.
+this machine was reading a document. It is served here instead, downloaded once
+and then kept by the browser, so the first run on a new browser takes a few
+seconds longer and later ones do not. One recogniser is started for the whole
+document rather than one per page, because starting it costs more than reading
+a page does.
+
+It reads whichever of the installed languages is chosen. `npm run ocr-assets`
+installs English and the Western European languages that share its alphabet;
+`OCR_LANGS` takes a comma separated list of codes, or `all`, which adds
+Russian, Chinese, Japanese, Korean, Arabic and Hebrew. The picker offers what
+was installed and nothing else, because offering a language and then failing to
+fetch it is worse than not offering it, and it appears only when a document has
+a scan in it and there is more than one language to choose between. Each
+language is downloaded the first time it is picked, so its size is written next
+to its name.
 
 A line can be made longer than the page will hold. That edit still applies, but
 it says how far past the edge the line now runs, because text off the paper is
