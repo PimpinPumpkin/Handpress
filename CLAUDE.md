@@ -384,6 +384,19 @@ them. There is now one `[hidden] { display: none !important }` rule near the
 top of the stylesheet, which settles it for every element rather than one at a
 time.
 
+## A stalled render is almost always a hidden tab
+
+pdf.js drives its canvas loop on `requestAnimationFrame`, which browsers
+throttle to a standstill in a tab that is not visible. `viewer.load` awaits
+`renderPage(0)`, so a hidden tab leaves the whole open stuck: the busy pill
+says "Opening…" forever, no line boxes appear, and Save and Print stay
+disabled because `syncEditState` is never reached.
+
+It looks exactly like a deadlock and it is not one. Check
+`document.visibilityState` before investigating anything else. This has now
+cost two separate debugging sessions, one of which got as far as blaming the
+production build and then a rename.
+
 ## Printing goes through the PDF, not through the page
 
 `window.print()` on this app prints the app: toolbar, sidebar, and a canvas
