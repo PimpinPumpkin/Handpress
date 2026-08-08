@@ -351,5 +351,9 @@ given is how a warning gets ignored. Both halves are checked by
 `tools/test-overflow.ts`, which found 150 false alarms in the first version.
 
 ## Open work
-- Reflow across lines, adding and deleting text blocks, replies on a note,
-  recognition in languages other than English.
+- Reflow across paragraphs rather than within one, adding and deleting text
+  blocks, replies on a note, recognition in languages other than English.
+- A paragraph that shrinks leaves the blank line where it was. Closing the gap
+  means moving everything below it, and a page is a fixed arrangement of things
+  that are not all part of the paragraph, so this is the behaviour rather than
+  a defect. It is worth revisiting only with a way to know what may move.

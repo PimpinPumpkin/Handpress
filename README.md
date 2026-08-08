@@ -322,7 +322,10 @@ across the pdf.js corpus.
 
 What it will not do is make room. Text that needs a line the paragraph does not
 have is refused, because finding that line would mean pushing the rest of the
-page down. Paragraph detection is deliberately conservative: same font and size,
+page down. A paragraph that gets shorter leaves the blank line where it was,
+for the same reason in reverse: closing the gap would move everything below it,
+and a PDF page is a fixed arrangement of things that are not all part of the
+paragraph. Paragraph detection is deliberately conservative: same font and size,
 an even rhythm of baselines, a shared left edge, and a column wide enough to be
 prose rather than a list of names. Anything less certain is edited a line at a
 time, exactly as before.
@@ -410,8 +413,10 @@ than being told at the door.
 - **Scanned PDFs have no text to edit** until they are read. Vellum detects this
   and says so rather than showing an empty page, and **Read scan** adds the text
   layer a page at a time.
-- Editing existing text is line at a time, with no reflow across lines.
+- Reflow works inside a paragraph, not across them. A paragraph cannot grow
+  past the lines it already has, and one that shrinks leaves the gap.
 - Text drawn with Type 3 fonts is read only.
+- The recogniser reads English.
 
 ## Running it
 
