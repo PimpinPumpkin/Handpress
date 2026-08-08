@@ -114,9 +114,11 @@ button changes it, and a highlight is undone like any other edit.
 
 ### Reading a scan
 
-**Read scan** runs recognition on the current page and writes what it finds back
-as invisible text sitting exactly over the picture. The page looks identical, but
-its words can now be searched, selected, copied and edited like any other text.
+**Read scan** finds every page that is a picture rather than text, runs
+recognition on each, and writes what it finds back as invisible text sitting
+exactly over the picture. The pages look identical, but their words can now be
+searched, selected, copied and edited like any other text. Pages that already
+have text are left alone, and a page that has been read once is not read again.
 
 Each word is stretched horizontally to the width it occupies in the image, so a
 selection follows the printed words instead of drifting further out of step along
@@ -126,6 +128,8 @@ written down wrong.
 Recognition runs on this machine, in a worker; the page is never uploaded. The
 recogniser itself and its language data are fetched from a CDN the first time
 they are needed, so the first run on a new browser takes a few seconds longer.
+One recogniser is started for the whole document rather than one per page,
+because starting it costs more than reading a page does.
 
 ### Finding text
 

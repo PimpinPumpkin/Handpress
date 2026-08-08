@@ -685,6 +685,28 @@ export class VellumDocument {
     return [...(this.insertions.get(pageIndex)?.values() ?? [])];
   }
 
+  /**
+   * Pages that are pictures of text rather than text.
+   *
+   * A page with no lines has nothing to read; one that already carries a
+   * recognised layer has been read, and reading it twice would stack a second
+   * copy of every word on top of the first.
+   */
+  async pagesNeedingRecognition(): Promise<number[]> {
+    const out: number[] = [];
+    for (let i = 0; i < this.pageCount; i++) {
+      if (this.insertionsFor(i).some((x) => x.invisible)) continue;
+      const page = await this.getPage(i).catch(() => null);
+      if (page && page.lines.length === 0) out.push(i);
+    }
+    return out;
+  }
+
+  /** True once a page carries a recognised text layer. */
+  wasRecognised(pageIndex: number): boolean {
+    return this.insertionsFor(pageIndex).some((x) => x.invisible);
+  }
+
   /** Places an image on a page and returns it. */
   addStamp(pageIndex: number, stamp: Omit<ImageStamp, 'id'>): ImageStamp {
     const before = this.snapshot();

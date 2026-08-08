@@ -8,7 +8,7 @@ import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import { DecryptionError } from './pdf/decrypt';
 import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/signature';
-import { OCR_SCALE, recogniseCanvas, wordsToInsertions } from './app/ocr';
+import { OCR_SCALE, openRecogniser, wordsToInsertions, type Recogniser } from './app/ocr';
 import type { TextLine } from './pdf/content';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -742,35 +742,76 @@ els.btnOcr.addEventListener('click', async () => {
     setStatus('Open a PDF first.', 'warn');
     return;
   }
-  const pageIndex = viewer.currentPageIndex();
 
-  setBusy(true, 'Preparing to read the page…');
+  setBusy(true, 'Looking for pages to read…');
+  const current = viewer.currentPageIndex();
+  let targets: number[];
   try {
-    const canvas = await viewer.rasterise(pageIndex, OCR_SCALE);
-    const result = await recogniseCanvas(canvas, OCR_SCALE, (fraction, label) => {
+    targets = await doc.pagesNeedingRecognition();
+  } catch {
+    targets = [];
+  }
+
+  // A page with text on it has nothing to recognise, and one already read would
+  // only gain a second copy of every word. Saying which of the two it is beats
+  // a button that appears to do nothing.
+  if (!targets.length) {
+    setBusy(false);
+    setStatus(
+      doc.wasRecognised(current)
+        ? 'This page has already been read.'
+        : 'Every page already has text, so there is nothing to read.',
+    );
+    return;
+  }
+
+  const many = targets.length > 1;
+  let recogniser: Recogniser | null = null;
+  let wordsRead = 0;
+  let pagesRead = 0;
+  let confidenceTotal = 0;
+
+  try {
+    recogniser = await openRecogniser((fraction, label) => {
       setBusy(true, `${label}… ${Math.round(fraction * 100)}%`);
     });
 
-    if (!result.words.length) {
-      setStatus('Nothing legible was found on this page.', 'warn');
-      return;
+    for (const [n, pageIndex] of targets.entries()) {
+      const where = many ? `Page ${pageIndex + 1}, ${n + 1} of ${targets.length}` : 'Reading the page';
+      setBusy(true, `${where}…`);
+
+      const canvas = await viewer.rasterise(pageIndex, OCR_SCALE);
+      const result = await recogniser.recognise(canvas, OCR_SCALE);
+      if (!result.words.length) continue;
+
+      const insertions = wordsToInsertions(result.words, measureHelvetica);
+      for (const insertion of insertions) doc.addInsertion(pageIndex, insertion);
+      wordsRead += insertions.length;
+      confidenceTotal += result.confidence;
+      pagesRead++;
     }
 
-    const insertions = wordsToInsertions(result.words, measureHelvetica);
-    for (const insertion of insertions) doc.addInsertion(pageIndex, insertion);
+    if (!wordsRead) {
+      setStatus('Nothing legible was found.', 'warn');
+      return;
+    }
 
     setBusy(true, 'Adding the text layer…');
     await doc.refresh();
     await viewer.refreshRendered();
     void renderThumbs();
     syncEditState();
+
+    const pageNote = pagesRead === 1 ? '' : ` across ${pagesRead} pages`;
     setStatus(
-      `Read ${insertions.length} word${insertions.length === 1 ? '' : 's'} at ${Math.round(result.confidence)}% confidence. ` +
-        'The page can now be searched and edited.',
+      `Read ${wordsRead} word${wordsRead === 1 ? '' : 's'}${pageNote} at ` +
+        `${Math.round(confidenceTotal / pagesRead)}% confidence. ` +
+        'The text can now be searched and edited.',
     );
   } catch (e) {
-    setStatus(`Could not read that page: ${(e as Error).message}`, 'warn');
+    setStatus(`Could not read that: ${(e as Error).message}`, 'warn');
   } finally {
+    await recogniser?.close();
     setBusy(false);
   }
 });

@@ -138,5 +138,5 @@ and the ISSN sit 0.9pt apart. The file itself is correct: the ISSN run is still
 drawn at exactly its original x. Do not chase it as a writer bug.
 
 ## Open work
-- Reflow across lines, adding and deleting text blocks, recognition across a
-  whole document rather than a page at a time.
+- Reflow across lines, adding and deleting text blocks, note annotations,
+  recognition in languages other than English.

@@ -90,7 +90,8 @@ and is revisited below.
 - Reading a scan: recognition runs on this machine and writes what it found back
   as invisible text over the picture, so the page looks identical but can be
   searched, selected, copied and edited. Words are stretched to the width they
-  occupy in the image so a selection follows the printed line.
+  occupy in the image so a selection follows the printed line. One press reads
+  every scanned page in the document.
 - Find in document, with every hit highlighted, next and previous, and Cmd+F.
   Searches the text as it currently reads, so a word typed a moment ago is
   findable and one typed out is not, and it covers added text, which is what
@@ -117,9 +118,8 @@ fits an engine that already understands content streams.
 
 1. **Note annotations**: comments attached to a point on the page, which is the
    half of everyday markup still missing now that highlighting is in.
-2. **Whole-document recognition** rather than a page at a time, with the pages
-   that need it detected on open.
-(Real redaction, highlighting and page recognition are done.)
+2. **More languages for recognition** than English.
+(Real redaction, highlighting and whole-document recognition are done.)
 
 ### Next
 
