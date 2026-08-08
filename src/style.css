@@ -1204,6 +1204,39 @@ body {
   text-align: center;
 }
 
+/* ---------- selectable text ---------- */
+
+/* An invisible copy of the page's words, so the page can be selected, copied
+   and read aloud. It is inert until the select tool is chosen, so it never
+   competes with editing for a click. */
+.text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  line-height: 1;
+}
+
+.text-layer.active {
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
+}
+
+.text-layer span {
+  position: absolute;
+  display: block;
+  white-space: pre;
+  transform-origin: 0 0;
+  color: transparent;
+}
+
+.text-layer span::selection {
+  background: rgba(61, 139, 253, 0.35);
+  color: transparent;
+}
+
 /* ---------- notes ---------- */
 
 /* The marker stands in for the icon a reader draws for a /Text annotation. */

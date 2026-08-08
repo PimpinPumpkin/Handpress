@@ -198,6 +198,18 @@ replacing the boxes mid sentence takes the caret with them: the edit is lost and
 the click that started it looks like it did nothing. For the same reason the
 editor and its cover are mounted on the page container, not the overlay.
 
+## The text layer is a copy of the page, not a reading of it
+
+`buildTextLayer` places one span per line from the same model the editor uses, so
+what can be selected is exactly what can be edited. Two details make it line up:
+each span is scaled horizontally to the width the line was drawn at, because the
+browser lays it out in a substitute face; and a real `<br>` follows each span,
+because absolutely positioned elements are all one line as far as
+`Selection.toString()` is concerned.
+
+It is inert except in the select tool, and it sits above the overlay so that a
+drag there reaches the words rather than the boxes drawn over them.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.

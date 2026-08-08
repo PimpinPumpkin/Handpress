@@ -194,6 +194,20 @@ while a matrix inserted there applies in the space the matrix maps from, so it
 is carried back through the inverse of the matrix's linear part. Skipping that
 step sends images on rotated or scaled pages off in the wrong direction.
 
+### Selecting and copying
+
+A canvas has no text in it, so a rendered page cannot be selected or copied out,
+which is the first thing most people try. The **Select** tool lays an invisible
+copy of the page's words over the canvas at their real positions, so the browser
+does the selecting, the copying and the reading aloud, and all of it agrees with
+what is drawn.
+
+Each line is scaled horizontally to cover exactly the width it was drawn at. The
+browser is laying the text out in a substitute face at a slightly different
+width, and without that correction the highlight drifts further from the words
+with every character. Line breaks are real elements, because absolutely
+positioned spans are otherwise all one line as far as a copy is concerned.
+
 ### Reflow
 
 Editing one line of a paragraph and leaving the rest where they were is what

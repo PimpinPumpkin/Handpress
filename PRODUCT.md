@@ -84,6 +84,8 @@ and is revisited below.
 - Erase: drag over anything to cover it with the surrounding page colour. The
   interface is explicit that this hides rather than deletes, because the
   difference matters and the category routinely blurs it.
+- Selecting and copying text, with the words laid over the canvas at their real
+  positions so the browser handles selection, copy and screen readers.
 - Reflow: editing a line re-breaks the rest of its paragraph instead of leaving
   a ragged hole. Measured with the document's own font against the column its own
   line breaks imply; refused rather than guessed when the text no longer fits.

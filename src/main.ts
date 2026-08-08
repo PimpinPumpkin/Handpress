@@ -26,6 +26,7 @@ const els = {
   btnPanel: $<HTMLButtonElement>('btnPanel'),
   btnLocalFonts: $<HTMLButtonElement>('btnLocalFonts'),
   btnModeEdit: $<HTMLButtonElement>('btnModeEdit'),
+  btnModeSelect: $<HTMLButtonElement>('btnModeSelect'),
   btnModeAdd: $<HTMLButtonElement>('btnModeAdd'),
   addSize: $<HTMLSelectElement>('addSize'),
   addColor: $<HTMLInputElement>('addColor'),
@@ -310,6 +311,10 @@ window.addEventListener('keydown', (e) => {
   } else if (key === 'o') {
     e.preventDefault();
     els.fileInput.click();
+  } else if (key === 'a' && viewer.currentMode() === 'select') {
+    // Only in the select tool, and only the page: the browser's own select all
+    // would take the toolbar and the status line with it.
+    if (viewer.selectPageText()) e.preventDefault();
   } else if (key === 'f') {
     e.preventDefault();
     els.searchInput.focus();
@@ -332,9 +337,10 @@ function syncEditState(): void {
 
 /* ---------------- editing mode ---------------- */
 
-function setMode(mode: 'edit' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight'): void {
+function setMode(mode: 'edit' | 'select' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight'): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
+  els.btnModeSelect.classList.toggle('tool-active', mode === 'select');
   els.btnModeAdd.classList.toggle('tool-active', mode === 'add');
   els.btnSign.classList.toggle('tool-active', mode === 'sign');
   els.btnErase.classList.toggle('tool-active', mode === 'erase');
@@ -343,6 +349,7 @@ function setMode(mode: 'edit' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | '
   els.btnNote.classList.toggle('tool-active', mode === 'note');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
+    select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
     erase: 'Drag over anything to cover it. This hides the text; it does not delete it.',
@@ -367,6 +374,14 @@ els.btnHighlight.addEventListener('click', () => {
     return;
   }
   setMode('highlight');
+});
+
+els.btnModeSelect.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  setMode('select');
 });
 
 els.btnNote.addEventListener('click', () => {

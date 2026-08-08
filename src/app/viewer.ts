@@ -21,7 +21,7 @@ import type { SearchMatch } from './model';
 import type { CapturedSignature } from './signature';
 import type { FormField } from '../pdf/forms';
 
-export type ViewerMode = 'edit' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight';
+export type ViewerMode = 'edit' | 'select' | 'add' | 'sign' | 'note' | 'erase' | 'redact' | 'highlight';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -49,6 +49,15 @@ interface RenderedPage {
    * render can wait on work that is itself sitting behind it in the queue.
    */
   queue: Promise<void>;
+  /**
+   * Invisible, selectable copy of the page's text, laid over the canvas.
+   *
+   * A canvas has no text in it, so without this the page cannot be selected or
+   * copied out, which is the first thing anyone tries. The spans carry the real
+   * words at the real positions, so the browser does the selecting, the copying
+   * and the reading aloud, and all of it agrees with what is drawn.
+   */
+  textLayer: HTMLDivElement;
   /**
    * Viewport of this page's last render, kept so highlights can be repainted
    * without rendering again. Pages differ in size and rotation, so this cannot
@@ -187,6 +196,7 @@ export class Viewer {
     for (const p of this.pages) {
       p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign' || mode === 'note');
       p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact' || mode === 'highlight');
+      p.textLayer.classList.toggle('active', mode === 'select');
     }
   }
 
@@ -210,6 +220,9 @@ export class Viewer {
       const overlay = document.createElement('div');
       overlay.className = 'page-overlay';
 
+      const textLayer = document.createElement('div');
+      textLayer.className = 'text-layer';
+
       const label = document.createElement('div');
       label.className = 'page-label';
       label.textContent = String(i + 1);
@@ -231,13 +244,16 @@ export class Viewer {
         this.beginRegion(this.pages[i], e, this.mode);
       });
 
-      container.append(canvas, overlay, label);
+      // The text layer sits above the overlay so that, in select mode, a drag
+      // reaches the words rather than the boxes drawn over them.
+      container.append(canvas, overlay, textLayer, label);
       strip.appendChild(container);
       this.pages.push({
         index: i,
         container,
         canvas,
         overlay,
+        textLayer,
         model: null,
         renderedZoom: 0,
         queue: Promise.resolve(),
@@ -404,6 +420,7 @@ export class Viewer {
     p.renderedZoom = drawnZoom;
     p.viewport = viewport;
     this.buildOverlay(p, viewport);
+    this.buildTextLayer(p, viewport);
     this.paintMatches(p);
   }
 
@@ -577,6 +594,71 @@ export class Viewer {
     // own icon and its own popup. The marker here stands in for that icon and
     // is what makes the comment editable while the document is open.
     for (const note of this.doc.notesFor(p.index)) this.addNoteMarker(p, note, viewport);
+  }
+
+  /**
+   * Lays an invisible, selectable copy of the page's text over the canvas.
+   *
+   * Each line becomes one span at the line's own origin, rotated with it and
+   * scaled horizontally so it covers exactly the width the line was drawn at.
+   * That last part is what makes a selection line up with the glyphs underneath:
+   * the browser is laying the text out in a substitute face at a slightly
+   * different width, and without the correction the highlight drifts further
+   * from the words with every character.
+   */
+  private buildTextLayer(p: RenderedPage, viewport: { convertToViewportPoint(x: number, y: number): number[] }): void {
+    p.textLayer.innerHTML = '';
+    if (!p.model || !this.doc) return;
+
+    for (const line of p.model.lines) {
+      const text = this.doc.textFor(p.index, line);
+      if (!text.trim()) continue;
+
+      const geo = this.lineGeometry(line, viewport);
+      const sizePx = line.fontSize * this.zoom;
+      const cssFont = this.cssFontFor(p.model, line, sizePx);
+
+      Viewer.measureCtx.font = cssFont;
+      const natural = Viewer.measureCtx.measureText(text).width;
+
+      const span = document.createElement('span');
+      span.textContent = text;
+      span.style.font = cssFont;
+      span.style.left = `${geo.baselineLeft}px`;
+      span.style.top = `${geo.baselineTop}px`;
+      // Positioned on the baseline, which is the one line of the text the
+      // document actually agrees with us about.
+      const scale = natural > 0 ? geo.width / natural : 1;
+      span.style.transform = `rotate(${geo.angle}deg) scaleX(${scale.toFixed(4)}) translateY(-100%)`;
+      p.textLayer.appendChild(span);
+      // Absolutely positioned spans are all one line as far as a copy is
+      // concerned, so the break has to be a real element. It costs no layout,
+      // since everything around it is taken out of the flow.
+      p.textLayer.appendChild(document.createElement('br'));
+    }
+  }
+
+  /**
+   * Selects every word on the page the reader is looking at.
+   *
+   * Scoped to one page rather than the window, because the browser's own select
+   * all would take the toolbar and the status line with it.
+   */
+  /** Which tool is active, so the shell can key shortcuts off it. */
+  currentMode(): ViewerMode {
+    return this.mode;
+  }
+
+  selectPageText(): boolean {
+    const p = this.pages[this.currentPageIndex()];
+    if (!p || !p.textLayer.childElementCount) return false;
+
+    const range = document.createRange();
+    range.selectNodeContents(p.textLayer);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return true;
   }
 
   /** Draws one note's marker and wires dragging and editing to it. */
