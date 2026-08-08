@@ -248,6 +248,26 @@ central directory, because an archive only this code can read proves nothing.
 The CRC table is checked against the standard `123456789` value first, so a
 broken table is caught before anything else gets blamed.
 
+## Encryption is written at revision 6 only, and checked by pdf.js
+
+`encrypt.ts` writes AES-256 and nothing else. Revision 6 makes the file key
+random rather than derived from the password, so there is no per object key and
+no dependence on object numbers: the password wraps the key, the key encrypts
+the document. `hash2B` is shared with the decryption side, and
+`aesCbcEncryptNoPad` was already there.
+
+Every string and stream is encrypted, so the save that follows must use
+`useObjectStreams: false`. Strings inside an object stream are covered by the
+encryption of the container and must not be encrypted twice; keeping every
+object at the top level avoids the question entirely. The `/Encrypt` dictionary
+is registered last, because it is the one thing that stays in the clear, and an
+`/ID` is added if the document has none, since a reader is entitled to refuse an
+encrypted file without one.
+
+`tools/test-encrypt.ts` checks the result with pdf.js, which implements the same
+handler independently. That is the point of the test: our own decryptor agreeing
+with our own encryptor would prove only that the two halves match.
+
 ## Open work
 - Reflow across lines, adding and deleting text blocks, replies on a note,
   recognition in languages other than English.

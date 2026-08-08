@@ -159,6 +159,25 @@ ones it covers; a line that mixes a bold label with body text is not evenly
 spaced, so interpolating across the whole line would put the highlight in the
 wrong place.
 
+### Putting a password on it
+
+**Protect** saves a copy that needs a password to open, written with the standard
+security handler at revision 6, which is AES-256 and what every reader since
+Acrobat X understands. The older revisions are read here, because files in the
+wild use them, but nothing new is written with RC4 or a 128 bit key.
+
+Revision 6 is also much simpler to write: the file key is random rather than
+derived from the password, so there is no per object key and no dependence on
+object numbers. The password unlocks the file key and the file key encrypts
+everything else.
+
+Encrypting is the one place where being wrong is worse than being broken, since
+a file that will not open is obvious and a file that opens without its password
+is not. So the test checks the result against pdf.js, which has its own
+implementation of the same handler and shares no code with this one: pdf.js must
+open it with the password, and refuse it without. Checking only against our own
+reader would prove the two halves agree with each other and nothing more.
+
 ### Splitting
 
 **Split** saves every page as its own PDF, gathered into one archive. One

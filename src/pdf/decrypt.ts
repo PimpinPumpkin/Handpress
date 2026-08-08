@@ -97,7 +97,7 @@ function legacyFileKey(
  * Deliberately expensive, mixing SHA-256, SHA-384 and SHA-512 with AES rounds,
  * and continuing for at least 64 rounds past a data-dependent stopping rule.
  */
-async function hash2B(
+export async function hash2B(
   password: Uint8Array<ArrayBufferLike>,
   salt: Uint8Array<ArrayBufferLike>,
   userData: Uint8Array<ArrayBufferLike>,

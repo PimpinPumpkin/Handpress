@@ -12,6 +12,7 @@ import { OCR_SCALE, openRecogniser, wordsToInsertions, type Recogniser } from '.
 import { looksLikeImage, pdfFromImages } from './pdf/images';
 import { compress } from './pdf/compress';
 import { zip } from './pdf/zip';
+import { encrypt } from './pdf/encrypt';
 import { AUTOSAVE_LIMIT, forget, howLongAgo, keep, recover } from './app/autosave';
 import { recompressInBrowser } from './app/recompress';
 import type { TextLine } from './pdf/content';
@@ -51,6 +52,13 @@ const els = {
   btnPageImage: $<HTMLButtonElement>('btnPageImage'),
   btnCompress: $<HTMLButtonElement>('btnCompress'),
   btnSplit: $<HTMLButtonElement>('btnSplit'),
+  btnProtect: $<HTMLButtonElement>('btnProtect'),
+  protectModal: $('protectModal'),
+  protectPassword: $<HTMLInputElement>('protectPassword'),
+  protectConfirm: $<HTMLInputElement>('protectConfirm'),
+  protectHint: $('protectHint'),
+  protectCancel: $<HTMLButtonElement>('protectCancel'),
+  protectGo: $<HTMLButtonElement>('protectGo'),
   mergeFileInput: $<HTMLInputElement>('mergeFileInput'),
   extractModal: $('extractModal'),
   extractRange: $<HTMLInputElement>('extractRange'),
@@ -1231,6 +1239,92 @@ els.btnSplit.addEventListener('click', async () => {
   } catch (e) {
     setStatus(`Could not split that: ${(e as Error).message}`, 'warn');
   } finally {
+    setBusy(false);
+  }
+});
+
+/* ---------------- password protection ---------------- */
+
+els.btnProtect.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  els.protectPassword.value = '';
+  els.protectConfirm.value = '';
+  els.protectHint.textContent = 'Nobody can recover this password for you, not even Vellum.';
+  els.protectModal.hidden = false;
+  els.protectPassword.focus();
+});
+
+els.protectCancel.addEventListener('click', () => {
+  els.protectModal.hidden = true;
+  els.protectPassword.value = '';
+  els.protectConfirm.value = '';
+});
+
+els.protectModal.addEventListener('click', (e) => {
+  if (e.target === els.protectModal) els.protectCancel.click();
+});
+
+for (const field of [els.protectPassword, els.protectConfirm]) {
+  field.addEventListener('input', () => {
+    const password = els.protectPassword.value;
+    const confirm = els.protectConfirm.value;
+    els.protectHint.textContent = !password
+      ? 'Nobody can recover this password for you, not even Vellum.'
+      : confirm && password !== confirm
+        ? 'The two do not match yet.'
+        : password.length < 6
+          ? 'Short passwords are guessed quickly. Six characters is a floor, not a target.'
+          : 'Ready.';
+  });
+  field.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') els.protectGo.click();
+    if (e.key === 'Escape') els.protectCancel.click();
+    e.stopPropagation();
+  });
+}
+
+els.protectGo.addEventListener('click', async () => {
+  if (!doc) return;
+  const password = els.protectPassword.value;
+  const confirm = els.protectConfirm.value;
+
+  if (!password) {
+    els.protectHint.textContent = 'A password with nothing in it protects nothing.';
+    return;
+  }
+  if (password !== confirm) {
+    els.protectHint.textContent = 'The two do not match.';
+    return;
+  }
+
+  els.protectModal.hidden = true;
+  viewer.closeEditor(false);
+  setBusy(true, 'Locking a copy…');
+  try {
+    const { bytes } = await doc.build();
+    const locked = await encrypt(bytes, { userPassword: password });
+
+    const copy = new Uint8Array(locked.length);
+    copy.set(locked);
+    const url = URL.createObjectURL(new Blob([copy], { type: 'application/pdf' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = doc.name.replace(/\.pdf$/i, '') + ' (locked).pdf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+
+    setStatus('Saved a locked copy. It needs that password to open, and there is no way back without it.');
+  } catch (e) {
+    setStatus(`Could not lock that: ${(e as Error).message}`, 'warn');
+  } finally {
+    // The password is not kept a moment longer than it is needed.
+    els.protectPassword.value = '';
+    els.protectConfirm.value = '';
     setBusy(false);
   }
 });
