@@ -302,6 +302,13 @@ public CDNs unless told otherwise. `npm run ocr-assets` puts them in
 to upload anything does not announce over the network that it is reading a
 document, and works with no connection at all.
 
+The languages installed are whatever `OCR_LANGS` asked for, English always
+included because it is the fallback and a fallback that is not installed is not
+one. The script writes `lang/index.json` and the picker is built from that, so
+the app can only offer what is actually there; it also deletes data for a
+language that has been dropped, rather than letting it linger because it
+happens to be on disk.
+
 The paths handed to tesseract are absolute, resolved against `document.baseURI`.
 The build uses a relative base so the site works from any path, but the worker
 runs from a blob URL and resolves a relative path against the blob rather than
@@ -411,7 +418,7 @@ given is how a warning gets ignored. Both halves are checked by
 
 ## Open work
 - Reflow across paragraphs rather than within one, adding and deleting text
-  blocks, replies on a note, recognition in languages other than English.
+  blocks, replies on a note, recognising a page that mixes two scripts.
 - A paragraph that shrinks leaves the blank line where it was. Closing the gap
   means moving everything below it, and a page is a fixed arrangement of things
   that are not all part of the paragraph, so this is the behaviour rather than

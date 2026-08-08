@@ -51,7 +51,49 @@ export interface Recogniser {
  * megabytes of wasm, which is most of the cost of reading a single page and all
  * of the wasted cost of reading twenty. Reading a whole document reuses one.
  */
+export interface OcrLanguage {
+  /** Tesseract's own code, which is what names the data file. */
+  code: string;
+  name: string;
+  bytes: number;
+}
+
+/**
+ * The languages this copy of the app can actually read.
+ *
+ * Written by `npm run ocr-assets`, which is also what puts the data where this
+ * can find it. Offering a language that was never installed would fail at the
+ * moment somebody asked for it, so the list comes from what is there.
+ */
+export async function availableLanguages(): Promise<OcrLanguage[]> {
+  try {
+    const response = await fetch(`${assetBase()}/lang/index.json`);
+    if (!response.ok) return [];
+    const parsed: unknown = await response.json();
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (l): l is OcrLanguage =>
+        !!l && typeof l === 'object' && typeof (l as OcrLanguage).code === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Where the recogniser's own files are served from.
+ *
+ * Absolute, deliberately. The build uses a relative base so the site works
+ * from any path, but the worker is started from a blob URL and resolves a
+ * relative path against the blob rather than against the page, so it would
+ * ask for the core somewhere that does not exist.
+ */
+function assetBase(): string {
+  return new URL('ocr', document.baseURI).href;
+}
+
 export async function openRecogniser(
+  language = 'eng',
   onProgress?: (fraction: number, label: string) => void,
 ): Promise<Recogniser> {
   onProgress?.(0.1, 'Loading the recogniser');
@@ -60,21 +102,16 @@ export async function openRecogniser(
   // Served by us, from `public/ocr`, which `npm run ocr-assets` fills. The core
   // is named as a directory on purpose: the worker picks between three builds
   // of it depending on what the browser supports.
-  //
-  // Absolute, deliberately. The build uses a relative base so the site works
-  // from any path, but the worker is started from a blob URL and resolves a
-  // relative path against the blob rather than against the page, so it would
-  // ask for the core somewhere that does not exist.
-  const base = new URL('ocr', document.baseURI).href;
+  const base = assetBase();
 
   // A file the worker cannot fetch throws inside the worker, where nothing here
   // can catch it, and the call to start it then never settles: the app would
   // sit on "Loading the recogniser" for the rest of the session. Asking for the
   // files first turns a permanent wait into a sentence.
-  await confirmInstalled(base);
+  await confirmInstalled(base, language);
 
   let report = onProgress;
-  const worker = await createWorker('eng', 1, {
+  const worker = await createWorker(language, 1, {
     workerPath: `${base}/worker.min.js`,
     corePath: base,
     langPath: `${base}/lang`,
@@ -194,13 +231,13 @@ export function wordsToInsertions(
  * would ask for is not known here. `npm run ocr-assets` puts them in place; a
  * deploy that skipped it is the case worth naming.
  */
-async function confirmInstalled(base: string): Promise<void> {
+async function confirmInstalled(base: string, language: string): Promise<void> {
   const files = [
     `${base}/worker.min.js`,
     `${base}/tesseract-core-lstm.wasm.js`,
     `${base}/tesseract-core-simd-lstm.wasm.js`,
     `${base}/tesseract-core-relaxedsimd-lstm.wasm.js`,
-    `${base}/lang/eng.traineddata.gz`,
+    `${base}/lang/${language}.traineddata.gz`,
   ];
   // The status alone is not enough. A dev server, and any host set up to serve
   // a single page app, answers a missing file with the app's own index.html and

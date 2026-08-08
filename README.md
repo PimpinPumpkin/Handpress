@@ -430,7 +430,8 @@ than being told at the door.
 - Reflow works inside a paragraph, not across them. A paragraph cannot grow
   past the lines it already has, and one that shrinks leaves the gap.
 - Text drawn with Type 3 fonts is read only.
-- The recogniser reads English.
+- The recogniser reads one language at a time, from the set installed at build
+  time. A page mixing two scripts is read as whichever was chosen.
 
 ## Running it
 
@@ -442,8 +443,8 @@ npm run dev
 Build a static bundle with `npm run build`, then check it with `npm run preview`.
 
 Both `dev` and `build` run `npm run ocr-assets` first, which puts the
-recogniser's worker, wasm core and English language data in `public/ocr` so the
-app can serve them itself. The core comes from node_modules; the language data
+recogniser's worker, wasm core and language data in `public/ocr` so the app can
+serve them itself. The core comes from node_modules; the language data
 is fetched once, from the address tesseract would have used at runtime anyway,
 and checked against a recorded digest. The directory is not committed.
 The output in `dist` is plain files with no backend, so it can be dropped on any

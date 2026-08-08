@@ -8,7 +8,13 @@ import { Viewer } from './app/viewer';
 import { LocalFontProvider, localFontsSupported } from './app/local-fonts';
 import { DecryptionError } from './pdf/decrypt';
 import { SignaturePad, signatureFromFile, type CapturedSignature } from './app/signature';
-import { OCR_SCALE, openRecogniser, wordsToInsertions, type Recogniser } from './app/ocr';
+import {
+  OCR_SCALE,
+  availableLanguages,
+  openRecogniser,
+  wordsToInsertions,
+  type Recogniser,
+} from './app/ocr';
 import { looksLikeImage, pdfFromImages } from './pdf/images';
 import { compress } from './pdf/compress';
 import { zip } from './pdf/zip';
@@ -55,6 +61,7 @@ const els = {
   btnHighlight: $<HTMLButtonElement>('btnHighlight'),
   btnNote: $<HTMLButtonElement>('btnNote'),
   btnOcr: $<HTMLButtonElement>('btnOcr'),
+  ocrLang: $<HTMLSelectElement>('ocrLang'),
   highlightColor: $<HTMLInputElement>('highlightColor'),
   btnAddPages: $<HTMLButtonElement>('btnAddPages'),
   searchInput: $<HTMLInputElement>('searchInput'),
@@ -197,6 +204,9 @@ async function openFile(file: File, password?: string): Promise<void> {
 
     els.dropzone.hidden = true;
     els.restoreBar.hidden = true;
+    // Only worth showing when there is a scan to read, and only when there is
+    // more than one language to choose between.
+    els.ocrLang.hidden = !report.scannedPages.length || els.ocrLang.options.length < 2;
     showNotice(report.signatureWarning);
     els.docTitle.textContent = name;
     els.docTitle.classList.remove('dirty');
@@ -1105,6 +1115,46 @@ function measureHelvetica(text: string, size: number): number {
   return standardTextWidth('Helvetica', text, size);
 }
 
+/* ---------------- the recogniser's language ---------------- */
+
+const OCR_LANGUAGE_KEY = 'vellum.ocr.language';
+
+/**
+ * Fills the language picker with the languages this copy actually has.
+ *
+ * Hidden until a document with something to read is open. A picker for a tool
+ * that does not apply is furniture, and the toolbar has enough of it. One
+ * language installed means no choice to make, so it stays hidden then too.
+ */
+async function loadOcrLanguages(): Promise<void> {
+  const languages = await availableLanguages();
+  if (languages.length < 2) return;
+
+  const remembered = localStorage.getItem(OCR_LANGUAGE_KEY);
+  els.ocrLang.replaceChildren(
+    ...languages.map((l) => {
+      const option = document.createElement('option');
+      option.value = l.code;
+      option.textContent = l.name;
+      // Said out loud, because choosing one downloads it.
+      option.title = `${l.name}, ${(l.bytes / 1024 / 1024).toFixed(0)} MB to download the first time`;
+      return option;
+    }),
+  );
+  const wanted = remembered && languages.some((l) => l.code === remembered) ? remembered : 'eng';
+  els.ocrLang.value = languages.some((l) => l.code === wanted) ? wanted : languages[0].code;
+}
+
+function ocrLanguage(): string {
+  return els.ocrLang.value || 'eng';
+}
+
+els.ocrLang.addEventListener('change', () => {
+  localStorage.setItem(OCR_LANGUAGE_KEY, els.ocrLang.value);
+});
+
+void loadOcrLanguages();
+
 els.btnOcr.addEventListener('click', async () => {
   if (!doc?.pdfjs) {
     setStatus('Open a PDF first.', 'warn');
@@ -1140,7 +1190,7 @@ els.btnOcr.addEventListener('click', async () => {
   let confidenceTotal = 0;
 
   try {
-    recogniser = await openRecogniser((fraction, label) => {
+    recogniser = await openRecogniser(ocrLanguage(), (fraction, label) => {
       setBusy(true, `${label}… ${Math.round(fraction * 100)}%`);
     });
 
