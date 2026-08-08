@@ -25,6 +25,8 @@ import { recompressInBrowser } from './app/recompress';
 import { standardTextWidth } from './pdf/fonts';
 import type { TextLine } from './pdf/content';
 
+declare const __APP_VERSION__: string;
+
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 /**
@@ -214,6 +216,7 @@ async function openFile(file: File, password?: string): Promise<void> {
 
     els.dropzone.hidden = true;
     els.restoreBar.hidden = true;
+    document.getElementById('app')?.classList.remove('no-document');
     // Only worth showing when there is a scan to read, and only when there is
     // more than one language to choose between.
     els.ocrLang.hidden = !report.scannedPages.length || els.ocrLang.options.length < 2;
@@ -764,8 +767,18 @@ function syncEditState(): void {
   for (const id of WRITERS) {
     const button = document.getElementById(id) as HTMLButtonElement | null;
     if (!button) continue;
+    // The tool's own description is kept the first time it is seen and put
+    // back afterwards. Overwriting the title outright threw away sentences
+    // like "Drag over text to highlight it" the moment a document opened, and
+    // left every tool on the empty page announcing that a file that does not
+    // exist cannot be saved.
+    if (button.dataset.title === undefined) button.dataset.title = button.title;
     button.disabled = readOnly;
-    button.title = readOnly ? 'This file cannot be changed or saved.' : '';
+    button.title = !doc
+      ? (button.dataset.title ?? '')
+      : readOnly
+        ? 'This file cannot be changed or saved.'
+        : (button.dataset.title ?? '');
   }
   // Printing is not writing. A document that cannot be rebuilt can still be
   // put on paper, from the bytes it arrived as.
@@ -1083,10 +1096,38 @@ els.viewer.addEventListener('scroll', () => {
 
 let thumbToken = 0;
 
+/**
+ * The gap between two pages, which is somewhere a page can be added.
+ *
+ * It lives between the thumbnails rather than floating over the document
+ * because a gap says exactly where the new page goes, and a button over the
+ * page does not: after this one, or before it?
+ */
+function insertHere(position: number): HTMLElement {
+  const gap = document.createElement('div');
+  gap.className = 'thumb-insert';
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.textContent = '+';
+  add.title =
+    position === 0 ? 'Add a blank page at the start' : `Add a blank page after page ${position}`;
+  add.setAttribute('aria-label', add.title);
+  add.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!doc) return;
+    void applyPageChange(doc.insertBlankPage(position)).then(() =>
+      setStatus(`Blank page added${position === 0 ? ' at the start' : ` after page ${position}`}.`),
+    );
+  });
+  gap.appendChild(add);
+  return gap;
+}
+
 async function renderThumbs(): Promise<void> {
   if (!doc?.pdfjs) return;
   const token = ++thumbToken;
   els.thumbs.innerHTML = '';
+  els.thumbs.appendChild(insertHere(0));
 
   for (let i = 0; i < doc.pageCount; i++) {
     const wrap = document.createElement('div');
@@ -1147,6 +1188,7 @@ async function renderThumbs(): Promise<void> {
     });
 
     els.thumbs.appendChild(wrap);
+    els.thumbs.appendChild(insertHere(i + 1));
   }
 
   // Thumbnails go through the viewer's own render queue rather than calling
@@ -1159,7 +1201,7 @@ async function renderThumbs(): Promise<void> {
     try {
       const page = await doc.pdfjs.getPage(i + 1);
       const base = page.getViewport({ scale: 1 });
-      const canvas = els.thumbs.children[i]?.querySelector('canvas');
+      const canvas = els.thumbs.querySelectorAll('.thumb')[i]?.querySelector('canvas');
       if (!canvas) continue;
       const image = await viewer.rasterise(i, 150 / base.width);
       if (token !== thumbToken) return;
@@ -1859,6 +1901,9 @@ window.addEventListener('resize', () => {
   window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(() => void applyZoomChoice(), 180);
 });
+
+const versionLabel = document.getElementById('appVersion');
+if (versionLabel) versionLabel.textContent = __APP_VERSION__;
 
 syncEditState();
 

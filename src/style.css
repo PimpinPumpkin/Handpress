@@ -796,8 +796,12 @@ body {
   opacity: 1;
 }
 
-/* The viewer shares the row with the notice, so it must shrink rather than scroll the page. */
+/* The viewer shares the row with the notice, so it must shrink rather than scroll the page.
+   Its column is named rather than left to auto-placement: whenever the sidebar
+   or panel is taken out of the grid, by display:none or by being positioned,
+   the document would otherwise fall into the empty first column. */
 .viewer-wrap {
+  grid-column: 2;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1682,13 +1686,6 @@ body {
     box-shadow: 0 0 24px rgba(0, 0, 0, 0.45);
   }
 
-  /* Named rather than left to fall where it may. Positioning the two drawers
-     takes them out of the grid, and auto-placement then puts the document in
-     the first free cell, which is the empty column the sidebar used to sit in. */
-  .viewer-wrap {
-    grid-column: 2;
-  }
-
   .workspace.show-sidebar .sidebar {
     left: 0;
     width: min(76vw, 260px);
@@ -1726,4 +1723,116 @@ body {
 
 .colophon a:hover {
   color: var(--ink);
+}
+
+/* ---------- before a document is open ---------- */
+
+/* Fifteen greyed out controls and two empty panels is what a broken app looks
+   like, not what an app waiting for a file looks like. Until something is
+   open, the side panels stand down and the dead toolbar stops shouting. */
+#app.no-document .sidebar,
+#app.no-document .panel {
+  display: none;
+}
+
+#app.no-document .workspace {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+#app.no-document .toolbar {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* What it can do, for somebody deciding whether to bother. Sits under the
+   privacy line because that is the thing that earns the first file. */
+.can-do {
+  max-width: 33rem;
+  margin: 18px auto 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+.can-do li {
+  padding-left: 18px;
+  position: relative;
+}
+
+.can-do li::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+.can-do b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---------- adding a page ---------- */
+
+/* A thin gap between thumbnails that becomes a button on approach. Quiet until
+   wanted, because most of the time the answer is no. */
+.thumb-insert {
+  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.12s ease, height 0.12s ease;
+}
+
+.thumb-insert:hover,
+.thumb-insert:focus-within {
+  opacity: 1;
+  height: 26px;
+}
+
+.thumb-insert::before,
+.thumb-insert::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.thumb-insert button {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 0 6px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: var(--chrome-2);
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.thumb-insert button:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* A finger has no hover, so the gaps stay visible where there is no pointer. */
+@media (pointer: coarse) {
+  .thumb-insert {
+    opacity: 0.55;
+    height: 26px;
+  }
 }

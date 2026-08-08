@@ -239,6 +239,14 @@ implementation of the same handler and shares no code with this one: pdf.js must
 open it with the password, and refuse it without. Checking only against our own
 reader would prove the two halves agree with each other and nothing more.
 
+### Adding a page
+
+The gaps between thumbnails are where a blank page can go. Hovering one turns
+it into a button, and the new page takes the size of the page before it, so a
+blank page in an A4 document is A4. The gap is the affordance rather than a
+button floating over the document, because a gap says exactly where the page
+lands and a button over a page does not.
+
 ### Splitting
 
 **Split** cuts the document into separate PDFs, gathered into one archive. It

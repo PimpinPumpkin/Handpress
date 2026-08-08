@@ -8,7 +8,7 @@
     <meta name="description" content="Edit the text in a PDF, in your browser. Nothing is uploaded." />
   </head>
   <body>
-    <div id="app">
+    <div id="app" class="no-document">
       <header class="topbar">
         <div class="brand">
           <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
@@ -207,21 +207,30 @@
                 <path d="M13.4 3.6v4.6h4.4" />
               </svg>
               <h1>Edit the text in a PDF</h1>
-              <p class="lede">Click any line, retype it, and save. Handpress reuses the document's own fonts. Drop in images and they become a PDF.</p>
+              <p class="lede">
+                The real text, in the document's own fonts. Not a white box typed over the old words,
+                which is how the other free editors do it.
+              </p>
               <button class="btn btn-primary btn-lg" id="btnChoose" type="button">Choose a file</button>
               <p class="hint">or drop PDFs or images anywhere on this window</p>
               <p class="privacy">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
                 Your file never leaves this browser. No server, no upload, no account.
               </p>
-              <p class="claims">
-                Real editing, not a white box typed over the old words. Redaction that deletes the
-                text from the file instead of covering it up.
-              </p>
+
+              <ul class="can-do">
+                <li><b>Redact</b> so the text is deleted from the file, not covered by a black box</li>
+                <li><b>Read a scan</b> with OCR in eight languages, so it can be searched and edited</li>
+                <li><b>Fill forms</b>, sign, highlight, comment, and add text anywhere</li>
+                <li><b>Merge, split, extract</b> pages, rotate and reorder them</li>
+                <li><b>Compress</b> a heavy file, or lock one with a password</li>
+              </ul>
+
               <p class="colophon">
-                Free and open source under the
-                <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">AGPL</a>.
-                <a href="https://github.com/PimpinPumpkin/Handpress" target="_blank" rel="noopener noreferrer">Source, issues and contact</a>.
+                Handpress <span id="appVersion"></span> &middot; free and open source under the
+                <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">AGPL</a>
+                &middot;
+                <a href="https://github.com/PimpinPumpkin/Handpress" target="_blank" rel="noopener noreferrer">source, issues and contact</a>
               </p>
             </div>
           </div>

@@ -384,6 +384,14 @@ them. There is now one `[hidden] { display: none !important }` rule near the
 top of the stylesheet, which settles it for every element rather than one at a
 time.
 
+## Grid items fall into the first free column
+
+Twice now: hide the sidebar and panel, or position them, and the document lands
+in the empty first column of `.workspace`, because absolute and `display: none`
+both take an item out of the grid and auto-placement then puts the next item in
+the first free cell. `.viewer-wrap` names `grid-column: 2` once, globally, so
+neither the mobile drawers nor the empty-state can move it.
+
 ## A stalled render is almost always a hidden tab
 
 pdf.js drives its canvas loop on `requestAnimationFrame`, which browsers
@@ -413,6 +421,18 @@ There is no way to ask a browser whether it will print a PDF from a frame, so
 if nothing has printed after three seconds the document opens in a tab instead.
 The `@media print` block in the stylesheet is only for a browser that prints
 the page regardless of all this.
+
+## A blank page is a plan entry from nowhere
+
+`PagePlanEntry.doc` is `-1` (`BLANK_PAGE`) for a page that came from no file.
+`build` makes it at the size of the last real page before it, so a blank page
+in an A4 document is A4 rather than US Letter appearing in the middle of
+something that was never letter-sized.
+
+The affordance lives in the gaps between thumbnails rather than floating over
+the document, because a gap says exactly where the page goes and a button over
+a page does not: before this one, or after it? The gaps are also why the
+thumbnail render loop asks for `.thumb` by class instead of indexing children.
 
 ## Clicking somewhere is intent, not an edit
 

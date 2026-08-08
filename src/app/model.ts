@@ -72,7 +72,8 @@ interface EditState {
 export interface PagePlanEntry {
   /**
    * Which loaded file the page comes from. Zero is the document that was
-   * opened; anything higher indexes a file merged in afterwards.
+   * opened; anything higher indexes a file merged in afterwards; -1 is a blank
+   * page that came from nowhere and is made at build time.
    */
   doc: number;
   /** Index of the page within that file. */
@@ -80,6 +81,9 @@ export interface PagePlanEntry {
   /** Extra rotation in degrees, added to whatever the page already had. */
   rotate: number;
 }
+
+/** A page plan entry that is a blank page rather than one from a file. */
+export const BLANK_PAGE = -1;
 
 /** A region whose text is removed from the file, not merely covered. */
 export interface RedactionArea {
@@ -710,6 +714,24 @@ export class HandpressDocument {
     return true;
   }
 
+  /**
+   * Puts a blank page at a position, pushing the rest along.
+   *
+   * It takes the size of the page it lands after, so a blank page in an A4
+   * document is A4 and one in a landscape deck is landscape. The alternative
+   * is a letter-sized page appearing in the middle of a document that has
+   * never been letter-sized.
+   */
+  insertBlankPage(position: number): boolean {
+    const plan = this.plan();
+    const at = Math.max(0, Math.min(position, plan.length));
+    const before = this.snapshot();
+    plan.splice(at, 0, { doc: BLANK_PAGE, source: 0, rotate: 0 });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
   /** Removes a page. The last remaining page cannot be removed. */
   deletePage(position: number): boolean {
     const plan = this.plan();
@@ -1202,14 +1224,29 @@ export class HandpressDocument {
 
         const chosen = this.pagePlan
           .map((entry) => ({
-            page: entry.doc === 0 ? originals[entry.source] : copiedByDoc.get(entry.doc)?.get(entry.source),
+            page:
+              entry.doc === BLANK_PAGE
+                ? null
+                : entry.doc === 0
+                  ? originals[entry.source]
+                  : copiedByDoc.get(entry.doc)?.get(entry.source),
+            blank: entry.doc === BLANK_PAGE,
             rotate: entry.rotate,
           }))
-          .filter((x): x is { page: PDFPage; rotate: number } => !!x.page);
+          .filter((x) => x.blank || !!x.page);
 
         if (chosen.length) {
           for (let i = doc.getPageCount() - 1; i >= 0; i--) doc.removePage(i);
-          for (const { page, rotate } of chosen) {
+          // A blank page is sized like the last real page before it, falling
+          // back to the first page of the document and then to US Letter.
+          const fallback = originals[0]?.getSize() ?? { width: 612, height: 792 };
+          let lastSize = fallback;
+          for (const { page, blank, rotate } of chosen) {
+            if (blank || !page) {
+              doc.addPage([lastSize.width, lastSize.height]);
+              continue;
+            }
+            lastSize = page.getSize();
             if (rotate) page.setRotation(degrees((page.getRotation().angle + rotate) % 360));
             doc.addPage(page);
           }
