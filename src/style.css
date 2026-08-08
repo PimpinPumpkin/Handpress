@@ -1979,3 +1979,26 @@ body {
   cursor: crosshair;
   touch-action: none;
 }
+
+/* Width and opacity, set to whatever is wanted rather than to four presets.
+   The number beside each says what it is now, since a slider on its own is a
+   guess. */
+.ink-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.ink-slider input[type='range'] {
+  width: 72px;
+  accent-color: var(--accent);
+}
+
+.ink-slider span {
+  min-width: 3.2ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -67,7 +67,14 @@ const els = {
   btnPen: $<HTMLButtonElement>('btnPen'),
   btnInkErase: $<HTMLButtonElement>('btnInkErase'),
   penColor: $<HTMLInputElement>('penColor'),
-  penWidth: $<HTMLSelectElement>('penWidth'),
+  penWidth: $<HTMLInputElement>('penWidth'),
+  penWidthLabel: $('penWidthLabel'),
+  penOpacity: $<HTMLInputElement>('penOpacity'),
+  penOpacityLabel: $('penOpacityLabel'),
+  btnLine: $<HTMLButtonElement>('btnLine'),
+  btnArrow: $<HTMLButtonElement>('btnArrow'),
+  btnRect: $<HTMLButtonElement>('btnRect'),
+  btnEllipse: $<HTMLButtonElement>('btnEllipse'),
   btnHighlight: $<HTMLButtonElement>('btnHighlight'),
   btnNote: $<HTMLButtonElement>('btnNote'),
   btnOcr: $<HTMLButtonElement>('btnOcr'),
@@ -676,6 +683,10 @@ const WRITERS = [
   'btnRedact',
   'btnPen',
   'btnInkErase',
+  'btnLine',
+  'btnArrow',
+  'btnRect',
+  'btnEllipse',
   'btnSign',
   'btnOcr',
   'btnLocalFonts',
@@ -824,14 +835,29 @@ const readPenColor = (): void => {
 };
 
 els.penColor.addEventListener('input', readPenColor);
-els.penWidth.addEventListener('change', () => {
+const readPenWidth = (): void => {
   viewer.penWidth = parseFloat(els.penWidth.value) || 2.5;
-});
+  els.penWidthLabel.textContent = String(viewer.penWidth);
+};
+
+const readPenOpacity = (): void => {
+  const pct = parseInt(els.penOpacity.value, 10) || 100;
+  viewer.penOpacity = pct / 100;
+  els.penOpacityLabel.textContent = `${pct}%`;
+};
+
+els.penWidth.addEventListener('input', readPenWidth);
+els.penOpacity.addEventListener('input', readPenOpacity);
 readPenColor();
-viewer.penWidth = parseFloat(els.penWidth.value) || 2.5;
+readPenWidth();
+readPenOpacity();
 
 els.btnPen.addEventListener('click', () => setMode('pen'));
 els.btnInkErase.addEventListener('click', () => setMode('inkErase'));
+els.btnLine.addEventListener('click', () => setMode('line'));
+els.btnArrow.addEventListener('click', () => setMode('arrow'));
+els.btnRect.addEventListener('click', () => setMode('rect'));
+els.btnEllipse.addEventListener('click', () => setMode('ellipse'));
 
 function syncEditState(): void {
   const dirty = doc?.hasEdits() ?? false;
@@ -879,7 +905,11 @@ function setMode(
     | 'redact'
     | 'highlight'
     | 'pen'
-    | 'inkErase',
+    | 'inkErase'
+    | 'line'
+    | 'arrow'
+    | 'rect'
+    | 'ellipse',
 ): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
@@ -892,10 +922,18 @@ function setMode(
   els.btnNote.classList.toggle('tool-active', mode === 'note');
   els.btnPen.classList.toggle('tool-active', mode === 'pen');
   els.btnInkErase.classList.toggle('tool-active', mode === 'inkErase');
+  els.btnLine.classList.toggle('tool-active', mode === 'line');
+  els.btnArrow.classList.toggle('tool-active', mode === 'arrow');
+  els.btnRect.classList.toggle('tool-active', mode === 'rect');
+  els.btnEllipse.classList.toggle('tool-active', mode === 'ellipse');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
     pen: 'Draw anywhere on the page. What you draw becomes part of it.',
     inkErase: 'Drag over anything you have drawn to rub it out.',
+    line: 'Drag from one point to another.',
+    arrow: 'Drag from the tail to the point.',
+    rect: 'Drag out a box around something.',
+    ellipse: 'Drag out an oval around something.',
     select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',

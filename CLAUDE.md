@@ -401,6 +401,16 @@ so the curve goes through the drawing rather than near it. Round caps and joins,
 because a pen has a round nib. A single point is drawn as a zero length line so
 a tap leaves a dot, which an empty path does not.
 
+Shapes are the same thing: `shapePoints` turns two corners into a list of
+points, so line, arrow, box and oval all go through the pen's own path builder
+and none of them needed new drawing code. An arrow retraces its tip on the way
+to the second barb, since a stroke drawn over itself is invisible and it saves
+carrying a second subpath. `closed` skips the smoothing, because a smoothed
+rectangle has round corners.
+
+Stroke alpha has no operator of its own, so anything less than opaque goes
+through an `ExtGState` with `CA` and `ca` both set.
+
 The stroke previews on a canvas of its own above the page while the pointer is
 down. Nothing but pdf.js output of the real bytes may write to the page canvas.
 

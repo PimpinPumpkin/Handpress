@@ -34,7 +34,11 @@ export type ViewerMode =
   | 'redact'
   | 'highlight'
   | 'pen'
-  | 'inkErase';
+  | 'inkErase'
+  | 'line'
+  | 'arrow'
+  | 'rect'
+  | 'ellipse';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -148,6 +152,61 @@ function sampleBackground(canvas: HTMLCanvasElement, rect: DOMRect, dpr: number)
   return `rgb(${best})`;
 }
 
+/**
+ * The points of a shape drawn between two corners.
+ *
+ * Every shape is a list of points, which means the pen's own path builder
+ * draws all of them and nothing new has to know how to put ink on a page. An
+ * arrow retraces its tip on the way to the second barb; a stroke drawn over
+ * itself is invisible, and it saves carrying a second subpath around.
+ */
+function shapePoints(
+  kind: 'line' | 'arrow' | 'rect' | 'ellipse',
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  width: number,
+): { points: Array<{ x: number; y: number }>; closed: boolean } {
+  if (kind === 'rect') {
+    return {
+      points: [
+        { x: a.x, y: a.y },
+        { x: b.x, y: a.y },
+        { x: b.x, y: b.y },
+        { x: a.x, y: b.y },
+      ],
+      closed: true,
+    };
+  }
+
+  if (kind === 'ellipse') {
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    const rx = Math.abs(b.x - a.x) / 2;
+    const ry = Math.abs(b.y - a.y) / 2;
+    const steps = 48;
+    return {
+      points: Array.from({ length: steps }, (_, i) => {
+        const t = (i / steps) * Math.PI * 2;
+        return { x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry };
+      }),
+      closed: true,
+    };
+  }
+
+  if (kind === 'line') return { points: [a, b], closed: false };
+
+  // An arrowhead sized from the line weight, so a thick arrow keeps its
+  // proportions instead of growing a pinhead.
+  const head = Math.max(6, width * 3.5);
+  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const spread = Math.PI / 7;
+  const barb = (turn: number): { x: number; y: number } => ({
+    x: b.x - Math.cos(angle + turn) * head,
+    y: b.y - Math.sin(angle + turn) * head,
+  });
+  return { points: [a, b, barb(spread), b, barb(-spread)], closed: false };
+}
+
 export class Viewer {
   readonly root: HTMLElement;
   private doc: HandpressDocument | null = null;
@@ -174,9 +233,10 @@ export class Viewer {
   /** Defaults applied to newly added text. */
   addSize = 12;
   addColor = { r: 0, g: 0, b: 0 };
-  /** Ink settings for the pen. */
+  /** Ink settings for the pen and the shapes. */
   penColor = { r: 0.88, g: 0.13, b: 0.13 };
   penWidth = 2.5;
+  penOpacity = 1;
 
   /** Colour used by the highlighter, a marker-pen yellow by default. */
   highlightColor = { r: 1, g: 0.92, b: 0.23 };
@@ -222,7 +282,10 @@ export class Viewer {
     for (const p of this.pages) {
       p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign' || mode === 'note');
       p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact' || mode === 'highlight');
-      p.overlay.classList.toggle('drawing', mode === 'pen' || mode === 'inkErase');
+      p.overlay.classList.toggle(
+        'drawing',
+        mode === 'pen' || mode === 'inkErase' || mode === 'line' || mode === 'arrow' || mode === 'rect' || mode === 'ellipse',
+      );
       p.textLayer.classList.toggle('active', mode === 'select');
     }
   }
@@ -270,6 +333,10 @@ export class Viewer {
       overlay.addEventListener('pointerdown', (e) => {
         if (this.mode === 'pen' || this.mode === 'inkErase') {
           this.beginStroke(this.pages[i], e);
+          return;
+        }
+        if (this.mode === 'line' || this.mode === 'arrow' || this.mode === 'rect' || this.mode === 'ellipse') {
+          this.beginShape(this.pages[i], e, this.mode);
           return;
         }
         if (this.mode !== 'erase' && this.mode !== 'redact' && this.mode !== 'highlight') return;
@@ -1047,6 +1114,7 @@ export class Viewer {
     ctx.lineJoin = 'round';
     ctx.strokeStyle = `rgb(${Math.round(this.penColor.r * 255)},${Math.round(this.penColor.g * 255)},${Math.round(this.penColor.b * 255)})`;
     ctx.lineWidth = this.penWidth * this.zoom;
+    ctx.globalAlpha = this.penOpacity;
     if (!rubbing) p.container.appendChild(preview);
 
     let rubbed = false;
@@ -1103,13 +1171,102 @@ export class Viewer {
         preview.remove();
         return;
       }
-      this.doc.addInk(p.index, { color: { ...this.penColor }, width: this.penWidth, points });
+      this.doc.addInk(p.index, {
+        color: { ...this.penColor },
+        width: this.penWidth,
+        opacity: this.penOpacity,
+        points,
+      });
       // Left up until the page has really been redrawn with the stroke in it,
       // for the same reason a moved object keeps its copy: taking it away first
       // makes the stroke vanish and come back.
       void this.rebuild(p.index).then(() => {
         preview.remove();
         this.cb.onStatus('Drawn. It is part of the page now, so it saves and prints with it.');
+        this.cb.onEdited();
+      });
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+
+  /**
+   * Drags out a shape between two corners.
+   *
+   * The preview is redrawn from the two corners on every move rather than
+   * accumulated, because unlike a freehand line the shape has no history: only
+   * where it started and where the pointer is now.
+   */
+  private beginShape(p: RenderedPage, down: PointerEvent, kind: 'line' | 'arrow' | 'rect' | 'ellipse'): void {
+    if (!this.doc || !p.viewport) return;
+    down.preventDefault();
+    const rect = p.overlay.getBoundingClientRect();
+    const viewport = p.viewport;
+
+    const preview = document.createElement('canvas');
+    preview.className = 'ink-preview';
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    preview.width = Math.floor(rect.width * dpr);
+    preview.height = Math.floor(rect.height * dpr);
+    preview.style.width = `${rect.width}px`;
+    preview.style.height = `${rect.height}px`;
+    const ctx = preview.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = this.penOpacity;
+    ctx.strokeStyle = `rgb(${Math.round(this.penColor.r * 255)},${Math.round(this.penColor.g * 255)},${Math.round(this.penColor.b * 255)})`;
+    ctx.lineWidth = this.penWidth * this.zoom;
+    p.container.appendChild(preview);
+
+    const start = { x: down.clientX - rect.left, y: down.clientY - rect.top };
+    let end = { ...start };
+
+    const paint = (): void => {
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const shape = shapePoints(kind, start, end, this.penWidth * this.zoom);
+      ctx.beginPath();
+      shape.points.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      if (shape.closed) ctx.closePath();
+      ctx.stroke();
+    };
+
+    const move = (e: PointerEvent): void => {
+      end = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      paint();
+    };
+
+    let finished = false;
+    const up = (e: PointerEvent): void => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      end = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+      // A shape with no drag is somebody changing their mind, not a dot.
+      if (Math.hypot(end.x - start.x, end.y - start.y) < 3 || !this.doc) {
+        preview.remove();
+        return;
+      }
+
+      const toPage = (q: { x: number; y: number }): { x: number; y: number } => {
+        const [x, y] = viewport.convertToPdfPoint(q.x, q.y);
+        return { x, y };
+      };
+      const shape = shapePoints(kind, toPage(start), toPage(end), this.penWidth);
+      this.doc.addInk(p.index, {
+        color: { ...this.penColor },
+        width: this.penWidth,
+        opacity: this.penOpacity,
+        closed: shape.closed,
+        points: shape.points,
+      });
+      void this.rebuild(p.index).then(() => {
+        preview.remove();
         this.cb.onEdited();
       });
     };

@@ -64,6 +64,10 @@ export interface InkStroke {
   color: { r: number; g: number; b: number };
   /** Line width in points. */
   width: number;
+  /** 0 to 1. Anything below one is drawn through a graphics state. */
+  opacity?: number;
+  /** Closes the path and fills it, for shapes drawn as an outline. */
+  closed?: boolean;
   points: Array<{ x: number; y: number }>;
 }
 
@@ -293,15 +297,26 @@ function addExtGStateResource(resources: PDFDict, name: string, dict: PDFDict): 
  * Round caps and joins because a pen has a round nib; without them every change
  * of direction shows a notch.
  */
-function buildInk(stroke: InkStroke): Uint8Array {
+function buildInk(stroke: InkStroke, resources: PDFDict | null): Uint8Array {
   const pts = stroke.points;
+
+  // Anything less than opaque needs a graphics state; there is no operator for
+  // stroke alpha on its own. CA is the stroke, ca the fill, and both are set so
+  // a shape that is ever filled matches its own outline.
+  let alpha = '';
+  const opacity = stroke.opacity ?? 1;
+  if (opacity < 0.999 && resources) {
+    const gs = resources.context.obj({ Type: 'ExtGState', CA: opacity, ca: opacity }) as PDFDict;
+    alpha = `/${addExtGStateResource(resources, `HpInk${Math.round(opacity * 100)}`, gs)} gs `;
+  }
+
   if (pts.length < 2 || stroke.width <= 0) {
     // A tap with no travel still deserves a dot, which a zero length line with
     // a round cap draws and an empty path does not.
     if (pts.length === 1) {
       const p = pts[0];
       return bytes(
-        `\nq 1 J 1 j ${fmt(stroke.width)} w ${fmt(stroke.color.r)} ${fmt(stroke.color.g)} ${fmt(stroke.color.b)} RG ` +
+        `\nq ${alpha}1 J 1 j ${fmt(stroke.width)} w ${fmt(stroke.color.r)} ${fmt(stroke.color.g)} ${fmt(stroke.color.b)} RG ` +
           `${fmt(p.x)} ${fmt(p.y)} m ${fmt(p.x)} ${fmt(p.y)} l S Q\n`,
       );
     }
@@ -309,6 +324,16 @@ function buildInk(stroke: InkStroke): Uint8Array {
   }
 
   let path = `${fmt(pts[0].x)} ${fmt(pts[0].y)} m `;
+  // A shape is drawn from the corners it was given; only a freehand line is
+  // smoothed, because smoothing a rectangle rounds it.
+  if (stroke.closed) {
+    for (let i = 1; i < pts.length; i++) path += `${fmt(pts[i].x)} ${fmt(pts[i].y)} l `;
+    return bytes(
+      `\nq ${alpha}1 J 1 j ${fmt(stroke.width)} w ` +
+        `${fmt(stroke.color.r)} ${fmt(stroke.color.g)} ${fmt(stroke.color.b)} RG ` +
+        `${path}h S Q\n`,
+    );
+  }
   for (let i = 1; i < pts.length - 1; i++) {
     const mid = { x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2 };
     path += `${fmt(pts[i].x)} ${fmt(pts[i].y)} ${fmt(mid.x)} ${fmt(mid.y)} v `;
@@ -317,9 +342,9 @@ function buildInk(stroke: InkStroke): Uint8Array {
   path += `${fmt(last.x)} ${fmt(last.y)} l `;
 
   return bytes(
-    `\nq 1 J 1 j ${fmt(stroke.width)} w ` +
+    `\nq ${alpha}1 J 1 j ${fmt(stroke.width)} w ` +
       `${fmt(stroke.color.r)} ${fmt(stroke.color.g)} ${fmt(stroke.color.b)} RG ` +
-      `${path}S Q\n`,
+      `${path}${stroke.closed ? 'h ' : ''}S Q\n`,
   );
 }
 
@@ -978,7 +1003,7 @@ export async function applyEdits(
       // Erasures go down first, then images, then text. That ordering is what
       // lets somebody cover something up and then write over the top of it.
       for (const rect of rects) built.push(buildRect(rect, pageResources));
-      for (const stroke of ink) built.push(buildInk(stroke));
+      for (const stroke of ink) built.push(buildInk(stroke, pageResources));
       const imageCache = new Map<string, string>();
       for (const stamp of stamps) {
         built.push(await buildStamp(stamp, doc, pageResources, imageCache, warn));

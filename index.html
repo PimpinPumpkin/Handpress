@@ -85,13 +85,31 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 9.5-9.5a2.1 2.1 0 0 0-3-3L5 16z" /><path d="M14 6.5l3.5 3.5" /></svg>
             <span>Draw</span>
           </button>
+          <button class="tool" id="btnLine" type="button" title="Drag out a straight line">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20L20 4" /></svg>
+            <span>Line</span>
+          </button>
+          <button class="tool" id="btnArrow" type="button" title="Drag out an arrow">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20L20 4" /><path d="M20 4h-7" /><path d="M20 4v7" /></svg>
+            <span>Arrow</span>
+          </button>
+          <button class="tool" id="btnRect" type="button" title="Drag out a box">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1" /></svg>
+            <span>Box</span>
+          </button>
+          <button class="tool" id="btnEllipse" type="button" title="Drag out an oval">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="8" ry="6" /></svg>
+            <span>Oval</span>
+          </button>
           <input type="color" class="add-color" id="penColor" value="#e02020" title="Ink colour" />
-          <select class="zoom-select" id="penWidth" title="Ink width">
-            <option value="1">Fine</option>
-            <option value="2.5" selected>Medium</option>
-            <option value="5">Thick</option>
-            <option value="10">Marker</option>
-          </select>
+          <label class="ink-slider" title="Ink width">
+            <input id="penWidth" type="range" min="0.5" max="24" step="0.5" value="2.5" />
+            <span id="penWidthLabel">2.5</span>
+          </label>
+          <label class="ink-slider" title="Ink opacity, for a highlighter">
+            <input id="penOpacity" type="range" min="10" max="100" step="5" value="100" />
+            <span id="penOpacityLabel">100%</span>
+          </label>
           <button class="tool" id="btnInkErase" type="button" title="Rub out strokes you have drawn">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19h12" /><path d="M14.5 5.5l4 4-8 8H6.5l-1.5-4z" /></svg>
             <span>Rub out</span>

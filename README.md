@@ -175,10 +175,16 @@ text already ran off the page are not blamed on whoever changed a word in one.
 
 ### Drawing on a page
 
-**Draw** is a freehand pen: colour, four widths, and what it draws becomes part
-of the page, so it saves, prints and flattens with everything else rather than
-being an annotation a reader can turn off. **Rub out** removes strokes, and
-only strokes: it will not touch the document underneath.
+**Draw** is a freehand pen, and **Line**, **Arrow**, **Box** and **Oval** drag
+their shape out between two corners. Colour, any width from a hairline to a
+marker, and an opacity that turns the pen into a highlighter. What they draw
+becomes part of the page, so it saves, prints and flattens with everything else
+rather than being an annotation a reader can turn off. **Rub out** removes
+strokes, and only strokes: it will not touch the document underneath.
+
+A shape is a list of points like any other stroke, which is why adding four of
+them needed no new drawing code. Only the freehand line is smoothed, because
+smoothing a box rounds its corners.
 
 A stroke is stored as the points the pointer visited and written as a curve
 through the midpoints of consecutive samples, which passes through the drawing

@@ -32,6 +32,24 @@ const cases: Array<{ what: string; stroke: Omit<InkStroke, 'id'> }> = [
     },
   },
   { what: 'a single tap', stroke: { color: { r: 0, g: 0, b: 0 }, width: 6, points: [{ x: 200, y: 300 }] } },
+  {
+    what: 'a box, which must keep its corners',
+    stroke: {
+      color: { r: 0, g: 0.5, b: 0 },
+      width: 2,
+      closed: true,
+      points: [ { x: 100, y: 400 }, { x: 300, y: 400 }, { x: 300, y: 500 }, { x: 100, y: 500 } ],
+    },
+  },
+  {
+    what: 'a translucent highlighter stroke',
+    stroke: {
+      color: { r: 1, g: 1, b: 0 },
+      width: 12,
+      opacity: 0.4,
+      points: [ { x: 100, y: 200 }, { x: 400, y: 200 } ],
+    },
+  },
 ];
 
 for (const c of cases) {
@@ -59,6 +77,15 @@ for (const c of cases) {
   const problems: string[] = [];
   if (!/\bS\b/.test(text)) problems.push('nothing was stroked');
   if (!text.includes('1 J 1 j')) problems.push('the nib is not round');
+  // A shape is drawn from its corners; smoothing one rounds it off.
+  if (c.stroke.closed) {
+    if (!/\bh\s+S\b/.test(text)) problems.push('the shape was not closed');
+    if (/\bv\b/.test(text.split('1 J 1 j')[1] ?? '')) problems.push('the corners were smoothed away');
+  }
+  // Stroke alpha has no operator of its own, so it has to come from a state.
+  if ((c.stroke.opacity ?? 1) < 1 && !/\/HpInk\d+ gs/.test(text)) {
+    problems.push('the opacity was not applied');
+  }
 
   // Every point asked for should appear within the numbers the path uses.
   const nums = [...text.matchAll(/-?\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
