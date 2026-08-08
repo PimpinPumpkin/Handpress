@@ -416,16 +416,21 @@ export class Viewer {
     const renderViewport = jsPage.getViewport({ scale: drawnZoom * dpr });
     const viewport = jsPage.getViewport({ scale: drawnZoom });
 
-    p.canvas.width = Math.floor(renderViewport.width);
-    p.canvas.height = Math.floor(renderViewport.height);
     p.canvas.style.width = `${Math.floor(viewport.width)}px`;
     p.canvas.style.height = `${Math.floor(viewport.height)}px`;
     p.container.style.width = `${Math.floor(viewport.width)}px`;
     p.container.style.height = `${Math.floor(viewport.height)}px`;
 
-    const ctx = p.canvas.getContext('2d')!;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
+    // Drawn into a canvas of its own and only shown once it is finished. The
+    // page used to be cleared here, before an await that takes as long as it
+    // takes, so every edit blanked the page and then filled it back in. It is
+    // also what makes the token check below load bearing rather than tidy: a
+    // render that was superseded or failed now leaves the previous, correct
+    // pixels alone instead of having already wiped them.
+    const plate = document.createElement('canvas');
+    plate.width = Math.floor(renderViewport.width);
+    plate.height = Math.floor(renderViewport.height);
+    const ctx = plate.getContext('2d')!;
 
     // The text model is read before the render rather than after it. It does
     // not depend on the render at all, and a render abandoned because the token
@@ -433,8 +438,16 @@ export class Viewer {
     // selected on click and refused to open, with nothing to say why.
     p.model = await this.doc.getPage(index);
 
-    await jsPage.render({ canvasContext: ctx, viewport: renderViewport, canvas: p.canvas }).promise;
+    await jsPage.render({ canvasContext: ctx, viewport: renderViewport, canvas: plate }).promise;
     if (token !== this.renderToken) return;
+
+    if (p.canvas.width !== plate.width || p.canvas.height !== plate.height) {
+      p.canvas.width = plate.width;
+      p.canvas.height = plate.height;
+    }
+    const visible = p.canvas.getContext('2d')!;
+    visible.setTransform(1, 0, 0, 1, 0, 0);
+    visible.drawImage(plate, 0, 0);
 
     p.renderedZoom = drawnZoom;
     p.viewport = viewport;

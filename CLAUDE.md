@@ -392,6 +392,27 @@ the tails of descenders visible around the edited text, and two sets of glyphs
 half a pixel apart read as the wrong typeface rather than as a leftover. The
 margin scales with the type so it is the same at every zoom.
 
+## The commit path was not slow where it looked slow
+
+Measured in Chrome, not assumed: rebuilding with pdf-lib is 3 to 27 ms and
+handing the bytes back to pdf.js is 1 to 8 ms. Neither was the wait. The wait
+was work `reload()` did on the way past and `refresh()` then discarded: five
+pages probed for text, each forcing a `getTextContent` round trip and a full
+font-name scan, plus a second whole-file `PDFDocument.load` to read signatures
+and form fields. All of it is derived from the original bytes, which never
+change, so it belongs in `open()` and now lives in `describe()`.
+
+`drawPage` also cleared the visible canvas before an await, so every edit
+blanked the page and filled it back in. It renders into a plate of its own and
+blits once the render resolves and the token still matches. That makes the
+token check load bearing rather than tidy: a superseded or failed render now
+leaves the previous correct pixels alone instead of having already wiped them.
+
+Do not add a predicted-pixel layer to make this faster. The canvas showing
+pdf.js output of exactly the bytes `save()` would write is the whole
+correctness story, and three independent judges ranked keeping it above both
+alternatives that gave it up.
+
 ## A gap is drawn once, not twice
 
 A space that stands for a positioning gap is a reading convenience: nothing in

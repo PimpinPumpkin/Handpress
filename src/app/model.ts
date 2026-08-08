@@ -244,12 +244,13 @@ export class HandpressDocument {
   ): Promise<{ doc: HandpressDocument; report: LoadReport }> {
     const { bytes: plain, wasEncrypted } = await decryptToBytes(bytes, password);
     const doc = new HandpressDocument(name, plain);
-    const report = await doc.reload();
+    await doc.reload();
+    const report = await doc.describe();
     report.wasEncrypted = wasEncrypted;
     return { doc, report };
   }
 
-  private async reload(): Promise<LoadReport> {
+  private async reload(): Promise<void> {
     if (this.loadingTask) {
       // The document is torn down, but the worker it ran in is kept and handed
       // to the next one. Every committed edit reloads, and starting a fresh
@@ -273,6 +274,19 @@ export class HandpressDocument {
     this.pageCount = this.pdfjsDoc.numPages;
     if (!this.pagePlan) this.originalPageCount = this.pageCount;
 
+  }
+
+  /**
+   * Everything that can only be learned by looking at the original file.
+   *
+   * Derived once, when the document is opened, because the original bytes
+   * never change. This used to run on every reload, which is after every
+   * committed edit: five pages probed for text, each forcing a `getTextContent`
+   * round trip and a full font-name scan, and then a second whole-file parse to
+   * read signatures and form fields. `refresh` threw all of it away again. It
+   * was the largest thing standing between pressing Enter and seeing the edit.
+   */
+  private async describe(): Promise<LoadReport> {
     const scannedPages: number[] = [];
     // Only the first few pages are probed up front; the rest resolve lazily.
     const probe = Math.min(this.pageCount, 5);
