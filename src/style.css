@@ -1151,6 +1151,33 @@ body {
   border-style: dashed;
 }
 
+/*
+ * The replace row hangs below the find box rather than sitting in the bar.
+ *
+ * The top bar is one row and already holds the title, the find box and three
+ * buttons. A second field in it would push something off the end, and replace
+ * is wanted for a minority of searches.
+ */
+.replace-bar {
+  position: absolute;
+  top: var(--topbar-h);
+  right: 12px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--chrome-line);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: var(--chrome-1);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.replace-bar .btn {
+  padding: 4px 10px;
+}
+
 /* ---------- what covers what ---------- */
 
 .arrange-menu {

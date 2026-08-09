@@ -239,6 +239,22 @@ ones it covers; a line that mixes a bold label with body text is not evenly
 spaced, so interpolating across the whole line would put the highlight in the
 wrong place.
 
+### Replacing
+
+The arrows icon beside the find box opens a replace field, with **Replace** for
+the match you are on and **All** for the document. Enter replaces one, shift and
+Enter replaces all.
+
+Replace all sweeps more than once. Replacing text in one line can rewrap the
+rest of its paragraph, which changes lines that had matches of their own and
+were measured before any of it happened. Those are skipped rather than cut in
+the wrong place, so a single pass genuinely does not replace everything: on one
+paper the first sweep took six of ten. It sweeps again until a pass finds
+nothing left, unless the replacement contains the thing being searched for, in
+which case one pass is both correct and the only way to finish.
+
+The whole thing is one undo, however many lines it touched.
+
 ### Touch
 
 A pinch zooms the pages. During the gesture the whole column is scaled with a

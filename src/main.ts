@@ -101,6 +101,11 @@ const els = {
   searchPrev: $<HTMLButtonElement>('searchPrev'),
   searchNext: $<HTMLButtonElement>('searchNext'),
   btnFind: $<HTMLButtonElement>('btnFind'),
+  btnReplaceToggle: $<HTMLButtonElement>('btnReplaceToggle'),
+  replaceBar: $('replaceBar'),
+  replaceInput: $<HTMLInputElement>('replaceInput'),
+  btnReplaceOne: $<HTMLButtonElement>('btnReplaceOne'),
+  btnReplaceAll: $<HTMLButtonElement>('btnReplaceAll'),
   btnExtract: $<HTMLButtonElement>('btnExtract'),
   btnPageImage: $<HTMLButtonElement>('btnPageImage'),
   btnRotateLeft: $<HTMLButtonElement>('btnRotateLeft'),
@@ -721,6 +726,8 @@ const WRITERS = [
   'btnSplit',
   'btnCompress',
   'btnExtract',
+  'btnReplaceOne',
+  'btnReplaceAll',
   'btnRotateLeft',
   'btnRotateRight',
   'btnDeletePage',
@@ -1713,6 +1720,70 @@ els.searchInput.addEventListener('keydown', (e) => {
 });
 els.searchNext.addEventListener('click', () => void step(1));
 els.searchPrev.addEventListener('click', () => void step(-1));
+
+/**
+ * Replacing what the search found.
+ *
+ * The search is re-run afterwards rather than the match list being patched up,
+ * because a replacement changes the text every later offset was measured
+ * against, and one that reflows a paragraph changes lines nobody searched for.
+ * Re-reading is cheap next to being subtly wrong about where the next hit is.
+ */
+async function applyReplace(all: boolean): Promise<void> {
+  if (!doc) return;
+  const query = els.searchInput.value;
+  if (!query.trim()) {
+    setStatus('Type what to look for first.', 'warn');
+    return;
+  }
+  if (!doc.canEdit) {
+    setStatus('This file cannot be changed or saved.', 'warn');
+    return;
+  }
+  const target = all ? undefined : matches[matchIndex];
+  if (!all && !target) {
+    setStatus('No match selected to replace.', 'warn');
+    return;
+  }
+
+  setBusy(true, all ? 'Replacing…' : 'Replacing…');
+  try {
+    const done = await doc.replace(query, els.replaceInput.value, { only: target });
+    if (!done) {
+      setStatus('Nothing was replaced.', 'warn');
+      return;
+    }
+    await doc.refresh();
+    await viewer.refreshRendered();
+    void renderThumbs();
+    syncEditState();
+    await runSearch();
+    setStatus(`Replaced ${done} ${done === 1 ? 'occurrence' : 'occurrences'}.`);
+  } catch (e) {
+    setStatus(`Could not replace: ${reason(e)}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+}
+
+els.btnReplaceToggle.addEventListener('click', () => {
+  els.replaceBar.hidden = !els.replaceBar.hidden;
+  els.btnReplaceToggle.classList.toggle('tool-active', !els.replaceBar.hidden);
+  if (!els.replaceBar.hidden) els.replaceInput.focus();
+});
+
+els.btnReplaceOne.addEventListener('click', () => void applyReplace(false));
+els.btnReplaceAll.addEventListener('click', () => void applyReplace(true));
+els.replaceInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    void applyReplace(e.shiftKey);
+  } else if (e.key === 'Escape') {
+    els.replaceBar.hidden = true;
+    els.btnReplaceToggle.classList.remove('tool-active');
+  }
+  e.stopPropagation();
+});
 
 /* ---------------- combining and splitting ---------------- */
 

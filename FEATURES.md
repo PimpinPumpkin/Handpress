@@ -34,7 +34,7 @@ check anything you are about to rely on.
 | Font matching for characters the subset lacks | Yes | Yes, local fonts then a standard face |
 | Change font, size, colour of existing text | Yes | No, an edit keeps the run's own styling |
 | Spell check | Yes | No |
-| Find and replace | Yes | Find only |
+| Find and replace | Yes | Yes, one at a time or all |
 
 ## Marking up
 

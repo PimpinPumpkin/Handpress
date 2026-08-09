@@ -37,6 +37,23 @@
           <button class="tool tool-icon" id="searchNext" type="button" title="Next match" disabled>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
           </button>
+          <!-- Replace is folded away because most searches are just searches,
+               and a second field always on screen would take the top bar. -->
+          <button class="tool tool-icon" id="btnReplaceToggle" type="button" title="Replace what you find">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10" /><path d="M11 4l3 3-3 3" /><path d="M20 17H10" /><path d="M13 14l-3 3 3 3" /></svg>
+          </button>
+        </div>
+
+        <div class="replace-bar" id="replaceBar" hidden>
+          <input
+            class="search-input"
+            id="replaceInput"
+            type="text"
+            placeholder="Replace with"
+            aria-label="Replace with"
+          />
+          <button class="btn" id="btnReplaceOne" type="button" title="Replace the match you are on">Replace</button>
+          <button class="btn" id="btnReplaceAll" type="button" title="Replace every match in the document">All</button>
         </div>
 
         <div class="topbar-actions">

@@ -694,6 +694,109 @@ export class HandpressDocument {
     return matches;
   }
 
+  /**
+   * Replaces occurrences of a string, either one or all of them.
+   *
+   * The whole sweep is one undo step. Calling setLineText once per hit would
+   * push a snapshot per line, so undoing a replace across a long document
+   * would mean pressing undo two hundred times, which is not undo.
+   *
+   * Hits within a line are applied from the end backwards, because replacing
+   * the first one moves every offset after it and the recorded positions were
+   * measured against the text as it read before any of this started.
+   *
+   * A line whose font cannot draw the replacement is still written: the writer
+   * substitutes per character and reports it, which is the same thing that
+   * happens when the text is retyped by hand, and refusing here would be a
+   * second and different set of rules for the same edit.
+   */
+  async replace(
+    query: string,
+    replacement: string,
+    opts: { caseSensitive?: boolean; only?: SearchMatch } = {},
+  ): Promise<number> {
+    const before = this.snapshot();
+    const undoDepth = this.undoStack.length;
+    let total = 0;
+
+    // Replacing in one line can rewrap the rest of its paragraph, which changes
+    // the text of lines that had hits of their own and were measured before any
+    // of this happened. Those are skipped rather than cut in the wrong place,
+    // so one pass genuinely does not replace everything: on a paper with ten
+    // occurrences the first sweep took six. Sweeping again picks up what moved,
+    // until a pass finds nothing left to do.
+    //
+    // Not when the replacement contains the search text, though. Replacing "a"
+    // with "aa" would find its own output every time and never finish, and one
+    // pass is the right answer there anyway.
+    const feedsItself = opts.caseSensitive
+      ? replacement.includes(query)
+      : replacement.toLowerCase().includes(query.toLowerCase());
+    const passes = opts.only || feedsItself ? 1 : 12;
+
+    for (let pass = 0; pass < passes; pass++) {
+      const done = await this.replacePass(query, replacement, opts);
+      total += done;
+      if (!done) break;
+    }
+
+    // Collapse every snapshot the writes pushed back into the one taken here.
+    this.undoStack.length = undoDepth;
+    if (total) {
+      this.undoStack.push(before);
+      this.redoStack = [];
+    }
+    return total;
+  }
+
+  /** One sweep of {@link replace}, which is as far as it can get in one go. */
+  private async replacePass(
+    query: string,
+    replacement: string,
+    opts: { caseSensitive?: boolean; only?: SearchMatch },
+  ): Promise<number> {
+    const targets = opts.only ? [opts.only] : await this.search(query, opts.caseSensitive);
+    if (!targets.length) return 0;
+
+    // Grouped so each line is written once with every one of its hits applied.
+    const byTarget = new Map<string, SearchMatch[]>();
+    for (const m of targets) {
+      const key = `${m.pageIndex} ${m.insertionId ?? m.lineId}`;
+      const list = byTarget.get(key) ?? [];
+      list.push(m);
+      byTarget.set(key, list);
+    }
+
+    let done = 0;
+    for (const [, hits] of byTarget) {
+      const first = hits[0];
+      const page = await this.getPage(first.pageIndex).catch(() => null);
+      if (!page) continue;
+
+      const line = first.insertionId ? null : page.lines.find((l) => l.id === first.lineId);
+      const insertion = first.insertionId
+        ? this.insertionsFor(first.pageIndex).find((i) => i.id === first.insertionId)
+        : null;
+      if (!line && !insertion) continue;
+
+      const current = line ? this.textFor(first.pageIndex, line) : (insertion?.text ?? '');
+      // The recorded offsets belong to the text as it read when the search
+      // ran. If it has changed since, they mean nothing and the safe answer is
+      // to leave it alone rather than cut the string in the wrong place.
+      if (current !== first.text) continue;
+
+      let next = current;
+      for (const hit of [...hits].sort((a, b) => b.start - a.start)) {
+        next = next.slice(0, hit.start) + replacement + next.slice(hit.end);
+      }
+      const changed = line
+        ? this.setLineText(first.pageIndex, line, next)
+        : this.setInsertionText(first.pageIndex, insertion!.id, next);
+      if (changed) done += hits.length;
+    }
+    return done;
+  }
+
   /* ---------------- page operations ---------------- */
 
   private plan(): PagePlanEntry[] {
