@@ -1290,16 +1290,15 @@ body {
 /*
  * The object being dragged, drawn on a layer of its own.
  *
- * Slightly transparent, because the original is still on the page underneath
- * until the drag is let go: that is what says "this is a copy on its way
- * somewhere" rather than "there are now two of these".
+ * Fully opaque, because the object really has been taken out of the page
+ * underneath: the backdrop was repainted without it. Nothing is drawn twice,
+ * so nothing needs to look like a copy.
  */
 .lifted-draw {
   position: absolute;
   left: 0;
   top: 0;
   pointer-events: none;
-  opacity: 0.85;
   z-index: 6;
 }
 

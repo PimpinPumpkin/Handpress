@@ -13,7 +13,7 @@ import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent, setPageContent } from '../pdf/page';
-import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
+import { charsInRect, groupLines, walkPage, type ImageOp, type TextLine, type WalkResult } from '../pdf/content';
 import { groupParagraphs, overflowOf, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
 import { splitChunks } from '../pdf/split';
 import { standardTextWidth } from '../pdf/fonts';
@@ -39,6 +39,7 @@ import { addFields, type NewField } from '../pdf/newfields';
 import { Dictionary, FOREIGN_SHARE, findMisspellings } from '../pdf/spell';
 import { preflight, type PreflightReport } from '../pdf/preflight';
 import { compareDocuments, type CompareReport } from '../pdf/compare';
+import { buildScene, type Scene } from './scene';
 import { addNotes, readNotes, type ExistingNote, type PageNote } from '../pdf/notes';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -1074,6 +1075,22 @@ export class HandpressDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return true;
+  }
+
+  /**
+   * Takes a page apart into a backdrop and one picture per movable object.
+   *
+   * Done after the page is on screen rather than when a drag starts, because a
+   * render begun by a drag can never be instant however it is done. This is
+   * the cost that buys instant movement, paid where nobody is waiting.
+   */
+  async sceneFor(
+    pageIndex: number,
+    graphics: Graphic[],
+    images: ImageOp[],
+    scale: number,
+  ): Promise<Scene | null> {
+    return buildScene(this.originalBytes, pageIndex, graphics, images, scale, this.worker ?? undefined);
   }
 
   /** Rendered pictures of single images, kept so a second drag is instant. */

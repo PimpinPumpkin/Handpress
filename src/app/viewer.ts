@@ -20,6 +20,7 @@ import { NOTE_SIZE, type PageNote } from '../pdf/notes';
 import type { ImageOp } from '../pdf/content';
 import type { Graphic } from '../pdf/graphics';
 import { paintRange, type PaintTarget } from './paint';
+import type { Scene, Tile } from './scene';
 import type { RectFill } from '../pdf/writer';
 
 import type { SearchMatch } from './model';
@@ -704,6 +705,88 @@ export class Viewer {
     this.buildOverlay(p, viewport);
     this.buildTextLayer(p, viewport);
     this.paintMatches(p);
+
+    // Taken apart afterwards, in the background, so a drag has nothing left to
+    // render when it starts. This is the whole reason movement can be instant.
+    void this.ensureScene(p);
+  }
+
+  /** Pages taken apart into a backdrop and one picture per object. */
+  private scenes = new Map<number, { scene: Scene; zoom: number }>();
+  private sceneBuilding = new Set<number>();
+
+  /**
+   * Takes a page apart once it is on screen, unless it already has been.
+   *
+   * Keyed on the zoom it was built at: a picture rendered for one zoom is the
+   * wrong number of pixels for another, and scaling it up is exactly the
+   * softness this exists to avoid.
+   */
+  private async ensureScene(p: RenderedPage): Promise<void> {
+    if (!this.doc || !p.model) return;
+    const had = this.scenes.get(p.index);
+    if (had && Math.abs(had.zoom - this.zoom) < 0.001) return;
+    if (this.sceneBuilding.has(p.index)) return;
+    this.sceneBuilding.add(p.index);
+    try {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const scene = await this.doc.sceneFor(
+        p.index,
+        this.doc.graphicsOn(p.index),
+        p.model.walk.images,
+        this.zoom * dpr,
+      );
+      if (scene) this.scenes.set(p.index, { scene, zoom: this.zoom });
+    } finally {
+      this.sceneBuilding.delete(p.index);
+    }
+  }
+
+  /**
+   * Repaints the page with one object left out, ready for it to be dragged.
+   *
+   * The object is genuinely lifted out rather than covered, so nothing shows
+   * through and nothing is drawn twice. What comes back is the picture of it,
+   * for the drag layer to move about.
+   */
+  private stage(p: RenderedPage, exceptId: string): Tile | null {
+    const held = this.scenes.get(p.index);
+    if (!held || Math.abs(held.zoom - this.zoom) > 0.001) return null;
+    const wanted = held.scene.tiles.find((t) => t.id === exceptId);
+    if (!wanted || !p.viewport) return null;
+
+    const ctx = p.canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
+    ctx.drawImage(held.scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
+    for (const tile of held.scene.tiles) {
+      if (tile.id === exceptId) continue;
+      this.blitTile(p, ctx, tile, 0, 0);
+    }
+    return wanted;
+  }
+
+  /** Draws one tile where it belongs on the page, optionally shifted. */
+  private blitTile(
+    p: RenderedPage,
+    ctx: CanvasRenderingContext2D,
+    tile: Tile,
+    dx: number,
+    dy: number,
+  ): void {
+    const viewport = p.viewport;
+    if (!viewport) return;
+    const ratio = p.canvas.width / Math.max(1, parseFloat(p.canvas.style.width));
+    const [ax, ay] = viewport.convertToViewportPoint(tile.x0 + dx, tile.y1 + dy);
+    const [bx, by] = viewport.convertToViewportPoint(tile.x1 + dx, tile.y0 + dy);
+    ctx.drawImage(
+      tile.canvas,
+      Math.min(ax, bx) * ratio,
+      Math.min(ay, by) * ratio,
+      Math.abs(bx - ax) * ratio,
+      Math.abs(by - ay) * ratio,
+    );
   }
 
   private buildOverlay(p: RenderedPage, viewport: { convertToViewportPoint(x: number, y: number): number[] }): void {
@@ -2208,6 +2291,7 @@ export class Viewer {
         );
         target.ctx.drawImage(art, Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
       },
+      id,
     );
 
     // Asked for once, on hover, so the picture is ready before a drag starts
@@ -2849,6 +2933,7 @@ export class Viewer {
           lineWidth: s.lineWidth,
         });
       },
+      graphic.id,
     );
 
     p.overlay.appendChild(box);
@@ -3105,6 +3190,8 @@ export class Viewer {
     page?: RenderedPage,
     /** How to draw the thing being dragged, when it can draw itself. */
     drawSelf?: (target: PaintTarget) => void,
+    /** Which tile this is, so the page can be repainted without it. */
+    pickId?: string,
   ): void {
     const THRESHOLD = 3;
 
@@ -3120,17 +3207,37 @@ export class Viewer {
       let moved = false;
       let lifted: { ghost: HTMLCanvasElement; cover: HTMLElement } | null = null;
       let drawn: HTMLCanvasElement | null = null;
+      let staged: Tile | null = null;
 
       const move = (e: PointerEvent): void => {
         const dx = e.clientX - down.clientX;
         const dy = e.clientY - down.clientY;
         if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
-        if (!moved && page && drawSelf) {
-          // An object that can draw itself does, which is exact. Lifted on the
-          // first real movement rather than on the press, so a click that was
-          // never a drag costs nothing.
+        if (!moved && page && pickId) {
+          // The page has already been taken apart, so lifting the object out
+          // is repainting from pictures that exist: no rendering happens here,
+          // which is what makes the movement instant rather than merely quick.
+          staged = this.stage(page, pickId);
+          if (staged) {
+            drawn = this.liftDrawn(page, (target) => {
+              const t = staged!;
+              const [ax, ay] = target.toCanvas(t.x0, t.y1);
+              const [bx, by] = target.toCanvas(t.x1, t.y0);
+              target.ctx.drawImage(
+                t.canvas,
+                Math.min(ax, bx),
+                Math.min(ay, by),
+                Math.abs(bx - ax),
+                Math.abs(by - ay),
+              );
+            });
+          }
+        }
+        if (!moved && !staged && page && drawSelf) {
+          // Nothing to composite, so the object draws itself. Slower to start
+          // and still exact, which is the right thing to fall back to.
           drawn = this.liftDrawn(page, drawSelf);
-        } else if (!moved && page) {
+        } else if (!moved && !staged && page) {
           const b = box.getBoundingClientRect();
           const c = page.container.getBoundingClientRect();
           lifted = this.lift(page, new DOMRect(b.left - c.left, b.top - c.top, b.width, b.height));
@@ -3356,6 +3463,10 @@ export class Viewer {
         // leaving half a page behind.
         await this.settleRenders();
         await this.doc.refresh();
+        // The page has changed, so what it was taken apart into no longer
+        // describes it. Cleared before the redraw, which starts a fresh one.
+        if (onlyPage === undefined) this.scenes.clear();
+        else this.scenes.delete(onlyPage);
         await this.refreshRendered(onlyPage);
         for (const page of this.pages) this.restorePick(page);
       } catch (e) {

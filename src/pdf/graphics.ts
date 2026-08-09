@@ -250,6 +250,15 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
     const marks = walk.stateMarks.get(first.streamId) ?? [];
     if (!isBalanced(marks, start, end)) continue;
 
+    // Consecutive numbering was supposed to prove nothing else is drawn inside
+    // the range, and on one real document it did not: a group came out
+    // straddling fifty-six show operators, and taking it off the page would
+    // have taken every word with it. So the property is checked directly
+    // against the bytes rather than inferred from the numbering.
+    const swallows = (op: { streamId: string; start: number }): boolean =>
+      op.streamId === first.streamId && op.start >= start && op.start < end;
+    if (walk.ops.some(swallows) || walk.images.some(swallows)) continue;
+
     // Only worth widening when the clip is tight enough to matter. A page
     // sized clip cuts nothing and the narrower range is the safer one.
     const clip = first.state.clip;

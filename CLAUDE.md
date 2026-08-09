@@ -635,6 +635,37 @@ rectangle of page *pixels*, and a drawing's box is a loose rectangle around a
 shape, so dragging a circle floated a square of everything behind the circle.
 An image is its rectangle and keeps the copy.
 
+## The page is held as pieces, so dragging composites instead of rendering
+
+Every earlier attempt did its work when the drag began, and no amount of care
+makes that instant: a render is a render, whether it copies pixels or draws the
+object properly. Acrobat does not render on drag. It holds the page as objects
+and recomposites.
+
+`src/app/scene.ts` does the same. Once a page is on screen, it is taken apart
+in the background into the page with its movable objects spliced out, plus one
+picture per object, cropped to it. A drag then repaints the canvas from those
+pieces with the dragged one left out, and moves its picture on a layer. No
+rendering happens during the gesture at all.
+
+Everything goes into **one** document: the backdrop stays on its own page and
+each object is appended as a page of its own sharing the original's resources.
+One document load and a page render each. A document load per object is the
+difference between a second and a minute on a page with twenty marks on it.
+
+A tile keeps its clip, or a logo cut to its own shape would show itself uncut
+the moment the page composites rather than renders, which is a change appearing
+at rest that nobody asked for.
+
+The scene is keyed on the zoom it was built at and cleared on rebuild, since a
+picture rendered for one zoom is the wrong number of pixels for another.
+
+**A real bug this found.** `findGraphics` inferred "nothing else is drawn
+inside this range" from consecutive numbering, and on one corpus document that
+was wrong: a group came out straddling fifty-six show operators, so taking it
+off the page would have taken every word with it. The property is now checked
+directly against the bytes instead of inferred.
+
 ## Dragging draws the object, it does not copy pixels
 
 The first version floated a rectangle of page pixels lifted off the canvas.

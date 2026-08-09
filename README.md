@@ -379,6 +379,17 @@ could not be read does not silently consume a number and leave a gap.
 
 ### Dragging
 
+Once a page is on screen it is quietly taken apart: the page with its movable
+objects removed, plus one small picture of each object. Dragging then repaints
+from those pieces with the one being dragged left out, and moves its picture
+about. Nothing is rendered during the drag at all, which is what makes it
+instant rather than merely quick, and the object really is lifted out rather
+than covered, so nothing shows through and nothing is drawn twice.
+
+That work happens after the page is drawn, where nobody is waiting for it. If
+it has not finished when a drag starts, the object falls back to drawing itself,
+which is exact and slightly slower to begin.
+
 What moves under the pointer is the object itself, drawn from what it actually
 is: a drawing replays the operators the file uses for it, a stroke of ink draws
 its own points, and an image is rendered from a copy of the page whose content
