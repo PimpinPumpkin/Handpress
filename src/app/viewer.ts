@@ -19,6 +19,7 @@ import type { TextInsertion } from '../pdf/writer';
 import { NOTE_SIZE, type PageNote } from '../pdf/notes';
 import type { ImageOp } from '../pdf/content';
 import type { Graphic } from '../pdf/graphics';
+import { paintRange, type PaintTarget } from './paint';
 import type { RectFill } from '../pdf/writer';
 
 import type { SearchMatch } from './model';
@@ -2679,6 +2680,26 @@ export class Viewer {
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
       () => this.pick('ink', stroke.id, p.index, box),
+      p,
+      // Ink is already a list of points in page space, so there is nothing to
+      // replay: it is drawn the same way it was drawn in the first place.
+      (target) => {
+        const full = this.doc?.inkFor(p.index).find((k) => k.id === stroke.id);
+        if (!full?.points.length) return;
+        const { ctx } = target;
+        ctx.globalAlpha = full.opacity ?? 1;
+        ctx.strokeStyle = `rgb(${Math.round(full.color.r * 255)},${Math.round(full.color.g * 255)},${Math.round(full.color.b * 255)})`;
+        ctx.lineWidth = Math.max(0.5, full.width / target.scale);
+        ctx.beginPath();
+        full.points.forEach((q, i) => {
+          const [x, y] = target.toCanvas(q.x, q.y);
+          if (i) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        });
+        if (full.closed) ctx.closePath();
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      },
       // No lifted copy, for the same reason a drawing has none: the box is a
       // loose rectangle round a stroke and most of it is whatever is behind.
     );
@@ -2721,12 +2742,20 @@ export class Viewer {
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
       () => this.pick('graphic', graphic.id, p.index, box),
-      // No page, which means no lifted copy. The copy is a rectangle of page
-      // pixels, and a drawing's box is a loose rectangle around a shape: most
-      // of what it contains is whatever the page has behind it, so dragging a
-      // circle floated a square of everything around the circle. An image is
-      // its rectangle and keeps the copy; a drawing shows its outline moving
-      // and reappears where it is dropped.
+      p,
+      // The drawing draws itself, by replaying the very operators the file
+      // uses for it. Nothing of the page comes with it because nothing of the
+      // page is read, which is what a rectangle of copied pixels got wrong.
+      (target) => {
+        const bytes = p.model?.contentBytes;
+        if (!bytes || graphic.streamId !== 'page') return;
+        const s = graphic.state;
+        paintRange(bytes, graphic.start, graphic.end, graphic.ctm, target, {
+          fill: `rgb(${Math.round(s.fill.r * 255)},${Math.round(s.fill.g * 255)},${Math.round(s.fill.b * 255)})`,
+          stroke: `rgb(${Math.round(s.stroke.r * 255)},${Math.round(s.stroke.g * 255)},${Math.round(s.stroke.b * 255)})`,
+          lineWidth: s.lineWidth,
+        });
+      },
     );
 
     p.overlay.appendChild(box);
@@ -2820,7 +2849,11 @@ export class Viewer {
   }
 
   /** Puts back whatever was lifted, once the page has really been redrawn. */
+  /** Drawn copies waiting for the page under them to catch up. */
+  private pendingDrawn: HTMLCanvasElement[] = [];
+
   private dropLifted(): void {
+    for (const layer of this.pendingDrawn.splice(0)) layer.remove();
     window.clearTimeout(this.liftTimer);
     for (const el of this.lifted) el.remove();
     this.lifted = [];
@@ -2856,12 +2889,56 @@ export class Viewer {
     );
   }
 
+  /**
+   * Draws one object onto a layer of its own, for dragging.
+   *
+   * This is the difference between a drag that feels attached to the thing
+   * being dragged and one that floats a screenshot of where it used to be. The
+   * object is drawn from what it actually is: a path group replays its own
+   * operators, a stroke of ink draws its own points. Nothing of the page comes
+   * with it, because nothing of the page is read.
+   */
+  private liftDrawn(p: RenderedPage, draw: (target: PaintTarget) => void): HTMLCanvasElement | null {
+    const cssWidth = parseFloat(p.canvas.style.width);
+    const cssHeight = parseFloat(p.canvas.style.height);
+    if (!cssWidth || !cssHeight || !p.viewport) return null;
+
+    const layer = document.createElement('canvas');
+    layer.className = 'lifted-draw';
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    layer.width = Math.floor(cssWidth * dpr);
+    layer.height = Math.floor(cssHeight * dpr);
+    layer.style.width = `${cssWidth}px`;
+    layer.style.height = `${cssHeight}px`;
+    const ctx = layer.getContext('2d');
+    if (!ctx) return null;
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const viewport = p.viewport;
+    draw({
+      ctx,
+      toCanvas: (x, y) => {
+        const [vx, vy] = viewport.convertToViewportPoint(x, y);
+        return [vx, vy];
+      },
+      // Points per css pixel, so a line width in points comes out right.
+      scale: 1 / this.zoom,
+    });
+
+    p.container.appendChild(layer);
+    return layer;
+  }
+
   private makeDraggable(
     box: HTMLElement,
     viewport: { convertToPdfPoint(x: number, y: number): number[] },
     onDrop: (dx: number, dy: number) => void,
     onClick?: () => void,
     page?: RenderedPage,
+    /** How to draw the thing being dragged, when it can draw itself. */
+    drawSelf?: (target: PaintTarget) => void,
   ): void {
     const THRESHOLD = 3;
 
@@ -2876,14 +2953,18 @@ export class Viewer {
       const parent = box.parentElement;
       let moved = false;
       let lifted: { ghost: HTMLCanvasElement; cover: HTMLElement } | null = null;
+      let drawn: HTMLCanvasElement | null = null;
 
       const move = (e: PointerEvent): void => {
         const dx = e.clientX - down.clientX;
         const dy = e.clientY - down.clientY;
         if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
-        if (!moved && page) {
-          // Lifted on the first real movement rather than on the press, so a
-          // click that was never a drag costs nothing.
+        if (!moved && page && drawSelf) {
+          // An object that can draw itself does, which is exact. Lifted on the
+          // first real movement rather than on the press, so a click that was
+          // never a drag costs nothing.
+          drawn = this.liftDrawn(page, drawSelf);
+        } else if (!moved && page) {
           const b = box.getBoundingClientRect();
           const c = page.container.getBoundingClientRect();
           lifted = this.lift(page, new DOMRect(b.left - c.left, b.top - c.top, b.width, b.height));
@@ -2892,6 +2973,7 @@ export class Viewer {
         box.classList.add('dragging');
         box.style.transform = `translate(${dx}px, ${dy}px)`;
         if (lifted) lifted.ghost.style.transform = `translate(${dx}px, ${dy}px)`;
+        if (drawn) drawn.style.transform = `translate(${dx}px, ${dy}px)`;
       };
 
       const up = (e: PointerEvent): void => {
@@ -2899,6 +2981,10 @@ export class Viewer {
         window.removeEventListener('pointerup', up);
         box.classList.remove('dragging');
         box.style.transform = '';
+        // The drawn copy stays where it was let go until the page has really
+        // been redrawn underneath it, so the object never blinks back to where
+        // it started. dropLifted clears both kinds.
+        if (drawn) this.pendingDrawn.push(drawn);
 
         if (!moved) {
           onClick?.();

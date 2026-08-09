@@ -1287,6 +1287,22 @@ body {
   margin: 8px 0 12px;
 }
 
+/*
+ * The object being dragged, drawn on a layer of its own.
+ *
+ * Slightly transparent, because the original is still on the page underneath
+ * until the drag is let go: that is what says "this is a copy on its way
+ * somewhere" rather than "there are now two of these".
+ */
+.lifted-draw {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  opacity: 0.85;
+  z-index: 6;
+}
+
 /* ---------- what is picked ---------- */
 
 /*

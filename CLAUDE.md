@@ -635,6 +635,34 @@ rectangle of page *pixels*, and a drawing's box is a loose rectangle around a
 shape, so dragging a circle floated a square of everything behind the circle.
 An image is its rectangle and keeps the copy.
 
+## Dragging draws the object, it does not copy pixels
+
+The first version floated a rectangle of page pixels lifted off the canvas.
+That is wrong twice: a drawing's box is a loose rectangle round a shape, so
+most of what came along was whatever the page had behind it, and removing the
+copy to fix that left shapes with no preview at all.
+
+`src/app/paint.ts` replays a run of path operators onto a 2D context. A path
+group's byte range and starting matrix are already known, so replaying just
+that run gives exactly the object and nothing else. Ink needs no replay at all
+since it is already a list of points.
+
+Three things in it that are easy to get wrong, all pinned by
+`tools/test-paint.ts`:
+
+- `v` takes the *current* point as its first control point and `y` repeats the
+  *end* point as its second. Swapping them bends curves the wrong way.
+- The matrix in force where the run begins has to be applied, or a group inside
+  a scaled block draws at the wrong size in the wrong place. Same correction
+  moving one needs.
+- A clip inside the run is ignored on purpose. The object is being drawn on its
+  own with nothing to cut it against, and honouring it would hide the object
+  everywhere but where it started.
+
+The original stays on the page under the moving copy until the drag is let go,
+which is why the layer is slightly transparent. Hiding it would mean rendering
+the page without the object, which is a full page render per drag.
+
 ## A selection is what makes an object an object
 
 Everything before this was hover and drag: nothing stayed chosen, so there was

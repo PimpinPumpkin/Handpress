@@ -377,6 +377,18 @@ never restart and never repeat.
 The counter only advances on a page that was actually stamped, so a page that
 could not be read does not silently consume a number and leave a gap.
 
+### Dragging
+
+What moves under the pointer is the object itself, drawn from what it actually
+is: a drawing replays the operators the file uses for it, a stroke of ink draws
+its own points. Nothing of the page comes with it, because nothing of the page
+is read.
+
+The first version copied a rectangle of pixels off the page instead, which
+brought whatever was behind the shape along for the ride. The original stays
+where it is until you let go, which is why the moving copy is slightly
+transparent.
+
 ### Picking things up
 
 Click anything and it stays selected, with handles at the corners. Arrow keys
