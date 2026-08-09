@@ -365,6 +365,38 @@ at, and the grouping refuses them rather than guessing. A moved drawing keeps
 its place in the painting order too, so one taken from the top of a page and
 dropped into the middle of it can land behind something drawn later.
 
+### Changing how existing text is set
+
+Select a line and the properties panel, which already says how it is set, will
+change it: typeface, bold and italic, size and colour. It applies to the whole
+line, because a line is the unit everything else here works in.
+
+Only Helvetica, Times and Courier are offered. Any other face would have to be
+embedded, and a document would then depend on a font file for a change of
+typeface; these three every reader already has.
+
+A restyled line still ends exactly where it began, so nothing after it moves.
+That does mean a line set much larger can run past the edge of the page, where
+every reader will clip it.
+
+### Drawing shapes with corners
+
+Polygon, polyline and cloud are clicked out a corner at a time, because a drag
+cannot say how many corners there are. Each click drops one, the edge to the
+pointer is previewed, and a double click, Enter, or a click back on the first
+corner finishes it. Escape throws it away.
+
+A cloud is a polygon whose every edge carries a row of bumps on the outside,
+which is the standard way of ringing a revision. Which side is outside depends
+on which way round the corners were clicked, so the bumps are pointed away from
+the middle of the shape rather than assumed.
+
+A callout is one drag from the thing being commented on to where the note
+should sit, and it puts down three things at once: a leader line, a box, and
+the text, opened for typing. It is not a primitive and does not need to be;
+afterwards it is an arrow, a rectangle and a piece of added text, each of which
+can be moved or retyped on its own.
+
 ### Cropping
 
 Pick Crop and drag out the part of the page to keep, then say whether that is

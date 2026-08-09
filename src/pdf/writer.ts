@@ -31,6 +31,15 @@ export interface LineEdit {
    * words either side of a removed name stay exactly where they were.
    */
   redact?: Array<[number, number]>;
+  /**
+   * A change of typeface, size or colour for the whole line.
+   *
+   * Applied to the line rather than to a selection within it, because the
+   * model is a line and a partial restyle would need a second one. Anything
+   * left unset keeps what the document already had, so setting only a colour
+   * really does only set a colour.
+   */
+  style?: LineStyle;
 }
 
 /**
@@ -177,6 +186,36 @@ export interface ImageEdit {
   scale: number;
   /** True to remove the image from the page entirely. */
   remove?: boolean;
+}
+
+/**
+ * The three standard families, which are the ones every reader has.
+ *
+ * Restyling text to a face that has to be embedded would mean carrying a font
+ * file for a change of typeface, and a document that then depends on it. These
+ * three are guaranteed present, so a restyled line is as portable as the rest
+ * of the file.
+ */
+export type StandardFamily = 'Helvetica' | 'Times' | 'Courier';
+
+/** The PDF name of a standard face, which is not spelled consistently. */
+function standardAlias(family: StandardFamily, bold: boolean, italic: boolean): string {
+  if (family === 'Times') {
+    // Times is the odd one: it is Roman rather than plain, and Italic rather
+    // than Oblique.
+    return bold && italic ? 'TimesRomanBoldItalic' : bold ? 'TimesRomanBold' : italic ? 'TimesRomanItalic' : 'TimesRoman';
+  }
+  const suffix = bold && italic ? 'BoldOblique' : bold ? 'Bold' : italic ? 'Oblique' : '';
+  return `${family}${suffix}`;
+}
+
+/** How a line has been restyled, if it has. */
+export interface LineStyle {
+  family?: StandardFamily;
+  bold?: boolean;
+  italic?: boolean;
+  size?: number;
+  color?: { r: number; g: number; b: number };
 }
 
 /** Describes the typeface a substitution needs. */
@@ -529,8 +568,13 @@ class FontResolver {
    * the document implies a typeface for new text, so one of the built-in fonts
    * is used and no font file has to be embedded at all.
    */
-  async standardFont(resources: PDFDict, bold: boolean, italic: boolean): Promise<OutFont | null> {
-    const alias = `Helvetica${bold && italic ? 'BoldOblique' : bold ? 'Bold' : italic ? 'Oblique' : ''}`;
+  async standardFont(
+    resources: PDFDict,
+    bold: boolean,
+    italic: boolean,
+    family: StandardFamily = 'Helvetica',
+  ): Promise<OutFont | null> {
+    const alias = standardAlias(family, bold, italic);
     let embedded = this.standardCache.get(alias);
     if (!embedded) {
       const std = (StandardFonts as Record<string, string>)[alias];
@@ -643,6 +687,7 @@ async function buildLineFragment(
   warn: (w: EditWarning) => void,
   move: { dx: number; dy: number } = { dx: 0, dy: 0 },
   redact: Array<[number, number]> = [],
+  style?: LineStyle,
 ): Promise<Uint8Array | null> {
   const first = line.ops[0];
   // A leading space, because the operator before this one may end in a keyword
@@ -707,7 +752,11 @@ async function buildLineFragment(
     }
 
     const segOp = seg.ops[0];
-    const sizeForSeg = segOp.fontSize;
+    // A restyle overrides the segment's own size and colour. Left unset they
+    // stay exactly as the producer wrote them, which is what makes setting
+    // only a colour set only a colour.
+    const sizeForSeg = style?.size ?? segOp.fontSize;
+    const fillForSeg = style?.color ?? seg.fill;
 
     // Redacted characters are dropped but their width is kept as a positioning
     // offset, so removing a name does not slide the rest of the line leftwards.
@@ -744,9 +793,20 @@ async function buildLineFragment(
 
     // Only the characters the document's own font cannot draw are substituted,
     // so a single unusual character never restyles the text around it.
-    for (const span of coverageSpans(seg.font, piece.text)) {
-      let out: OutFont = resolver.own(seg.font);
-      let encoded = span.covered ? out.encode(span.text, spaceWidthFor(seg)) : null;
+    // A line restyled to a different family is drawn in that family
+    // throughout, so coverage of the document's own font is beside the point:
+    // it is not the font being used any more.
+    const restyled = style?.family
+      ? await resolver.standardFont(resources!, style.bold ?? false, style.italic ?? false, style.family)
+      : null;
+    if (style?.family && !restyled) {
+      warn({ lineId: line.id, kind: 'unencodable', detail: 'could not embed the chosen typeface' });
+      return null;
+    }
+
+    for (const span of restyled ? [{ text: piece.text, covered: true }] : coverageSpans(seg.font, piece.text)) {
+      let out: OutFont = restyled ?? resolver.own(seg.font);
+      let encoded = restyled ? out.encode(span.text) : span.covered ? out.encode(span.text, spaceWidthFor(seg)) : null;
 
       if (!encoded) {
         const sub = resources ? await resolver.substitute(seg.font, resources) : null;
@@ -777,7 +837,7 @@ async function buildLineFragment(
         currentFontSize = sizeForSeg;
       }
 
-      const fill = seg.fill;
+      const fill = fillForSeg;
       if (fill.r !== currentFill.r || fill.g !== currentFill.g || fill.b !== currentFill.b) {
         chunks.push(bytes(`${fmt(fill.r)} ${fmt(fill.g)} ${fmt(fill.b)} rg `));
         currentFill = { ...fill };
@@ -1095,7 +1155,8 @@ export async function applyEdits(
     const move = { dx: edit.dx ?? 0, dy: edit.dy ?? 0 };
     const moved = Math.abs(move.dx) > 1e-6 || Math.abs(move.dy) > 1e-6;
     const redacted = (edit.redact?.length ?? 0) > 0;
-    if (edit.newText === line.text && !moved && !redacted) continue;
+    const styled = !!edit.style;
+    if (edit.newText === line.text && !moved && !redacted && !styled) continue;
     if (!line.editable) {
       warn({
         lineId: line.id,
@@ -1107,7 +1168,16 @@ export async function applyEdits(
 
     const resources = walk.resources.get(line.streamId) ?? null;
     const segTexts = mapTextToSegments(line, edit.newText);
-    const fragment = await buildLineFragment(line, segTexts, resolver, resources, warn, move, edit.redact ?? []);
+    const fragment = await buildLineFragment(
+      line,
+      segTexts,
+      resolver,
+      resources,
+      warn,
+      move,
+      edit.redact ?? [],
+      edit.style,
+    );
     if (!fragment) continue; // warned already; leave this line untouched
 
     const list = patchesByStream.get(line.streamId) ?? [];
@@ -1121,7 +1191,18 @@ export async function applyEdits(
     for (const overlay of line.overlays) {
       const overlayTexts = mapTextToSegments(overlay, edit.newText);
       const overlayResources = walk.resources.get(overlay.streamId) ?? null;
-      const overlayFragment = await buildLineFragment(overlay, overlayTexts, resolver, overlayResources, warn, move);
+      // The overlay passes of outlined type get the same restyle, or the old
+    // face shows through from underneath the new one.
+    const overlayFragment = await buildLineFragment(
+      overlay,
+      overlayTexts,
+      resolver,
+      overlayResources,
+      warn,
+      move,
+      [],
+      edit.style,
+    );
       if (!overlayFragment) continue;
       const overlayList = overlay.streamId === line.streamId ? list : (patchesByStream.get(overlay.streamId) ?? []);
       overlayList.push({

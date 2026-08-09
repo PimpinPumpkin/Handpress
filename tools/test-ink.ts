@@ -104,5 +104,54 @@ for (const c of cases) {
   }
 }
 
+
+/**
+ * A cloud's bumps must face outwards.
+ *
+ * A revision cloud is a polygon whose every edge carries a row of half circles
+ * on the outside. Which side that is depends on the winding, so the normal has
+ * to be chosen by pointing away from the middle. Choosing the other one gives
+ * a shape that looks bitten rather than puffy, and it looks deliberate enough
+ * that nobody reports it as a bug.
+ *
+ * The generator itself lives in the viewer and needs a DOM, so the rule it
+ * relies on is asserted here against the same arithmetic.
+ */
+{
+  const square = [
+    { x: 100, y: 100 },
+    { x: 300, y: 100 },
+    { x: 300, y: 300 },
+    { x: 100, y: 300 },
+  ];
+  const cx = square.reduce((a, q) => a + q.x, 0) / 4;
+  const cy = square.reduce((a, q) => a + q.y, 0) / 4;
+  let outward = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = square[i];
+    const b = square[(i + 1) % 4];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const ux = (b.x - a.x) / len;
+    const uy = (b.y - a.y) / len;
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    let nx = -uy;
+    let ny = ux;
+    if ((mx - cx) * nx + (my - cy) * ny < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    const before = (mx - cx) ** 2 + (my - cy) ** 2;
+    const after = (mx + nx - cx) ** 2 + (my + ny - cy) ** 2;
+    if (after > before) outward++;
+  }
+  if (outward === 4) {
+    pass++;
+  } else {
+    fail++;
+    console.log(`FAIL a cloud's bumps face outwards: only ${outward} of 4 edges do`);
+  }
+}
+
 console.log(`\nink: ${pass} passed, ${fail} failed`);
 if (fail) process.exitCode = 1;

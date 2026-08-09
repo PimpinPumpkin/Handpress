@@ -111,6 +111,10 @@ const els = {
   btnRotateLeft: $<HTMLButtonElement>('btnRotateLeft'),
   btnRotateRight: $<HTMLButtonElement>('btnRotateRight'),
   btnDeletePage: $<HTMLButtonElement>('btnDeletePage'),
+  btnPolygon: $<HTMLButtonElement>('btnPolygon'),
+  btnPolyline: $<HTMLButtonElement>('btnPolyline'),
+  btnCloud: $<HTMLButtonElement>('btnCloud'),
+  btnCallout: $<HTMLButtonElement>('btnCallout'),
   btnStamp: $<HTMLButtonElement>('btnStamp'),
   stampModal: $('stampModal'),
   stampPreset: $<HTMLSelectElement>('stampPreset'),
@@ -735,6 +739,10 @@ const WRITERS = [
   'btnArrow',
   'btnRect',
   'btnEllipse',
+  'btnPolygon',
+  'btnPolyline',
+  'btnCloud',
+  'btnCallout',
   'btnSign',
   'btnOcr',
   'btnLocalFonts',
@@ -981,6 +989,10 @@ const MODE_BUTTONS: Record<string, string> = {
   rect: 'btnRect',
   ellipse: 'btnEllipse',
   crop: 'btnCrop',
+  polygon: 'btnPolygon',
+  polyline: 'btnPolyline',
+  cloud: 'btnCloud',
+  callout: 'btnCallout',
 };
 
 function syncEditState(): void {
@@ -1034,7 +1046,11 @@ function setMode(
     | 'arrow'
     | 'rect'
     | 'ellipse'
-    | 'crop',
+    | 'crop'
+    | 'polygon'
+    | 'polyline'
+    | 'cloud'
+    | 'callout',
 ): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
@@ -1052,6 +1068,10 @@ function setMode(
   els.btnRect.classList.toggle('tool-active', mode === 'rect');
   els.btnEllipse.classList.toggle('tool-active', mode === 'ellipse');
   els.btnCrop.classList.toggle('tool-active', mode === 'crop');
+  els.btnPolygon.classList.toggle('tool-active', mode === 'polygon');
+  els.btnPolyline.classList.toggle('tool-active', mode === 'polyline');
+  els.btnCloud.classList.toggle('tool-active', mode === 'cloud');
+  els.btnCallout.classList.toggle('tool-active', mode === 'callout');
   revealGroupOf(MODE_BUTTONS[mode] ?? '');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
@@ -1062,6 +1082,10 @@ function setMode(
     rect: 'Drag out a box around something.',
     ellipse: 'Drag out an oval around something.',
     crop: 'Drag out the part of the page to keep.',
+    polygon: 'Click each corner. Double click, Enter, or the first corner again to finish.',
+    polyline: 'Click each corner. Double click or Enter to finish.',
+    cloud: 'Click each corner of the area to cloud. Double click or Enter to finish.',
+    callout: 'Drag from what you are commenting on to where the note should sit.',
     select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
@@ -2004,6 +2028,11 @@ els.stampGo.addEventListener('click', async () => {
   }
 });
 
+els.btnPolygon.addEventListener('click', () => setMode('polygon'));
+els.btnPolyline.addEventListener('click', () => setMode('polyline'));
+els.btnCloud.addEventListener('click', () => setMode('cloud'));
+els.btnCallout.addEventListener('click', () => setMode('callout'));
+
 els.btnCrop.addEventListener('click', () => setMode('crop'));
 
 els.btnUncrop.addEventListener('click', () => {
@@ -2371,6 +2400,125 @@ function showProperties(line: TextLine | null, page: PageModel | null): void {
       .join('') +
     note +
     `<div class="panel-text">${escapeHtml(doc.textFor(page.index, line))}</div>`;
+
+  if (line.editable && doc.canEdit) els.panelBody.appendChild(restyleControls(doc, page, line));
+}
+
+/**
+ * The controls for changing a line's typeface, size and colour.
+ *
+ * In the properties panel because that is already where the answer to "how is
+ * this set" lives, and changing it is a small step from reading it. Built as
+ * elements rather than markup so each control can carry the line it belongs to
+ * without a lookup, since the panel is rebuilt whenever the selection changes.
+ *
+ * Only the three standard families are offered. Anything else would mean
+ * embedding a font file so that a document depends on it for a change of
+ * typeface; these three every reader already has.
+ */
+function restyleControls(document_: HandpressDocument, page: PageModel, line: TextLine): HTMLElement {
+  const pageIndex = page.index;
+  const current = document_.styleFor(pageIndex, line.id);
+  const box = document.createElement('div');
+  box.className = 'restyle';
+
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  head.textContent = 'Change how it is set';
+  box.appendChild(head);
+
+  const apply = (change: Parameters<HandpressDocument['setLineStyle']>[2]): void => {
+    if (!document_.setLineStyle(pageIndex, line.id, change)) return;
+    // Redrawn from the stored style, not left as it was. Bold and italic only
+    // become available once a face has been chosen, and a panel that does not
+    // rebuild leaves them greyed out with a typeface already selected.
+    showProperties(line, page);
+    void viewer.rebuildPage(pageIndex).then(() => {
+      syncEditState();
+      scheduleAutosave();
+      void renderThumbs();
+    });
+  };
+
+  const row = (label: string, control: HTMLElement): void => {
+    const wrap = document.createElement('label');
+    wrap.className = 'restyle-row';
+    const text = document.createElement('span');
+    text.textContent = label;
+    wrap.append(text, control);
+    box.appendChild(wrap);
+  };
+
+  const family = document.createElement('select');
+  family.className = 'zoom-select';
+  for (const [value, label] of [
+    ['', "The document's own"],
+    ['Helvetica', 'Helvetica'],
+    ['Times', 'Times'],
+    ['Courier', 'Courier'],
+  ]) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    family.appendChild(opt);
+  }
+  family.value = current.family ?? '';
+  family.addEventListener('change', () =>
+    apply({ family: (family.value || undefined) as 'Helvetica' | 'Times' | 'Courier' | undefined }),
+  );
+  row('Typeface', family);
+
+  const weight = document.createElement('div');
+  weight.className = 'restyle-weight';
+  for (const [key, label] of [
+    ['bold', 'Bold'],
+    ['italic', 'Italic'],
+  ] as Array<['bold' | 'italic', string]>) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = current[key] ? 'btn tool-active' : 'btn';
+    b.textContent = label;
+    // Bold and italic only mean anything once a face has been chosen: the
+    // document's own font is whatever weight it already is, and there is no
+    // second file to switch to.
+    b.disabled = !family.value;
+    b.addEventListener('click', () => apply({ [key]: !current[key] }));
+    weight.appendChild(b);
+  }
+  row('Weight', weight);
+
+  const size = document.createElement('input');
+  size.className = 'range-input';
+  size.type = 'number';
+  size.min = '2';
+  size.max = '300';
+  size.step = '0.5';
+  size.placeholder = String(Math.round(line.segments[0]?.fontSize ?? 12));
+  if (current.size !== undefined) size.value = String(current.size);
+  size.addEventListener('change', () => apply({ size: size.value ? parseFloat(size.value) : undefined }));
+  row('Size', size);
+
+  const colour = document.createElement('input');
+  colour.type = 'color';
+  colour.className = 'add-color';
+  const shown = current.color ?? line.fill;
+  colour.value = `#${[shown.r, shown.g, shown.b]
+    .map((v) => Math.round(v * 255).toString(16).padStart(2, '0'))
+    .join('')}`;
+  colour.addEventListener('change', () => apply({ color: hexToRgb(colour.value) }));
+  row('Colour', colour);
+
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'btn';
+  reset.textContent = 'Back to the original';
+  reset.disabled = !Object.keys(current).length;
+  reset.addEventListener('click', () =>
+    apply({ family: undefined, bold: undefined, italic: undefined, size: undefined, color: undefined }),
+  );
+  box.appendChild(reset);
+
+  return box;
 }
 
 function escapeHtml(s: string): string {

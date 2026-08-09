@@ -1205,6 +1205,53 @@ body {
   white-space: nowrap;
 }
 
+/* ---------- restyling a line ---------- */
+
+.restyle {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--chrome-line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.restyle-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.restyle-row {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.restyle-row > span {
+  color: var(--ink-dim);
+}
+
+.restyle-row .range-input,
+.restyle-row .zoom-select {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.restyle-weight {
+  display: flex;
+  gap: 6px;
+}
+
+.restyle-weight .btn {
+  flex: 1;
+  padding: 4px 0;
+}
+
 /* ---------- what covers what ---------- */
 
 .arrange-menu {

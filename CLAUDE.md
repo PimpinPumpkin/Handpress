@@ -600,6 +600,20 @@ overlay biggest first, so the smallest thing under the pointer is on top and
 gets the click. Before that, a logo dragged onto a full width panel became
 unreachable, and right clicking it offered to rearrange the panel.
 
+## Restyling is the one place the styling rule is broken on purpose
+
+Every other path keeps a run's font, size and colour exactly as the producer
+wrote them. `LineStyle` on a `LineEdit` overrides them for one line, and the
+thing that has to survive is advance neutrality: Times at 18pt is not the width
+Helvetica at 12 was, so `buildLineFragment`'s closing correction is what stops a
+resized line pushing everything after it along. `tools/test-restyle.ts` watches
+the two lines below the edited one for exactly that.
+
+A chosen family skips coverage checking entirely, because coverage is a
+question about the document's own font and that is no longer the font being
+used. Only the three standard families are offered, so nothing has to be
+embedded for a change of typeface.
+
 ## A watermark, a header, a footer and page numbers are one feature
 
 They differ only in size, angle, opacity and where they sit, so

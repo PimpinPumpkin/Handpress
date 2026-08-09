@@ -32,7 +32,7 @@ check anything you are about to rely on.
 | Reflow a paragraph after an edit | Yes, across the whole flow | Within a paragraph only |
 | Add a text box | Yes | Yes |
 | Font matching for characters the subset lacks | Yes | Yes, local fonts then a standard face |
-| Change font, size, colour of existing text | Yes | No, an edit keeps the run's own styling |
+| Change font, size, colour of existing text | Yes | Yes, per line, from the three standard families |
 | Spell check | Yes | No |
 | Find and replace | Yes | Yes, one at a time or all |
 
@@ -43,16 +43,25 @@ check anything you are about to rely on.
 | Freehand pen | Yes | Yes, any width, any opacity |
 | Eraser for ink | Yes | Yes, strokes only |
 | Line, arrow, rectangle, oval | Yes | Yes |
-| Polygon, polyline, cloud | Yes | No |
+| Polygon, polyline, cloud | Yes | Yes |
 | Highlight, underline, strikethrough of text | Yes, as annotations | Highlight only, drawn onto the page |
 | Sticky note comment | Yes | Yes |
-| Text callout box | Yes | No |
+| Text callout box | Yes | Yes, box, leader and text in one drag |
 | Reply to a comment, comment threads | Yes | No |
 | Comment list, filter, summarise | Yes | No |
 | Stamps | Yes, a library | Signatures only |
 | Measuring tools | Yes | No |
 | Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
 | Bring to front, send to back, forward and back a step | Yes | Yes, with the page's own drawing as one rung |
+
+**On restyling.** Everything else here goes to lengths to keep a run's styling
+exactly as the producer wrote it, so this deliberately breaks that rule for one
+line. It applies to a whole line rather than a selection inside it, and offers
+only Helvetica, Times and Courier: any other face would have to be embedded, so
+a document would then depend on a font file for a change of typeface, where
+these three every reader already has. Restyled text still ends where it began,
+so nothing after it moves, which means a line set larger can run past the edge
+of the page.
 
 **On what covers what.** Acrobat's Arrange commands work on a full stack of
 objects. Handpress has three rungs: behind everything the page draws, where the

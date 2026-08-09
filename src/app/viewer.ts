@@ -40,7 +40,11 @@ export type ViewerMode =
   | 'arrow'
   | 'rect'
   | 'ellipse'
-  | 'crop';
+  | 'crop'
+  | 'polygon'
+  | 'polyline'
+  | 'cloud'
+  | 'callout';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -170,6 +174,70 @@ function sampleBackground(canvas: HTMLCanvasElement, rect: DOMRect, dpr: number)
  * arrow retraces its tip on the way to the second barb; a stroke drawn over
  * itself is invisible, and it saves carrying a second subpath around.
  */
+/**
+ * Turns a run of corners into a cloud outline.
+ *
+ * A revision cloud is a polygon whose every edge is a row of bumps on the
+ * outside. Each edge is walked in steps of roughly the scallop diameter and a
+ * half circle is drawn over each step, which is what gives the even scalloping
+ * a hand drawn cloud does not have and a printed one does.
+ *
+ * The bumps go on the outside, which for a polygon wound either way means
+ * picking the normal that points away from the middle. Getting that wrong
+ * gives a shape that looks bitten rather than puffy.
+ */
+function cloudPoints(
+  corners: Array<{ x: number; y: number }>,
+  scallop: number,
+): Array<{ x: number; y: number }> {
+  if (corners.length < 2) return corners;
+  const cx = corners.reduce((a, p) => a + p.x, 0) / corners.length;
+  const cy = corners.reduce((a, p) => a + p.y, 0) / corners.length;
+
+  const out: Array<{ x: number; y: number }> = [];
+  const radius = Math.max(3, scallop) / 2;
+
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % corners.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+
+    const bumps = Math.max(1, Math.round(len / (radius * 2)));
+    const step = len / bumps;
+    const ux = dx / len;
+    const uy = dy / len;
+    // The normal that points away from the middle of the shape.
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    let nx = -uy;
+    let ny = ux;
+    if ((mx - cx) * nx + (my - cy) * ny < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+
+    for (let k = 0; k < bumps; k++) {
+      const sx = a.x + ux * step * k;
+      const sy = a.y + uy * step * k;
+      const r = step / 2;
+      const bx = sx + ux * r;
+      const by = sy + uy * r;
+      // Half a circle over this step, as points, since ink is a point list.
+      const arc = 10;
+      for (let t = 0; t <= arc; t++) {
+        const ang = Math.PI - (t / arc) * Math.PI;
+        const px = Math.cos(ang) * r;
+        const py = Math.sin(ang) * r;
+        out.push({ x: bx + ux * px + nx * py, y: by + uy * px + ny * py });
+      }
+    }
+  }
+  return out;
+}
+
 function shapePoints(
   kind: 'line' | 'arrow' | 'rect' | 'ellipse',
   a: { x: number; y: number },
@@ -293,7 +361,14 @@ export class Viewer {
       p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign' || mode === 'note');
       p.overlay.classList.toggle(
       'erasing',
-      mode === 'erase' || mode === 'redact' || mode === 'highlight' || mode === 'crop',
+      mode === 'erase' ||
+        mode === 'redact' ||
+        mode === 'highlight' ||
+        mode === 'crop' ||
+        mode === 'polygon' ||
+        mode === 'polyline' ||
+        mode === 'cloud' ||
+        mode === 'callout',
     );
       p.overlay.classList.toggle(
         'drawing',
@@ -357,6 +432,14 @@ export class Viewer {
         }
         if (this.mode === 'line' || this.mode === 'arrow' || this.mode === 'rect' || this.mode === 'ellipse') {
           this.beginShape(this.pages[i], e, this.mode);
+          return;
+        }
+        if (this.mode === 'polygon' || this.mode === 'polyline' || this.mode === 'cloud') {
+          this.addPolyPoint(this.pages[i], e, this.mode);
+          return;
+        }
+        if (this.mode === 'callout') {
+          this.beginCallout(this.pages[i], e);
           return;
         }
         if (this.mode === 'crop') {
@@ -1246,6 +1329,286 @@ export class Viewer {
    * accumulated, because unlike a freehand line the shape has no history: only
    * where it started and where the pointer is now.
    */
+  /**
+   * The corner-at-a-time shapes: polygon, polyline and cloud.
+   *
+   * A drag cannot describe these, because the number of corners is not known
+   * until the last one is placed. So each click drops a corner, the edge to
+   * the pointer is previewed, and a double click, Enter or a click back on the
+   * first corner finishes it. Escape throws it away.
+   */
+  private poly: {
+    page: RenderedPage;
+    kind: 'polygon' | 'polyline' | 'cloud';
+    points: Array<{ x: number; y: number }>;
+    preview: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+    rect: DOMRect;
+    hint: (x: number, y: number) => void;
+    stop: () => void;
+  } | null = null;
+
+  private addPolyPoint(p: RenderedPage, down: PointerEvent, kind: 'polygon' | 'polyline' | 'cloud'): void {
+    if (!this.doc || !p.viewport) return;
+    down.preventDefault();
+
+    if (this.poly && this.poly.page !== p) this.finishPoly(false);
+
+    if (!this.poly) {
+      const rect = p.overlay.getBoundingClientRect();
+      const preview = document.createElement('canvas');
+      preview.className = 'ink-preview';
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      preview.width = Math.floor(rect.width * dpr);
+      preview.height = Math.floor(rect.height * dpr);
+      preview.style.width = `${rect.width}px`;
+      preview.style.height = `${rect.height}px`;
+      const ctx = preview.getContext('2d')!;
+      ctx.scale(dpr, dpr);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      p.container.appendChild(preview);
+
+      const onMove = (e: PointerEvent): void => {
+        if (!this.poly) return;
+        this.poly.hint(e.clientX - rect.left, e.clientY - rect.top);
+      };
+      const onKey = (e: KeyboardEvent): void => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.finishPoly(true);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          this.finishPoly(false);
+        }
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('keydown', onKey);
+
+      this.poly = {
+        page: p,
+        kind,
+        points: [],
+        preview,
+        ctx,
+        rect,
+        hint: (x, y) => this.paintPoly(x, y),
+        stop: () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('keydown', onKey);
+          preview.remove();
+        },
+      };
+    }
+
+    const at = { x: down.clientX - this.poly.rect.left, y: down.clientY - this.poly.rect.top };
+    const first = this.poly.points[0];
+    // Clicking back on the first corner closes the shape, which is the other
+    // way everyone expects to finish one.
+    if (first && this.poly.points.length > 2 && Math.hypot(at.x - first.x, at.y - first.y) < 8) {
+      this.finishPoly(true);
+      return;
+    }
+    // A double click puts down a corner and then finishes on the same spot, so
+    // the duplicate is dropped rather than drawn as a zero length edge.
+    const last = this.poly.points[this.poly.points.length - 1];
+    if (last && Math.hypot(at.x - last.x, at.y - last.y) < 2) {
+      this.finishPoly(true);
+      return;
+    }
+    this.poly.points.push(at);
+    this.paintPoly(at.x, at.y);
+    this.cb.onStatus(
+      this.poly.points.length < 2
+        ? 'Click the next corner. Double click, or Enter, to finish.'
+        : `${this.poly.points.length} corners. Double click, Enter, or click the first corner to finish.`,
+    );
+  }
+
+  /** Draws the corners so far plus the edge following the pointer. */
+  private paintPoly(hintX: number, hintY: number): void {
+    const poly = this.poly;
+    if (!poly) return;
+    const { ctx, rect, points } = poly;
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    if (!points.length) return;
+
+    ctx.globalAlpha = this.penOpacity;
+    ctx.strokeStyle = `rgb(${Math.round(this.penColor.r * 255)},${Math.round(this.penColor.g * 255)},${Math.round(this.penColor.b * 255)})`;
+    ctx.lineWidth = this.penWidth * this.zoom;
+
+    const live = [...points, { x: hintX, y: hintY }];
+    const drawn =
+      poly.kind === 'cloud' && live.length > 2 ? cloudPoints(live, this.penWidth * this.zoom * 6) : live;
+    ctx.beginPath();
+    drawn.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+    if (poly.kind !== 'polyline') ctx.closePath();
+    ctx.stroke();
+
+    // The corners themselves, so it is obvious where they landed.
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = ctx.strokeStyle;
+    for (const q of points) {
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** Commits the shape being clicked out, or throws it away. */
+  private finishPoly(keep: boolean): void {
+    const poly = this.poly;
+    if (!poly) return;
+    this.poly = null;
+    poly.stop();
+
+    const viewport = poly.page.viewport;
+    const enough = poly.kind === 'polyline' ? 2 : 3;
+    if (!keep || !this.doc || !viewport || poly.points.length < enough) {
+      if (keep) this.cb.onStatus(`That needs at least ${enough} corners.`, 'warn');
+      return;
+    }
+
+    const scallop = this.penWidth * 6;
+    const inPage = poly.points.map((q) => {
+      const [x, y] = viewport.convertToPdfPoint(q.x, q.y);
+      return { x, y };
+    });
+    const points = poly.kind === 'cloud' ? cloudPoints(inPage, scallop) : inPage;
+
+    this.doc.addInk(poly.page.index, {
+      color: { ...this.penColor },
+      width: this.penWidth,
+      opacity: this.penOpacity,
+      closed: poly.kind !== 'polyline',
+      points,
+    });
+    void this.rebuild(poly.page.index).then(() => {
+      this.cb.onStatus(
+        poly.kind === 'cloud' ? 'Cloud drawn.' : poly.kind === 'polygon' ? 'Polygon drawn.' : 'Polyline drawn.',
+      );
+      this.cb.onEdited();
+    });
+  }
+
+  /**
+   * A callout: a box of text with a line pointing at what it is about.
+   *
+   * Drag from the thing being commented on to where the box should sit. Three
+   * pieces come out of that one gesture, an arrow, a box and the text, because
+   * a callout is not a primitive here and does not need to be: it is the three
+   * things this can already draw, placed in one go so they line up.
+   *
+   * The text is opened for typing straight away. A callout with nothing in it
+   * is a box and an arrow pointing at nothing, and nobody draws one on purpose.
+   */
+  private beginCallout(p: RenderedPage, down: PointerEvent): void {
+    if (!this.doc || !p.viewport) return;
+    down.preventDefault();
+    const rect = p.overlay.getBoundingClientRect();
+    const viewport = p.viewport;
+
+    const preview = document.createElement('canvas');
+    preview.className = 'ink-preview';
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    preview.width = Math.floor(rect.width * dpr);
+    preview.height = Math.floor(rect.height * dpr);
+    preview.style.width = `${rect.width}px`;
+    preview.style.height = `${rect.height}px`;
+    const ctx = preview.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = `rgb(${Math.round(this.penColor.r * 255)},${Math.round(this.penColor.g * 255)},${Math.round(this.penColor.b * 255)})`;
+    ctx.lineWidth = this.penWidth * this.zoom;
+    p.container.appendChild(preview);
+
+    const at = { x: down.clientX - rect.left, y: down.clientY - rect.top };
+    let to = { ...at };
+
+    // Sized from the type, so a callout set larger gets a box that fits it.
+    const boxW = Math.max(90, this.addSize * 9) * this.zoom;
+    const boxH = Math.max(28, this.addSize * 2.2) * this.zoom;
+
+    const paint = (): void => {
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      ctx.beginPath();
+      ctx.moveTo(at.x, at.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.strokeRect(to.x, to.y - boxH / 2, boxW, boxH);
+    };
+    paint();
+
+    const move = (e: PointerEvent): void => {
+      to = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      paint();
+    };
+    let finished = false;
+    const up = (e: PointerEvent): void => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      to = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      preview.remove();
+
+      if (Math.hypot(to.x - at.x, to.y - at.y) < 8 || !this.doc) return;
+
+      const toPage = (q: { x: number; y: number }): { x: number; y: number } => {
+        const [x, y] = viewport.convertToPdfPoint(q.x, q.y);
+        return { x, y };
+      };
+      const tip = toPage(at);
+      const corner = toPage({ x: to.x, y: to.y - boxH / 2 });
+      const far = toPage({ x: to.x + boxW, y: to.y + boxH / 2 });
+
+      // The leader, then the box, then the text, so the text is on top of both.
+      this.doc.addInk(p.index, {
+        color: { ...this.penColor },
+        width: this.penWidth,
+        opacity: this.penOpacity,
+        closed: false,
+        points: [tip, toPage({ x: to.x, y: to.y })],
+      });
+      this.doc.addInk(p.index, {
+        color: { ...this.penColor },
+        width: this.penWidth,
+        opacity: this.penOpacity,
+        closed: true,
+        points: [
+          { x: corner.x, y: corner.y },
+          { x: far.x, y: corner.y },
+          { x: far.x, y: far.y },
+          { x: corner.x, y: far.y },
+        ],
+      });
+
+      // A little in from the box's own corner, and down to a baseline that
+      // sits inside it rather than on its edge.
+      const pad = this.addSize * 0.45;
+      const draft: TextInsertion = {
+        id: 'draft',
+        x: Math.min(corner.x, far.x) + pad,
+        y: Math.min(corner.y, far.y) + pad + this.addSize * 0.25,
+        size: this.addSize,
+        color: { ...this.addColor },
+        text: '',
+        bold: false,
+        italic: false,
+      };
+      void this.rebuild(p.index).then(() => {
+        this.cb.onEdited();
+        this.draftInsertion = true;
+        this.openInsertionEditor(p, draft, viewport as never);
+        this.cb.onStatus('Type the note. It becomes ordinary added text, so it can be retyped or moved later.');
+      });
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
   private beginShape(p: RenderedPage, down: PointerEvent, kind: 'line' | 'arrow' | 'rect' | 'ellipse'): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();
@@ -1999,7 +2362,12 @@ export class Viewer {
       this.mode === 'line' ||
       this.mode === 'arrow' ||
       this.mode === 'rect' ||
-      this.mode === 'ellipse'
+      this.mode === 'ellipse' ||
+      this.mode === 'polygon' ||
+      this.mode === 'polyline' ||
+      this.mode === 'cloud' ||
+      this.mode === 'callout' ||
+      this.mode === 'crop'
     );
   }
 
@@ -2226,6 +2594,17 @@ export class Viewer {
       () => undefined,
     );
     return run;
+  }
+
+  /**
+   * Rebuilds one page and repaints it, for a change made outside the viewer.
+   *
+   * The properties panel restyles a line, which is an edit like any other and
+   * has to go through the same chain as a drag or a retype rather than around
+   * it, or a restyle landing during a render settles on a composite.
+   */
+  async rebuildPage(index: number): Promise<void> {
+    await this.rebuild(index);
   }
 
   /** Rebuilds the document and repaints, shared by anything that changes it. */

@@ -27,6 +27,7 @@ import {
   type RectFill,
   type InkStroke,
   type GraphicEdit,
+  type LineStyle,
   type ZOrderEdit,
   type TextInsertion,
 } from '../pdf/writer';
@@ -56,6 +57,7 @@ interface EditState {
   edits: Map<number, Map<string, string>>;
   lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
   imageEdits: Map<number, Map<string, ImageEdit>>;
+  lineStyles: Map<number, Map<string, LineStyle>>;
   graphicEdits: Map<number, Map<string, GraphicEdit>>;
   zOrder: Map<number, Map<string, ZOrderEdit>>;
   erasures: Map<number, Map<string, RectFill>>;
@@ -177,6 +179,8 @@ export class HandpressDocument {
   private extraDocs: Array<{ name: string; bytes: Uint8Array }> = [];
   /** pageIndex -> image id -> how that image has been moved, resized or removed. */
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
+  /** pageIndex -> lineId -> a change of typeface, size or colour for that line. */
+  private lineStyles = new Map<number, Map<string, LineStyle>>();
   /** pageIndex -> graphic id -> how far that drawing has been dragged. */
   private graphicEdits = new Map<number, Map<string, GraphicEdit>>();
   /** pageIndex -> object id -> which side of the page's own drawing it sits on. */
@@ -363,6 +367,7 @@ export class HandpressDocument {
     for (const m of this.edits.values()) if (m.size) return true;
     for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.imageEdits.values()) if (m.size) return true;
+    for (const m of this.lineStyles.values()) if (m.size) return true;
     for (const m of this.graphicEdits.values()) if (m.size) return true;
     for (const m of this.zOrder.values()) if (m.size) return true;
     for (const m of this.erasures.values()) if (m.size) return true;
@@ -388,6 +393,7 @@ export class HandpressDocument {
     for (const m of this.edits.values()) n += m.size;
     for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.imageEdits.values()) n += m.size;
+    for (const m of this.lineStyles.values()) n += m.size;
     for (const m of this.graphicEdits.values()) n += m.size;
     for (const m of this.zOrder.values()) n += m.size;
     for (const m of this.erasures.values()) n += m.size;
@@ -416,6 +422,7 @@ export class HandpressDocument {
       edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
       lineOffsets: new Map([...this.lineOffsets].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       imageEdits: new Map([...this.imageEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
+      lineStyles: new Map([...this.lineStyles].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       graphicEdits: new Map(
         [...this.graphicEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))]),
       ),
@@ -436,6 +443,7 @@ export class HandpressDocument {
     this.edits = state.edits;
     this.lineOffsets = state.lineOffsets;
     this.imageEdits = state.imageEdits;
+    this.lineStyles = state.lineStyles;
     this.graphicEdits = state.graphicEdits;
     this.zOrder = state.zOrder;
     this.erasures = state.erasures;
@@ -488,6 +496,46 @@ export class HandpressDocument {
     const page = this.lineCache.get(pageIndex);
     const across = page ? (page.rotation % 180 ? page.height : page.width) : 612;
     this.lastOverflow = rewrapped ? 0 : overflowOf(line, newText, across);
+    return true;
+  }
+
+  /** How a line has been restyled, if it has. */
+  styleFor(pageIndex: number, lineId: string): LineStyle {
+    return this.lineStyles.get(pageIndex)?.get(lineId) ?? {};
+  }
+
+  /**
+   * Changes the typeface, size or colour of a whole line.
+   *
+   * The whole line rather than a selection inside it, because a line is the
+   * unit everything else here works in and a partial restyle would need a
+   * second one. Fields left out keep what the document already had, so setting
+   * a colour really does set only a colour.
+   *
+   * A change of typeface is limited to the three standard families. Anything
+   * else would mean embedding a font file so that a document depends on it for
+   * a change of typeface; these three every reader already has.
+   */
+  setLineStyle(pageIndex: number, lineId: string, change: LineStyle): boolean {
+    const current = this.styleFor(pageIndex, lineId);
+    const next: LineStyle = { ...current, ...change };
+    // Undefined entries are removed rather than kept, so a style emptied back
+    // out stops counting as an edit at all.
+    for (const key of Object.keys(next) as Array<keyof LineStyle>) {
+      if (next[key] === undefined) delete next[key];
+    }
+    if (JSON.stringify(next) === JSON.stringify(current)) return false;
+
+    const before = this.snapshot();
+    let page = this.lineStyles.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.lineStyles.set(pageIndex, page);
+    }
+    if (!Object.keys(next).length) page.delete(lineId);
+    else page.set(lineId, next);
+    this.undoStack.push(before);
+    this.redoStack = [];
     return true;
   }
 
@@ -1607,6 +1655,7 @@ export class HandpressDocument {
       ...this.edits.keys(),
       ...this.lineOffsets.keys(),
       ...this.imageEdits.keys(),
+      ...this.lineStyles.keys(),
       ...this.graphicEdits.keys(),
       ...this.zOrder.keys(),
       ...this.erasures.keys(),
@@ -1622,6 +1671,7 @@ export class HandpressDocument {
       const pageInsertions = [...(this.insertions.get(pageIndex)?.values() ?? [])];
       const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
       const pageImages = [...(this.imageEdits.get(pageIndex)?.values() ?? [])];
+      const pageStyles = this.lineStyles.get(pageIndex) ?? new Map<string, LineStyle>();
       const pageGraphics = [...(this.graphicEdits.get(pageIndex)?.values() ?? [])];
       const pageZOrder = [...(this.zOrder.get(pageIndex)?.values() ?? [])];
       const pageErasures = [...(this.erasures.get(pageIndex)?.values() ?? [])];
@@ -1635,6 +1685,7 @@ export class HandpressDocument {
       if (
         !pageEdits.size &&
         !pageOffsets.size &&
+        !pageStyles.size &&
         !pageInsertions.length &&
         !pageStamps.length &&
         !pageImages.length &&
@@ -1672,7 +1723,12 @@ export class HandpressDocument {
 
         const list: LineEdit[] = [];
         const byId = new Map(lines.map((l) => [l.id, l]));
-        for (const lineId of new Set([...pageEdits.keys(), ...pageOffsets.keys(), ...redactRanges.keys()])) {
+        for (const lineId of new Set([
+          ...pageEdits.keys(),
+          ...pageOffsets.keys(),
+          ...redactRanges.keys(),
+          ...pageStyles.keys(),
+        ])) {
           const line = byId.get(lineId);
           if (!line) continue;
           const offset = pageOffsets.get(lineId);
@@ -1682,6 +1738,7 @@ export class HandpressDocument {
             dx: offset?.dx ?? 0,
             dy: offset?.dy ?? 0,
             redact: redactRanges.get(lineId),
+            style: pageStyles.get(lineId),
           });
         }
 
