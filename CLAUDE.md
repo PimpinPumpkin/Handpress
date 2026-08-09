@@ -600,6 +600,33 @@ overlay biggest first, so the smallest thing under the pointer is on top and
 gets the click. Before that, a logo dragged onto a full width panel became
 unreachable, and right clicking it offered to rearrange the panel.
 
+Text outranks drawings outright, by z-index rather than order. A panel drawn
+round a paragraph is offered as one movable graphic and appended after the
+text boxes its box covers, so on a real report every click on the receipt
+text hit the panel and the text read as uneditable. Drawings keep their
+biggest-first order among themselves at their own layer; form fields sit
+above everything, because a control that cannot be reached is not one.
+
+**A drawing whose every path sits in its own q...Q block is still one
+drawing.** Producers stamp icons out clip-by-clip: q, clip, path, Q, again
+per path. A byte range from the first path to the last then closes brackets
+it never opened, read as unbalanced, and was refused: on a real report the
+Twitter mark could not be moved while its neighbour, drawn as one block,
+could. `blockSpan` widens the range to cover the straddled blocks whole and
+the move goes through the block machinery, carrying each path's clip and
+matrix inside it. Two conditions keep it honest: everything inside the
+widened range must belong to the group, and when the group's clip is tight
+but set outside the span, the span widens again to the block that holds the
+clip or the group is refused, because five corpus documents showed the
+drawing sliding out from under a clip that stayed behind.
+
+**A run also ends at a matrix set at the paths' own level.** Moving a group
+writes `cm` brackets at its edges, and a moved group that landed next to a
+bystander used to join it on the next parse, straddle its own bracket, fail
+the balance check, and turn unmovable for good after one move. Ending the
+run at the cm keeps both sides offerable; matrices inside deeper blocks do
+not end anything.
+
 ## A drawing cut to its own shape vanishes when it is moved
 
 This was the single worst bug in the object editing: dragging any small icon on

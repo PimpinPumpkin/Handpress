@@ -1924,6 +1924,29 @@ body {
   touch-action: none;
 }
 
+/* Text outranks drawings where their boxes overlap. A panel drawn round a
+   paragraph is offered as one big movable graphic, and appended after the
+   text its box covers, so on a real report every click on the receipt text
+   landed on the panel instead and the text read as uneditable. The panel
+   stays grabbable by its empty parts; the words inside it belong to the
+   words. Drawings keep their own biggest-first DOM order among themselves,
+   which is what lets the smallest thing under the pointer win a click. */
+.page-overlay .line-box {
+  z-index: 2;
+}
+
+.page-overlay .graphic-box,
+.page-overlay .image-box,
+.page-overlay .ink-box {
+  z-index: 1;
+}
+
+/* A form field is a control, and a control that cannot be reached is not
+   one: it outranks both the text and any drawing whose box covers it. */
+.page-overlay .field-box {
+  z-index: 3;
+}
+
 .erase-preview {
   position: absolute;
   background: rgba(208, 69, 63, 0.22);

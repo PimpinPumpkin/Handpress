@@ -198,6 +198,64 @@ function enclosingBlock(
 }
 
 /**
+ * The smallest run of whole q...Q blocks that covers a byte range.
+ *
+ * Plenty of producers wrap every path of an icon in its own block: q, clip,
+ * draw, Q, again and again. A range from the first path to the last then
+ * closes brackets it never opened and reads as unbalanced, and those icons
+ * were never offered at all: on a real report the Twitter mark could not be
+ * moved while its neighbour, drawn as one block, could. The blocks are what
+ * the producer treated as the unit, so the range is widened to cover them
+ * whole, and a move then carries every path's own clip and matrix inside it.
+ */
+function blockSpan(
+  marks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' | 'clip'; ctm?: PathOp['ctm'] }>,
+  start: number,
+  end: number,
+): { start: number; end: number; ctm?: PathOp['ctm'] } | null {
+  const opens: Array<{ pos: number; ctm?: PathOp['ctm'] }> = [];
+  const pairs: Array<{ open: number; close: number; ctm?: PathOp['ctm'] }> = [];
+  for (const m of marks) {
+    if (m.op === 'q') opens.push({ pos: m.pos, ctm: m.ctm });
+    else if (m.op === 'Q') {
+      const open = opens.pop();
+      if (open) pairs.push({ open: open.pos, close: m.pos, ctm: open.ctm });
+    }
+  }
+
+  let s = start;
+  let e = end;
+  // A block with exactly one foot inside the range pulls the edge out until
+  // it is covered whole. Well nested, so this settles; the guard is for
+  // streams that are not.
+  for (let guard = 0; guard < 32; guard++) {
+    let grew = false;
+    for (const b of pairs) {
+      const openInside = b.open >= s && b.open < e;
+      const closeInside = b.close >= s && b.close < e;
+      if (openInside === closeInside) continue;
+      if (b.open < s) {
+        s = b.open;
+        grew = true;
+      }
+      if (b.close >= e) {
+        e = b.close + 1;
+        grew = true;
+      }
+    }
+    if (!grew) break;
+  }
+
+  // The matrix the widened range starts under. When the start moved to a q,
+  // it is the one recorded there; a start that never moved keeps the caller's
+  // own matrix, which the caller substitutes for the missing one.
+  if (s === start) return { start: s, end: e };
+  const at = pairs.find((b) => b.open === s);
+  if (!at?.ctm) return null;
+  return { start: s, end: e, ctm: at.ctm };
+}
+
+/**
  * Finds the movable drawings on a page.
  *
  * Paths join a group when they follow the previous one immediately in the
@@ -227,6 +285,28 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
   const intervenes = (streamId: string, from: number, to: number): boolean =>
     from < to && foreign.some((o) => o.streamId === streamId && o.start >= from && o.start < to);
 
+  // A matrix set at the paths' own level between two of them also ends the
+  // run. A range across it would bracket the matrix inside the translation,
+  // which the balance check refuses later anyway; ending the run instead
+  // keeps both sides offerable. This is not hypothetical: moving a group
+  // writes exactly such a cm at its edges, and a moved group that landed
+  // next to a bystander used to join it, straddle its own bracket, and turn
+  // unmovable for good after one move. Matrices inside deeper blocks are
+  // fine, so each cm is recorded with the q-depth it occurs at.
+  const cmMarks = new Map<string, Array<{ pos: number; depth: number }>>();
+  for (const [sid, ms] of walk.stateMarks) {
+    let d = 0;
+    const list: Array<{ pos: number; depth: number }> = [];
+    for (const m of ms) {
+      if (m.op === 'q') d++;
+      else if (m.op === 'Q') d = Math.max(0, d - 1);
+      else if (m.op === 'cm') list.push({ pos: m.pos, depth: d });
+    }
+    cmMarks.set(sid, list);
+  }
+  const cmBreaks = (streamId: string, from: number, to: number, below: number): boolean =>
+    from < to && (cmMarks.get(streamId) ?? []).some((c) => c.pos >= from && c.pos < to && c.depth < below);
+
   for (const path of walk.paths) {
     // A path big enough to be background is near everything, so left in the
     // sequence it drags the whole page into one group: on a document with a
@@ -247,6 +327,7 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
       path.index === last.index + 1 &&
       path.depth === last.depth &&
       !intervenes(path.streamId, last.end, path.start) &&
+      !cmBreaks(path.streamId, last.end, path.start, path.depth) &&
       near(bounds(open!), path);
     if (joins) open!.push(path);
     else {
@@ -273,7 +354,51 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
     const start = first.start;
     const end = group[group.length - 1].end;
     const marks = walk.stateMarks.get(first.streamId) ?? [];
-    if (!isBalanced(marks, start, end)) continue;
+
+    // A run whose paths each sit in their own q...Q reads as unbalanced from
+    // inside the first block to inside the last. Those are exactly the icons
+    // a producer stamps out clip-by-clip, so instead of refusing, the range
+    // is widened to cover the blocks whole and moved through the same block
+    // machinery a tight clip already uses. Everything inside the widened
+    // range must belong to the group, or the widening is quietly a merge.
+    let span: { start: number; end: number; ctm?: PathOp['ctm'] } | null = null;
+    if (!isBalanced(marks, start, end)) {
+      span = blockSpan(marks, start, end);
+
+      // The clip has to travel too. When each path carries its clip inside
+      // its own block the span already holds them all, but plenty of files
+      // put one shared clip a level further out: q, clip, then the blocks.
+      // Moving just the blocks slid the drawing out from under that clip and
+      // it came back cut, which the corpus caught on five documents at once.
+      // The span widens to the block that holds the clip, or the group is
+      // refused the way it always was.
+      const clipHere = first.state.clip;
+      const tightHere =
+        !!clipHere &&
+        Math.min(
+          box.x0 - clipHere.x0,
+          clipHere.x1 - box.x1,
+          box.y0 - clipHere.y0,
+          clipHere.y1 - box.y1,
+        ) < CLIP_ROOM;
+      if (span && tightHere) {
+        const holdsClip = marks.some((k) => k.op === 'clip' && k.pos > span!.start && k.pos < span!.end);
+        if (!holdsClip) {
+          span = enclosingBlock(marks, [...walk.ops, ...walk.images, ...walk.paths], span.start, span.end);
+        }
+      }
+
+      const inSpan = (op: { streamId: string; start: number }): boolean =>
+        !!span && op.streamId === first.streamId && op.start >= span.start && op.start < span.end;
+      const clean =
+        !!span &&
+        isBalanced(marks, span.start, span.end) &&
+        !walk.ops.some(inSpan) &&
+        !walk.images.some(inSpan) &&
+        !walk.forms.some(inSpan) &&
+        !walk.paths.some((p2) => inSpan(p2) && !group.includes(p2));
+      if (!clean) continue;
+    }
 
     // A backstop. Runs are already ended at anything drawn through them, so
     // this should never fire; it is here because the cost of it being wrong
@@ -288,8 +413,9 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
     const tight =
       !!clip &&
       Math.min(box.x0 - clip.x0, clip.x1 - box.x1, box.y0 - clip.y0, clip.y1 - box.y1) < CLIP_ROOM;
-    const block =
-      tight && first.streamId === 'page'
+    const block = span
+      ? { start: span.start, end: span.end, ctm: span.ctm ?? first.ctm }
+      : tight && first.streamId === 'page'
         ? enclosingBlock(marks, [...walk.ops, ...walk.images, ...walk.paths], start, end) ?? undefined
         : undefined;
 
