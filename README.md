@@ -349,6 +349,26 @@ at, and the grouping refuses them rather than guessing. A moved drawing keeps
 its place in the painting order too, so one taken from the top of a page and
 dropped into the middle of it can land behind something drawn later.
 
+### What covers what
+
+Right click a drawing or an image for the four commands: bring to front, bring
+forward, send backward, send to back. A PDF has no z index, so what is in front
+is simply whatever was drawn last, and these lift an object out of where it sits
+and draw it again at the end of the page or the start of it, with the colour,
+width and transparency it was drawn under put back around it.
+
+There are three rungs rather than a full stack: behind everything the page
+draws, where the file put it, and in front of everything. Objects pushed to the
+same side are ordered against each other, so stepping through a pile of them
+works. The page's own drawing is one rung, because reordering an object into the
+middle of the page's text and rules would mean rewriting the whole stream rather
+than lifting one object out of it. The menu tells you which rung the object is
+on, so the four commands are not a guess.
+
+An object cut to a shape by the page will not move in front of it: the clip
+would stay behind and the drawing would spill out. A page-sized clip, which
+nearly every page has, does not count as cutting anything.
+
 ### If the tab goes away
 
 Everything happens in the browser, so there is no account to save to and nothing

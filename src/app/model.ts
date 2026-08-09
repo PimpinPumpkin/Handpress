@@ -26,6 +26,7 @@ import {
   type RectFill,
   type InkStroke,
   type GraphicEdit,
+  type ZOrderEdit,
   type TextInsertion,
 } from '../pdf/writer';
 import { findGraphics, type Graphic } from '../pdf/graphics';
@@ -55,6 +56,7 @@ interface EditState {
   lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
   imageEdits: Map<number, Map<string, ImageEdit>>;
   graphicEdits: Map<number, Map<string, GraphicEdit>>;
+  zOrder: Map<number, Map<string, ZOrderEdit>>;
   erasures: Map<number, Map<string, RectFill>>;
   ink: Map<number, Map<string, InkStroke>>;
   redactions: Map<number, Map<string, RedactionArea>>;
@@ -167,6 +169,8 @@ export class HandpressDocument {
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
   /** pageIndex -> graphic id -> how far that drawing has been dragged. */
   private graphicEdits = new Map<number, Map<string, GraphicEdit>>();
+  /** pageIndex -> object id -> which side of the page's own drawing it sits on. */
+  private zOrder = new Map<number, Map<string, ZOrderEdit>>();
   /** pageIndex -> the movable drawings found on it, worked out once per parse. */
   private graphicCache = new Map<number, Graphic[]>();
   /** pageIndex -> erasure id -> a rectangle painted over the page. */
@@ -350,6 +354,7 @@ export class HandpressDocument {
     for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.imageEdits.values()) if (m.size) return true;
     for (const m of this.graphicEdits.values()) if (m.size) return true;
+    for (const m of this.zOrder.values()) if (m.size) return true;
     for (const m of this.erasures.values()) if (m.size) return true;
     for (const m of this.ink.values()) if (m.size) return true;
     for (const m of this.redactions.values()) if (m.size) return true;
@@ -374,6 +379,7 @@ export class HandpressDocument {
     for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.imageEdits.values()) n += m.size;
     for (const m of this.graphicEdits.values()) n += m.size;
+    for (const m of this.zOrder.values()) n += m.size;
     for (const m of this.erasures.values()) n += m.size;
     for (const m of this.ink.values()) n += m.size;
     for (const m of this.redactions.values()) n += m.size;
@@ -403,6 +409,7 @@ export class HandpressDocument {
       graphicEdits: new Map(
         [...this.graphicEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))]),
       ),
+      zOrder: new Map([...this.zOrder].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       erasures: new Map([...this.erasures].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       ink: new Map([...this.ink].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o, points: o.points.map((q) => ({ ...q })) }]))])),
       redactions: new Map([...this.redactions].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
@@ -420,6 +427,7 @@ export class HandpressDocument {
     this.lineOffsets = state.lineOffsets;
     this.imageEdits = state.imageEdits;
     this.graphicEdits = state.graphicEdits;
+    this.zOrder = state.zOrder;
     this.erasures = state.erasures;
     this.ink = state.ink;
     this.redactions = state.redactions;
@@ -875,6 +883,97 @@ export class HandpressDocument {
     });
   }
 
+  /**
+   * Where an object sits relative to the page's own drawing.
+   *
+   * Three rungs, not a full stack: behind everything the page draws, where the
+   * file put it, or in front of everything. Objects that have been pushed to
+   * the same side are ordered against each other, so stepping through a pile
+   * of them works, but the page's own drawing is one rung and cannot be
+   * stepped into the middle of. Reordering against the text and rules between
+   * objects would mean rewriting the whole stream rather than lifting one
+   * object out of it, and that is a different and much less safe operation.
+   */
+  zoneOf(pageIndex: number, objectId: string): 'back' | 'page' | 'front' {
+    return this.zOrder.get(pageIndex)?.get(objectId)?.zone ?? 'page';
+  }
+
+  /** Every object on the page that has been pushed to one side or the other. */
+  private zEntries(pageIndex: number): ZOrderEdit[] {
+    return [...(this.zOrder.get(pageIndex)?.values() ?? [])];
+  }
+
+  /**
+   * Moves an object up or down the stack, or all the way to one end.
+   *
+   * A step out of the page's own rung lands at the near edge of the zone it
+   * enters, so one step forward from the page puts an object just in front of
+   * the page and behind anything already brought forward. Stepping back out of
+   * a zone returns it to the page rather than skipping across.
+   */
+  restack(pageIndex: number, objectId: string, how: 'front' | 'back' | 'forward' | 'backward'): boolean {
+    const entries = this.zEntries(pageIndex).filter((e) => e.objectId !== objectId);
+    const front = entries.filter((e) => e.zone === 'front').sort((a, b) => a.rank - b.rank);
+    const back = entries.filter((e) => e.zone === 'back').sort((a, b) => a.rank - b.rank);
+    const current = this.zOrder.get(pageIndex)?.get(objectId) ?? null;
+
+    let next: ZOrderEdit | null = null;
+    if (how === 'front') {
+      next = { objectId, zone: 'front', rank: (front[front.length - 1]?.rank ?? 0) + 1 };
+    } else if (how === 'back') {
+      next = { objectId, zone: 'back', rank: (back[0]?.rank ?? 0) - 1 };
+    } else if (how === 'forward') {
+      if (!current) next = { objectId, zone: 'front', rank: (front[0]?.rank ?? 1) - 1 };
+      else if (current.zone === 'front') {
+        // Swap with whatever is directly above, if anything is.
+        const above = front.find((e) => e.rank > current.rank);
+        if (!above) return false;
+        next = { objectId, zone: 'front', rank: above.rank };
+        above.rank = current.rank;
+      } else {
+        const above = [...back].reverse().find((e) => e.rank > current.rank);
+        // Nothing above it in the back zone means the next rung up is the page.
+        if (!above) next = null;
+        else {
+          next = { objectId, zone: 'back', rank: above.rank };
+          above.rank = current.rank;
+        }
+      }
+    } else {
+      if (!current) next = { objectId, zone: 'back', rank: (back[back.length - 1]?.rank ?? -1) + 1 };
+      else if (current.zone === 'back') {
+        const below = [...back].reverse().find((e) => e.rank < current.rank);
+        if (!below) return false;
+        next = { objectId, zone: 'back', rank: below.rank };
+        below.rank = current.rank;
+      } else {
+        const below = [...front].reverse().find((e) => e.rank < current.rank);
+        if (!below) next = null;
+        else {
+          next = { objectId, zone: 'front', rank: below.rank };
+          below.rank = current.rank;
+        }
+      }
+    }
+
+    if (next && current && next.zone === current.zone && next.rank === current.rank) return false;
+    if (!next && !current) return false;
+
+    const before = this.snapshot();
+    let page = this.zOrder.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.zOrder.set(pageIndex, page);
+    }
+    // Neighbours that were swapped past have to be written back too.
+    for (const e of [...front, ...back]) page.set(e.objectId, e);
+    if (next) page.set(objectId, next);
+    else page.delete(objectId);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
   /** Moves a drawing by a page-space delta. */
   moveGraphic(pageIndex: number, graphicId: string, dx: number, dy: number): boolean {
     if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return false;
@@ -1243,6 +1342,7 @@ export class HandpressDocument {
       ...this.lineOffsets.keys(),
       ...this.imageEdits.keys(),
       ...this.graphicEdits.keys(),
+      ...this.zOrder.keys(),
       ...this.erasures.keys(),
       ...this.redactions.keys(),
       ...this.insertions.keys(),
@@ -1257,6 +1357,7 @@ export class HandpressDocument {
       const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
       const pageImages = [...(this.imageEdits.get(pageIndex)?.values() ?? [])];
       const pageGraphics = [...(this.graphicEdits.get(pageIndex)?.values() ?? [])];
+      const pageZOrder = [...(this.zOrder.get(pageIndex)?.values() ?? [])];
       const pageErasures = [...(this.erasures.get(pageIndex)?.values() ?? [])];
       const pageRedactions = [...(this.redactions.get(pageIndex)?.values() ?? [])];
       const pageNotes = [...(this.notes.get(pageIndex)?.values() ?? [])];
@@ -1275,7 +1376,8 @@ export class HandpressDocument {
         !pageRedactions.length &&
         !pageNotes.length &&
         !pageInk.length &&
-        !pageGraphics.length
+        !pageGraphics.length &&
+        !pageZOrder.length
       ) {
         continue;
       }
@@ -1344,6 +1446,7 @@ export class HandpressDocument {
           pageErasures,
           pageInk,
           pageGraphics,
+          pageZOrder,
         );
         warnings.push(...result.warnings);
       } catch (e) {

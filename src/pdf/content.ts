@@ -103,11 +103,95 @@ interface TextState {
 interface GState {
   ctm: Matrix;
   fill: RGB;
+  stroke: RGB;
+  lineWidth: number;
+  /** Name of the last ExtGState selected, which is where transparency lives. */
+  extGState: string | null;
+  /** The dash operator's operands, kept verbatim rather than parsed. */
+  dash: string | null;
+  /**
+   * The clipping rectangle in force, in page space, or null for none.
+   *
+   * Nearly every page clips to its own box before drawing anything, so
+   * treating any clip at all as a reason to refuse would refuse everything.
+   * What matters is whether the clip actually cuts the object, which needs the
+   * shape, not the fact of it.
+   */
+  clip: Box | null;
+  /**
+   * True when a clip was set from something other than a single rectangle.
+   *
+   * The bounding box of a star is bigger than the star, so an object inside
+   * the box may still be cut by the shape. Anything under a clip this cannot
+   * describe exactly is refused rather than guessed at.
+   */
+  clipComplex: boolean;
   text: TextState;
 }
 
 function cloneState(s: GState): GState {
-  return { ctm: [...s.ctm] as Matrix, fill: { ...s.fill }, text: { ...s.text } };
+  return {
+    ctm: [...s.ctm] as Matrix,
+    fill: { ...s.fill },
+    stroke: { ...s.stroke },
+    lineWidth: s.lineWidth,
+    extGState: s.extGState,
+    dash: s.dash,
+    clip: s.clip ? { ...s.clip } : null,
+    clipComplex: s.clipComplex,
+    text: { ...s.text },
+  };
+}
+
+/**
+ * Enough of the graphics state to draw something again somewhere else.
+ *
+ * Changing what is in front of what means taking an object's operators out of
+ * where they sit and emitting them at the end of the page, and an object's
+ * operators do not carry the colour, width or transparency they were drawn
+ * with: those were set earlier by whatever came before. Re-emitting them is
+ * the difference between a logo that moves to the front and a black rectangle
+ * that moves to the front.
+ *
+ * Colour is kept as RGB rather than as the operators that set it, so a spot or
+ * ICC colour comes back as its RGB equivalent. That is a shift no one will see
+ * on screen and a real one on a press, which is the honest trade for not
+ * reimplementing colour space resolution to move a logo forward.
+ */
+export interface DrawState {
+  ctm: Matrix;
+  fill: RGB;
+  stroke: RGB;
+  lineWidth: number;
+  extGState: string | null;
+  dash: string | null;
+  /** The clipping rectangle in force, in page space, or null for none. */
+  clip: Box | null;
+  /** True when the clip is a shape this cannot describe as a rectangle. */
+  clipComplex: boolean;
+}
+
+/** An axis-aligned box in page space. */
+export interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * Whether an object can be lifted out of where it sits and drawn elsewhere.
+ *
+ * Only the clip stops it. Moving an object to the front of the page leaves any
+ * clipping path behind, so a drawing that was cut to a shape would spill out
+ * of it. A clip that does not reach the object was never cutting it, and a
+ * page-sized clip reaches nothing.
+ */
+export function canLift(state: DrawState, box: Box): boolean {
+  if (state.clipComplex) return false;
+  if (!state.clip) return true;
+  const c = state.clip;
+  return box.x0 >= c.x0 - 0.5 && box.x1 <= c.x1 + 0.5 && box.y0 >= c.y0 - 0.5 && box.y1 <= c.y1 + 0.5;
 }
 
 function streamBytes(stream: PDFStream): Uint8Array | null {
@@ -119,6 +203,9 @@ function streamBytes(stream: PDFStream): Uint8Array | null {
     return null;
   }
 }
+
+/** Content streams are bytes; the operands worth copying back out are ASCII. */
+const LATIN1 = new TextDecoder('latin1');
 
 function cmykToRgb(c: number, m: number, y: number, k: number): RGB {
   return { r: (1 - c) * (1 - k), g: (1 - m) * (1 - k), b: (1 - y) * (1 - k) };
@@ -139,6 +226,8 @@ export interface ImageOp {
   end: number;
   name: string;
   ctm: Matrix;
+  /** Enough state to draw this again somewhere else in the stream. */
+  state: DrawState;
   /** Axis-aligned bounds in page space, PDF coordinates. */
   x0: number;
   y0: number;
@@ -165,6 +254,8 @@ export interface PathOp {
   ctm: Matrix;
   /** q/Q nesting depth at the point the path is drawn. */
   depth: number;
+  /** Enough state to draw this again somewhere else in the stream. */
+  state: DrawState;
   /** Axis-aligned bounds in page space, PDF coordinates. */
   x0: number;
   y0: number;
@@ -192,6 +283,19 @@ export interface WalkResult {
   fonts: Map<string, LoadedFont>;
   /** Resource dictionary in scope for each stream, needed to add fallback fonts. */
   resources: Map<string, PDFDict | null>;
+}
+
+function snapshotState(gs: GState): DrawState {
+  return {
+    ctm: [...gs.ctm] as Matrix,
+    fill: { ...gs.fill },
+    stroke: { ...gs.stroke },
+    lineWidth: gs.lineWidth,
+    extGState: gs.extGState,
+    dash: gs.dash,
+    clip: gs.clip ? { ...gs.clip } : null,
+    clipComplex: gs.clipComplex,
+  };
 }
 
 /** Replays a page's content streams and collects every show-text operator. */
@@ -228,6 +332,8 @@ function walkStream(
   baseCtm: Matrix,
   depth: number,
   visited: Set<string>,
+  baseClip: Box | null = null,
+  baseClipComplex = false,
 ): void {
   let toks: Token[];
   try {
@@ -251,6 +357,14 @@ function walkStream(
   let gs: GState = {
     ctm: [...baseCtm] as Matrix,
     fill: { r: 0, g: 0, b: 0 },
+    stroke: { r: 0, g: 0, b: 0 },
+    lineWidth: 1,
+    extGState: null,
+    dash: null,
+    // A form drawn inside a clip inherits it, so this starts from the caller's
+    // scope rather than from nothing.
+    clip: baseClip,
+    clipComplex: baseClipComplex,
     text: {
       font: null,
       fontResourceName: '',
@@ -286,6 +400,10 @@ function walkStream(
   let pathMaxX = -Infinity;
   let pathMaxY = -Infinity;
   let pendingClip = false;
+  // A clip is only describable when its path was a single rectangle, which is
+  // what almost every clip in the wild actually is.
+  let pathRects = 0;
+  let pathOps = 0;
 
   const addPathPoint = (x: number, y: number): void => {
     if (pathStart < 0) pathStart = operandStart >= 0 ? operandStart : 0;
@@ -297,6 +415,25 @@ function walkStream(
   };
 
   const endPath = (opTok: Token, painted: boolean): void => {
+    if (pendingClip) {
+      // The clip is the path just built, intersected with whatever was already
+      // in force. Anything but one plain rectangle is a shape whose bounding
+      // box would be a lie, so it is recorded as unknowable instead.
+      if (pathRects === 1 && pathOps === 1 && pathMinX <= pathMaxX) {
+        const next: Box = { x0: pathMinX, y0: pathMinY, x1: pathMaxX, y1: pathMaxY };
+        gs.clip = gs.clip
+          ? {
+              x0: Math.max(gs.clip.x0, next.x0),
+              y0: Math.max(gs.clip.y0, next.y0),
+              x1: Math.min(gs.clip.x1, next.x1),
+              y1: Math.min(gs.clip.y1, next.y1),
+            }
+          : next;
+      } else {
+        gs.clipComplex = true;
+      }
+    }
+
     if (painted && pathStart >= 0 && pathMinX <= pathMaxX) {
       out.paths.push({
         streamId,
@@ -305,6 +442,7 @@ function walkStream(
         end: opTok.end,
         ctm: [...gs.ctm] as Matrix,
         depth: stack.length,
+        state: snapshotState(gs),
         x0: pathMinX,
         y0: pathMinY,
         x1: pathMaxX,
@@ -317,6 +455,8 @@ function walkStream(
     pathMaxX = -Infinity;
     pathMaxY = -Infinity;
     pendingClip = false;
+    pathRects = 0;
+    pathOps = 0;
   };
 
   const showText = (
@@ -535,19 +675,24 @@ function walkStream(
       case 'm':
       case 'l':
         if (n.length >= 2) addPathPoint(n[n.length - 2], n[n.length - 1]);
+        pathOps++;
         break;
       case 'c':
         for (let k = 0; k + 1 < n.length; k += 2) addPathPoint(n[k], n[k + 1]);
+        pathOps++;
         break;
       case 'v':
       case 'y':
         for (let k = 0; k + 1 < n.length; k += 2) addPathPoint(n[k], n[k + 1]);
+        pathOps++;
         break;
       case 're':
         if (n.length >= 4) {
           const [rx, ry, rw, rh] = n.slice(-4);
           addPathPoint(rx, ry);
           addPathPoint(rx + rw, ry + rh);
+          pathRects++;
+          pathOps++;
         }
         break;
       case 'h':
@@ -580,6 +725,36 @@ function walkStream(
       case 'g':
         if (n.length >= 1) gs.fill = { r: n[0], g: n[0], b: n[0] };
         break;
+      case 'G':
+        if (n.length >= 1) gs.stroke = { r: n[0], g: n[0], b: n[0] };
+        break;
+      case 'RG':
+        if (n.length >= 3) gs.stroke = { r: n[0], g: n[1], b: n[2] };
+        break;
+      case 'K':
+        if (n.length >= 4) gs.stroke = cmykToRgb(n[0], n[1], n[2], n[3]);
+        break;
+      case 'SC':
+      case 'SCN':
+        if (n.length === 1) gs.stroke = { r: n[0], g: n[0], b: n[0] };
+        else if (n.length === 3) gs.stroke = { r: n[0], g: n[1], b: n[2] };
+        else if (n.length === 4) gs.stroke = cmykToRgb(n[0], n[1], n[2], n[3]);
+        break;
+      case 'w':
+        if (n.length >= 1) gs.lineWidth = n[n.length - 1];
+        break;
+      case 'd': {
+        // Kept as written. The operands are an array and a phase, and copying
+        // the text back out is exact where re-serialising it invites drift.
+        const from = operandStart >= 0 ? operandStart : t.start;
+        gs.dash = LATIN1.decode(bytes.subarray(from, t.start)).trim() || null;
+        break;
+      }
+      case 'gs': {
+        const nameTok = operands.find((o) => o.kind === Tok.Name);
+        if (nameTok) gs.extGState = nameTok.name!;
+        break;
+      }
       case 'rg':
         if (n.length >= 3) gs.fill = { r: n[0], g: n[1], b: n[2] };
         break;
@@ -621,6 +796,7 @@ function walkStream(
                   end: t.end,
                   name: nameTok.name!,
                   ctm: [...gs.ctm] as Matrix,
+                  state: snapshotState(gs),
                   x0: Math.min(...corners.map((c) => c[0])),
                   x1: Math.max(...corners.map((c) => c[0])),
                   y0: Math.min(...corners.map((c) => c[1])),
@@ -653,7 +829,18 @@ function walkStream(
                     ref: rawRef instanceof PDFRef ? rawRef : null,
                   });
                   out.resources.set(childId, childRes);
-                  walkStream(childBytes, childRes, childId, out, counter, childCtm, depth + 1, visited);
+                  walkStream(
+                    childBytes,
+                    childRes,
+                    childId,
+                    out,
+                    counter,
+                    childCtm,
+                    depth + 1,
+                    visited,
+                    gs.clip,
+                    gs.clipComplex,
+                  );
                 }
                 visited.delete(childId);
               }

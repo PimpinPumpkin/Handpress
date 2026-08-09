@@ -14,7 +14,7 @@
  * offered at all, which is why so much of this file is refusals.
  */
 
-import type { PathOp, WalkResult } from './content';
+import { canLift, type DrawState, type PathOp, type WalkResult } from './content';
 
 /** A run of paths treated as one movable drawing. */
 export interface Graphic {
@@ -27,6 +27,18 @@ export interface Graphic {
   ctm: PathOp['ctm'];
   /** Number of paths this is made of, which is roughly how intricate it is. */
   count: number;
+  /** Enough state to draw the group again elsewhere in the stream. */
+  state: DrawState;
+  /**
+   * Whether this can be lifted out of where it sits and drawn somewhere else.
+   *
+   * Changing what is in front of what moves an object's operators to the end
+   * of the page or the start of it. An object drawn inside a clipping path
+   * cannot go: the clip stays behind and the drawing spills out of the shape
+   * it was cut to. Moving it where it is remains fine, which is why this is
+   * separate from being offered at all.
+   */
+  canRelocate: boolean;
   /** Axis-aligned bounds in page space, PDF coordinates. */
   x0: number;
   y0: number;
@@ -176,6 +188,10 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
       end,
       ctm: first.ctm,
       count: group.length,
+      state: first.state,
+      // Judged against the whole group's box, not one path's: a clip that cuts
+      // any part of the drawing is a clip that cuts the drawing.
+      canRelocate: canLift(first.state, box),
       ...box,
     });
   }

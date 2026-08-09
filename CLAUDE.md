@@ -560,6 +560,46 @@ run stayed put. A moved drawing keeps its place in the painting order, so one
 taken from the top of a page and dropped into the middle can end up behind
 something drawn later. That is the file's ordering, not a bug.
 
+## What covers what is a byte order, and a clip is not a yes or no
+
+A PDF has no z index. What is in front is whatever was drawn last, so bringing
+an object forward means lifting its operators out of the middle of the page and
+emitting them at the end of it. The hard part is not the order. An object's
+operators carry none of the state it was drawn under: a logo's paths say where
+its corners are and nothing about what colour they were, because the colour was
+set further up the stream by content that is nowhere near it any more. So
+`stateProlog` in `src/pdf/writer.ts` re-emits the matrix, the fill and stroke
+colour, the line width, the dash and the ExtGState before the object's own
+bytes. Without it a logo brought to the front arrives as a black shape.
+
+Colour is carried as RGB rather than as the operators that set it, so a spot or
+ICC colour comes back as its RGB equivalent. That is invisible on screen and
+real on a press, and it is the trade for not reimplementing colour space
+resolution in order to move a logo forward.
+
+The page content is assembled as `back + q + page + Q + added + front`, so
+"behind" really is behind the page's own drawing and "in front" is ahead of
+added ink too.
+
+**The clip mistake, which is worth not repeating.** The first version refused
+to relocate anything drawn under a clipping path, on the sound reasoning that
+the clip stays behind and the drawing would spill out of it. On real documents
+that refused everything: nearly every page opens by clipping to its own box
+before drawing a single thing. Worse, the refusal was silent and it happened
+*after* the in-place move had been skipped, so dragging a logo and then
+bringing it to the front put it back where it started and reported two edits.
+
+The walker now tracks the clip as a rectangle and intersects it, and
+`canLift` asks whether the clip actually reaches the object. A page-sized clip
+reaches nothing. A clip built from anything but a single `re` is recorded as
+unknowable and still refuses, because the bounding box of a triangle is bigger
+than the triangle. `tools/test-zorder.ts` has a case for each of the three.
+
+Hit testing had to change with it: drawings and images are laid into the
+overlay biggest first, so the smallest thing under the pointer is on top and
+gets the click. Before that, a logo dragged onto a full width panel became
+unreachable, and right clicking it offered to rearrange the panel.
+
 ## Every edit used to redraw the whole document
 
 `onEdited` called `renderThumbs`, which rasterised every page in the document,

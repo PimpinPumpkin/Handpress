@@ -660,17 +660,26 @@ export class Viewer {
       p.overlay.appendChild(box);
     }
 
-    // Drawings sit below everything, images included. The grouping is a guess
-    // made from where paths landed, so where it overlaps something the editor
-    // is certain about, the certain thing wins the click.
+    // Drawings and images are laid down together, biggest first, so the
+    // smallest thing under the pointer is the one on top of the pile and the
+    // one that gets the click. Kept apart, a logo dragged onto a full width
+    // panel became unreachable: the panel was added later, so the panel won,
+    // and right clicking the logo offered to rearrange the panel instead.
+    const objects: Array<{ area: number; add: () => void }> = [];
     for (const graphic of this.doc.graphicsOn(p.index)) {
-      this.addGraphicBox(p, graphic, viewport);
+      objects.push({
+        area: (graphic.x1 - graphic.x0) * (graphic.y1 - graphic.y0),
+        add: () => this.addGraphicBox(p, graphic, viewport),
+      });
     }
-
-    // Images sit at the bottom of the overlay so text and fields stay clickable.
     for (const image of p.model.walk.images) {
-      this.addImageBox(p, image, viewport);
+      objects.push({
+        area: (image.x1 - image.x0) * (image.y1 - image.y0),
+        add: () => this.addImageBox(p, image, viewport),
+      });
     }
+    objects.sort((a, b) => b.area - a.area);
+    for (const o of objects) o.add();
 
     // Interactive fields come first so their controls sit under nothing else.
     for (const field of this.doc.fieldsFor(p.index)) {
@@ -1611,7 +1620,8 @@ export class Viewer {
     box.style.top = `${Math.min(ay, by)}px`;
     box.style.width = `${Math.abs(bx - ax)}px`;
     box.style.height = `${Math.abs(by - ay)}px`;
-    box.title = 'Image. Drag to move, corner to resize, cross to remove.';
+    box.title = 'Image. Drag to move, corner to resize, cross to remove, right click to arrange.';
+    box.addEventListener('contextmenu', (e) => this.openArrangeMenu(e, p, id));
 
     const remove = document.createElement('button');
     remove.className = 'box-remove';
@@ -1679,6 +1689,78 @@ export class Viewer {
   }
 
   /**
+   * The menu for changing what covers what.
+   *
+   * On the object rather than in the toolbar, because the question is always
+   * about one particular thing and a toolbar button would need a selection to
+   * act on that nothing else here has. Right click is where Acrobat keeps the
+   * same four commands, so the reflex already exists.
+   */
+  private arrangeMenu: HTMLElement | null = null;
+
+  private closeArrangeMenu(): void {
+    this.arrangeMenu?.remove();
+    this.arrangeMenu = null;
+  }
+
+  private openArrangeMenu(event: MouseEvent, p: RenderedPage, objectId: string): void {
+    event.preventDefault();
+    this.closeArrangeMenu();
+    const doc = this.doc;
+    if (!doc) return;
+
+    const menu = document.createElement('div');
+    menu.className = 'arrange-menu';
+    menu.style.left = `${event.clientX}px`;
+    menu.style.top = `${event.clientY}px`;
+
+    const zone = doc.zoneOf(p.index, objectId);
+    const items: Array<[string, 'front' | 'forward' | 'backward' | 'back']> = [
+      ['Bring to front', 'front'],
+      ['Bring forward', 'forward'],
+      ['Send backward', 'backward'],
+      ['Send to back', 'back'],
+    ];
+    for (const [label, how] of items) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.textContent = label;
+      item.addEventListener('click', () => {
+        this.closeArrangeMenu();
+        if (!doc.restack(p.index, objectId, how)) {
+          this.cb.onStatus('That is already as far that way as it goes.');
+          return;
+        }
+        void this.rebuild(p.index).then(() => this.cb.onEdited());
+      });
+      menu.appendChild(item);
+    }
+
+    const where = document.createElement('div');
+    where.className = 'arrange-where';
+    where.textContent =
+      zone === 'front' ? 'In front of the page' : zone === 'back' ? 'Behind the page' : 'Where the file put it';
+    menu.appendChild(where);
+
+    document.body.appendChild(menu);
+    this.arrangeMenu = menu;
+
+    // Any click anywhere else, including on the page, closes it.
+    const dismiss = (e: Event): void => {
+      if (menu.contains(e.target as Node)) return;
+      this.closeArrangeMenu();
+      window.removeEventListener('pointerdown', dismiss, true);
+    };
+    window.addEventListener('pointerdown', dismiss, true);
+
+    // Nudged back on screen when opened near an edge, which is most of the
+    // time for something at the bottom right of a page.
+    const box = menu.getBoundingClientRect();
+    if (box.right > window.innerWidth) menu.style.left = `${window.innerWidth - box.width - 8}px`;
+    if (box.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - box.height - 8}px`;
+  }
+
+  /**
    * A hit target for a drawing made of paths, so a logo can be dragged.
    *
    * There is no remove and no resize here, unlike an image. Removing would
@@ -1702,7 +1784,8 @@ export class Viewer {
     box.style.top = `${Math.min(ay, by)}px`;
     box.style.width = `${Math.abs(bx - ax)}px`;
     box.style.height = `${Math.abs(by - ay)}px`;
-    box.title = 'Drawing. Drag to move it.';
+    box.title = 'Drawing. Drag to move it, right click to change what covers it.';
+    box.addEventListener('contextmenu', (e) => this.openArrangeMenu(e, p, graphic.id));
 
     this.makeDraggable(
       box,

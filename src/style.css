@@ -1151,6 +1151,47 @@ body {
   border-style: dashed;
 }
 
+/* ---------- what covers what ---------- */
+
+.arrange-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 6px;
+  background: var(--chrome-1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+
+.arrange-menu button {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.arrange-menu button:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Where the object stands now, so the four commands are not a guess. */
+.arrange-where {
+  margin-top: 4px;
+  padding: 5px 10px 3px;
+  border-top: 1px solid var(--chrome-line);
+  font-size: 11px;
+  opacity: 0.65;
+}
+
 .box-resize {
   position: absolute;
   right: -6px;

@@ -156,6 +156,22 @@
           </button>
         </div>
         <div class="tool-group is-hidden" data-group="pages">
+          <!-- Rotating was only ever on the thumbnail, which meant knowing the
+               sidebar existed and that its buttons appear on hover. These act
+               on the page in view. -->
+          <button class="tool" id="btnRotateLeft" type="button" title="Turn this page a quarter turn anticlockwise">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h9a5 5 0 0 1 0 10H9" /><path d="M4 9l4-4" /><path d="M4 9l4 4" /></svg>
+            <span>Rotate left</span>
+          </button>
+          <button class="tool" id="btnRotateRight" type="button" title="Turn this page a quarter turn clockwise">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 9h-9a5 5 0 0 0 0 10h4" /><path d="M20 9l-4-4" /><path d="M20 9l-4 4" /></svg>
+            <span>Rotate right</span>
+          </button>
+          <button class="tool" id="btnDeletePage" type="button" title="Remove this page from the document">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14" /><path d="M9 7V5h6v2" /><path d="M7 7l1 13h8l1-13" /></svg>
+            <span>Delete page</span>
+          </button>
+          <div class="tool-sep"></div>
           <button class="tool" id="btnAddPages" type="button" title="Append the pages of another PDF">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="12" height="16" rx="1.5" /><path d="M18 10v8" /><path d="M14 14h8" /></svg>
             <span>Add pages</span>

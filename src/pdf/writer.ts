@@ -14,7 +14,7 @@
 import { PDFDict, PDFDocument, PDFFont, PDFName, PDFPage, PDFRef, StandardFonts } from 'pdf-lib';
 import { encodeLiteralString } from './lexer';
 import { coverageSpans, encodeText, missingChars, standardFontAlias, type EncodedPart, type LoadedFont } from './fonts';
-import type { ImageOp, ShowOp, TextLine, TextSegment, WalkResult } from './content';
+import { canLift, type DrawState, type ImageOp, type ShowOp, type TextLine, type TextSegment, type WalkResult } from './content';
 import { setPageContent } from './page';
 import { findGraphics, type Graphic } from './graphics';
 
@@ -127,6 +127,27 @@ export interface GraphicEdit {
   /** Move in page-space units. */
   dx: number;
   dy: number;
+}
+
+/**
+ * Where an object sits in the stack of what covers what.
+ *
+ * A PDF has no z index. What is in front is whatever was drawn last, so
+ * changing the order means moving an object's operators to the end of the page
+ * or to the start of it, and re-establishing the colour, width and
+ * transparency it was drawn with, because those were set by whatever came
+ * before it and will not be there any more.
+ *
+ * `rank` orders objects within a zone against each other; it is not a
+ * position among the page's own drawing. That is the honest limit of this:
+ * everything the page draws itself is one rung, because reordering objects
+ * against the text and rules between them would mean rewriting the whole
+ * stream rather than lifting one object out of it.
+ */
+export interface ZOrderEdit {
+  objectId: string;
+  zone: 'back' | 'front';
+  rank: number;
 }
 
 /** A move or resize applied to an image already in the document. */
@@ -855,6 +876,58 @@ async function buildInsertion(
 }
 
 /**
+ * Re-establishes the graphics state an object was drawn under.
+ *
+ * An object's own operators carry none of this. A logo's paths say where its
+ * corners are and nothing about what colour they were, because the colour was
+ * set further up the stream by content that is no longer anywhere near it once
+ * the object has been lifted to the front of the page. Emitted before the
+ * object's own bytes, this puts back what it is entitled to inherit.
+ */
+function stateProlog(state: DrawState): string {
+  const parts = [`${fmt(state.ctm[0])} ${fmt(state.ctm[1])} ${fmt(state.ctm[2])} ${fmt(state.ctm[3])} ` +
+    `${fmt(state.ctm[4])} ${fmt(state.ctm[5])} cm`];
+  // The ExtGState comes first because it can set width and alpha of its own,
+  // and the explicit operators after it should win where both say something.
+  if (state.extGState) parts.push(`/${state.extGState} gs`);
+  parts.push(`${fmt(state.fill.r)} ${fmt(state.fill.g)} ${fmt(state.fill.b)} rg`);
+  parts.push(`${fmt(state.stroke.r)} ${fmt(state.stroke.g)} ${fmt(state.stroke.b)} RG`);
+  parts.push(`${fmt(state.lineWidth)} w`);
+  if (state.dash) parts.push(`${state.dash} d`);
+  return parts.join('\n');
+}
+
+/**
+ * Draws an object again, somewhere else in the stream, exactly as it looked.
+ *
+ * The object's bytes are reused verbatim; only the state around them is
+ * rebuilt. A move is folded in here rather than bracketed around the original,
+ * because the original is about to be deleted.
+ */
+function relocated(
+  source: Uint8Array,
+  start: number,
+  end: number,
+  state: DrawState,
+  move: { dx: number; dy: number },
+  inner = '',
+): Uint8Array {
+  const shift =
+    Math.abs(move.dx) > 1e-6 || Math.abs(move.dy) > 1e-6
+      ? `1 0 0 1 ${fmt(move.dx)} ${fmt(move.dy)} cm\n`
+      : '';
+  // The move is applied in page space, outside the object's own matrix, which
+  // is why it goes before the cm rather than after it.
+  return concatBytes([
+    bytes(`q\n${shift}`),
+    bytes(`${stateProlog(state)}\n`),
+    bytes(inner ? `${inner}\n` : ''),
+    source.subarray(start, end),
+    bytes('\nQ\n'),
+  ]);
+}
+
+/**
  * The pair of matrices that move a run of paths and then undo themselves.
  *
  * The shift is asked for in page space, but a matrix put in here applies in
@@ -965,6 +1038,7 @@ export async function applyEdits(
   rects: RectFill[] = [],
   ink: InkStroke[] = [],
   graphicEdits: GraphicEdit[] = [],
+  zOrder: ZOrderEdit[] = [],
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
@@ -1026,11 +1100,18 @@ export async function applyEdits(
     editedLines++;
   }
 
+  // Objects lifted out of the page and drawn again at the front or the back.
+  const backParts: Array<{ rank: number; bytes: Uint8Array }> = [];
+  const frontParts: Array<{ rank: number; bytes: Uint8Array }> = [];
+  const zById = new Map(zOrder.map((z) => [z.objectId, z]));
+  const graphicMoves = new Map(graphicEdits.map((e) => [e.graphicId, e]));
+
   // Images already on the page are repositioned in place, by rewriting the
   // single operator that draws each one.
   if (imageEdits.length) {
     const byId = new Map(walk.images.map((im) => [`${im.streamId}:${im.index}`, im]));
     for (const edit of imageEdits) {
+      if (zById.has(edit.imageId)) continue;
       const image = byId.get(edit.imageId);
       if (!image) continue;
       const list = patchesByStream.get(image.streamId) ?? [];
@@ -1044,14 +1125,20 @@ export async function applyEdits(
   // operator to rewrite the way an image has. It is moved by bracketing the
   // whole run: a translation in front of it, and the opposite behind it to put
   // the matrix back exactly as it was for whatever follows.
-  if (graphicEdits.length) {
+  if (graphicEdits.length || zOrder.length) {
     // Regrouped from the walk that is being written, so the ids a drag was
     // recorded against are the ids looked up here.
     const size = page.getSize();
     const graphics = findGraphics(walk, size.width, size.height);
-    const byId = new Map(graphics.map((g) => [g.id, g]));
+    const graphicsById = new Map(graphics.map((g) => [g.id, g]));
+    const imagesById = new Map(walk.images.map((im) => [`${im.streamId}:${im.index}`, im]));
+
+    // A drawing that is only moved is bracketed where it lies. One that has
+    // also been restacked is deleted and drawn again instead, because it is
+    // going somewhere the bracket cannot reach.
     for (const edit of graphicEdits) {
-      const graphic = byId.get(edit.graphicId);
+      if (zById.has(edit.graphicId)) continue;
+      const graphic = graphicsById.get(edit.graphicId);
       if (!graphic) continue;
       const shift = graphicShift(graphic, edit);
       if (!shift) continue;
@@ -1061,6 +1148,50 @@ export async function applyEdits(
       list.push({ start: graphic.start, end: graphic.start, bytes: shift.open });
       list.push({ start: graphic.end, end: graphic.end, bytes: shift.close });
       patchesByStream.set(graphic.streamId, list);
+      editedLines++;
+    }
+
+    for (const z of zOrder) {
+      const graphic = graphicsById.get(z.objectId);
+      const image = imagesById.get(z.objectId);
+      const found = graphic ?? image;
+      if (!found) continue;
+
+      // The tails are page level, so an object living inside a form XObject
+      // has nowhere to go: its bytes name resources that only resolve inside
+      // that form, and copying it out would leave those names dangling.
+      if (found.streamId !== 'page') {
+        warn({
+          lineId: z.objectId,
+          kind: 'shared-text',
+          detail: 'That is drawn inside a reusable block, so it cannot be moved in front of or behind the page.',
+        });
+        continue;
+      }
+      // Images get the same test as groups: a clip that reaches the image is
+      // a clip it would spill out of once lifted away from it.
+      const liftable = graphic ? graphic.canRelocate : canLift(found.state, found);
+      if (!liftable) {
+        warn({
+          lineId: z.objectId,
+          kind: 'shared-text',
+          detail: 'That drawing is cut to a shape by the page, so moving it in front would let it spill outside.',
+        });
+        continue;
+      }
+
+      const move = graphicMoves.get(z.objectId) ?? imageEdits.find((e) => e.imageId === z.objectId);
+      const dx = move?.dx ?? 0;
+      const dy = move?.dy ?? 0;
+      const scale = image && 'scale' in (move ?? {}) ? ((move as ImageEdit).scale ?? 1) : 1;
+      const inner = scale > 0 && Math.abs(scale - 1) > 1e-6 ? `${fmt(scale)} 0 0 ${fmt(scale)} 0 0 cm` : '';
+
+      const drawn = relocated(pageContentBytes, found.start, found.end, found.state, { dx, dy }, inner);
+      (z.zone === 'front' ? frontParts : backParts).push({ rank: z.rank, bytes: drawn });
+
+      const list = patchesByStream.get('page') ?? [];
+      list.push({ start: found.start, end: found.end, bytes: new Uint8Array(0) });
+      patchesByStream.set('page', list);
       editedLines++;
     }
   }
@@ -1102,8 +1233,15 @@ export async function applyEdits(
     });
   };
 
+  // Lowest rank first in each zone, so a bigger rank is nearer the viewer in
+  // both directions and one comparison orders the whole stack.
+  const zoneBytes = (parts: Array<{ rank: number; bytes: Uint8Array }>): Uint8Array =>
+    parts.length ? concatBytes([...parts].sort((a, b) => a.rank - b.rank).map((p) => p.bytes)) : new Uint8Array(0);
+  const backTail = zoneBytes(backParts);
+  const frontTail = zoneBytes(frontParts);
+
   const pagePatches = patchesByStream.get('page') ?? [];
-  if (pagePatches.length || addedTail.length) {
+  if (pagePatches.length || addedTail.length || backTail.length || frontTail.length) {
     const patched = applyPatches(pageContentBytes, pagePatches, reportShared);
     // Anything added goes after the page's own drawing, which means it inherits
     // whatever transformation the page left in effect. Plenty of real files end
@@ -1114,13 +1252,16 @@ export async function applyEdits(
     // Wrapping the original in q/Q gives the added content the page's default
     // coordinates. The extra q also absorbs a stream that restores more times
     // than it saves, which would otherwise underflow into our own state.
-    setPageContent(
-      doc,
-      page,
-      addedTail.length
-        ? concatBytes([bytes('q\n'), patched, bytes('\nQ\n'), addedTail])
-        : patched,
-    );
+    //
+    // Anything sent behind the page goes before that wrap rather than inside
+    // it, so it is painted first and everything the page draws lands on top of
+    // it. Anything brought in front goes last, after the added content, so the
+    // front really is the front and not merely ahead of the original drawing.
+    const wrapped =
+      addedTail.length || backTail.length || frontTail.length
+        ? concatBytes([backTail, bytes('q\n'), patched, bytes('\nQ\n'), addedTail, frontTail])
+        : patched;
+    setPageContent(doc, page, wrapped);
   }
 
   // Patches are gathered by the stream they land in, not by the path taken to

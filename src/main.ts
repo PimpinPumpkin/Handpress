@@ -103,6 +103,9 @@ const els = {
   btnFind: $<HTMLButtonElement>('btnFind'),
   btnExtract: $<HTMLButtonElement>('btnExtract'),
   btnPageImage: $<HTMLButtonElement>('btnPageImage'),
+  btnRotateLeft: $<HTMLButtonElement>('btnRotateLeft'),
+  btnRotateRight: $<HTMLButtonElement>('btnRotateRight'),
+  btnDeletePage: $<HTMLButtonElement>('btnDeletePage'),
   btnCompress: $<HTMLButtonElement>('btnCompress'),
   btnSplit: $<HTMLButtonElement>('btnSplit'),
   splitModal: $('splitModal'),
@@ -718,6 +721,9 @@ const WRITERS = [
   'btnSplit',
   'btnCompress',
   'btnExtract',
+  'btnRotateLeft',
+  'btnRotateRight',
+  'btnDeletePage',
 ] as const;
 
 /* ---------------- the document's own table of contents ---------------- */
@@ -1807,6 +1813,33 @@ function openExtract(): void {
  * Rendered at twice the page size, which is about 150 dots per inch: sharp
  * enough to read and to print small, without producing a file nobody can email.
  */
+/**
+ * Page operations for the page in view, rather than for a thumbnail.
+ *
+ * The same operations already sit on each thumbnail in the sidebar, which is
+ * where they belong when the job is "turn pages 3, 7 and 12". They are here as
+ * well because the far more common job is "turn this one", and that should not
+ * require opening a panel and finding the right thumbnail in it.
+ */
+els.btnRotateLeft.addEventListener('click', () => {
+  if (!doc) return;
+  void applyPageChange(doc.rotatePage(viewer.currentPageIndex(), -90));
+});
+
+els.btnRotateRight.addEventListener('click', () => {
+  if (!doc) return;
+  void applyPageChange(doc.rotatePage(viewer.currentPageIndex(), 90));
+});
+
+els.btnDeletePage.addEventListener('click', () => {
+  if (!doc) return;
+  if (doc.pageCount <= 1) {
+    setStatus('A document needs at least one page.', 'warn');
+    return;
+  }
+  void applyPageChange(doc.deletePage(viewer.currentPageIndex()));
+});
+
 els.btnPageImage.addEventListener('click', async () => {
   if (!doc?.pdfjs) {
     setStatus('Open a PDF first.', 'warn');

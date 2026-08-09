@@ -52,6 +52,17 @@ check anything you are about to rely on.
 | Stamps | Yes, a library | Signatures only |
 | Measuring tools | Yes | No |
 | Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
+| Bring to front, send to back, forward and back a step | Yes | Yes, with the page's own drawing as one rung |
+
+**On what covers what.** Acrobat's Arrange commands work on a full stack of
+objects. Handpress has three rungs: behind everything the page draws, where the
+file put it, and in front of everything. Objects pushed to the same side are
+ordered against each other, so stepping through a pile works, but the page's own
+drawing is a single rung. Reordering an object into the middle of the page's
+text and rules would mean rewriting the whole content stream rather than lifting
+one object out of it. An object cut to a shape by a clipping path will not move
+in front, because the clip would stay behind and the drawing would spill out of
+it; a page-sized clip, which nearly every page has, does not count.
 
 **On moving a drawing.** A PDF has no idea what a logo is. It has a run of
 fills and strokes that happen to land in the same place, and Acrobat's editor
@@ -74,7 +85,7 @@ different questions. Handpress is not a review tool.
 
 | Feature | Acrobat | Handpress |
 | --- | --- | --- |
-| Reorder, rotate, delete | Yes | Yes |
+| Reorder, rotate, delete | Yes | Yes, from the toolbar or a thumbnail |
 | Insert a blank page | Yes | Yes |
 | Merge documents | Yes | Yes |
 | Split | Yes | Yes, by size or by range |
