@@ -111,6 +111,23 @@ export interface TextInsertion {
    * width they occupy in the image so selection lines up with what is seen.
    */
   horizScale?: number;
+  /**
+   * Turn, in degrees anticlockwise about the text's own origin.
+   *
+   * This is what makes a watermark a watermark. It goes in the text matrix
+   * rather than the page matrix so it turns the words and nothing else.
+   */
+  rotate?: number;
+  /** 0 to 1. Below one the text is drawn through a graphics state. */
+  opacity?: number;
+  /**
+   * Draw before the page rather than after it, so the page lands on top.
+   *
+   * This is what a watermark wants. Faint text over a paragraph is legible
+   * either way, but text over a photograph is not, and the paper is where a
+   * watermark belongs.
+   */
+  behind?: boolean;
 }
 
 /**
@@ -837,7 +854,16 @@ async function buildInsertion(
     return new Uint8Array(0);
   }
 
-  const chunks: Uint8Array[] = [bytes('\nq BT ')];
+  const chunks: Uint8Array[] = [bytes('\nq ')];
+  // Transparency is a graphics state, not an operator, so faint text needs one
+  // of its own. Inside the q, so it ends with the text rather than leaking on
+  // to whatever the page draws next.
+  const opacity = insertion.opacity ?? 1;
+  if (opacity < 1) {
+    const gs = resources.context.obj({ Type: 'ExtGState', CA: opacity, ca: opacity }) as PDFDict;
+    chunks.push(bytes(`/${addExtGStateResource(resources, `HpText${Math.round(opacity * 100)}`, gs)} gs `));
+  }
+  chunks.push(bytes('BT '));
   chunks.push(bytes(`/${font.resourceName} ${fmt(insertion.size)} Tf `));
   chunks.push(
     bytes(`${fmt(insertion.color.r)} ${fmt(insertion.color.g)} ${fmt(insertion.color.b)} rg `),
@@ -865,7 +891,21 @@ async function buildInsertion(
       });
       continue;
     }
-    chunks.push(bytes(`1 0 0 1 ${fmt(insertion.x)} ${fmt(insertion.y - i * leading)} Tm `));
+    // The turn is applied about the origin and the origin is then moved into
+    // place, so the text pivots on its own start rather than swinging in from
+    // the corner of the page.
+    const turn = ((insertion.rotate ?? 0) * Math.PI) / 180;
+    const c = Math.cos(turn);
+    const sn = Math.sin(turn);
+    const dy = -i * leading;
+    chunks.push(
+      turn
+        ? bytes(
+            `${fmt(c)} ${fmt(sn)} ${fmt(-sn)} ${fmt(c)} ` +
+              `${fmt(insertion.x - sn * dy)} ${fmt(insertion.y + c * dy)} Tm `,
+          )
+        : bytes(`1 0 0 1 ${fmt(insertion.x)} ${fmt(insertion.y + dy)} Tm `),
+    );
     chunks.push(tjArray(encoded.parts));
     chunks.push(bytes(' '));
     drew = true;
@@ -1200,6 +1240,8 @@ export async function applyEdits(
   // built here so it lands in the same rewrite as any edits to the page.
   let addedTail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
   if (insertions.length || stamps.length || rects.length || ink.length) {
+    // Resolved before the tails are assembled, since anything drawn behind the
+    // page has to be built in time to join the back zone.
     const pageResources = walk.resources.get('page') ?? null;
     if (pageResources) {
       const built: Uint8Array[] = [];
@@ -1213,7 +1255,12 @@ export async function applyEdits(
       }
       for (const insertion of insertions) {
         if (!insertion.text.trim()) continue;
-        built.push(await buildInsertion(insertion, resolver, pageResources, warn));
+        const drawn = await buildInsertion(insertion, resolver, pageResources, warn);
+        // A watermark asked to sit behind joins the same zone as an object
+        // sent to the back, so there is one answer to what is underneath
+        // rather than two that disagree.
+        if (insertion.behind) backParts.push({ rank: -1e6, bytes: drawn });
+        else built.push(drawn);
       }
       addedTail = concatBytes(built);
     } else {

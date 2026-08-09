@@ -365,6 +365,34 @@ at, and the grouping refuses them rather than guessing. A moved drawing keeps
 its place in the painting order too, so one taken from the top of a page and
 dropped into the middle of it can land behind something drawn later.
 
+### Cropping
+
+Pick Crop and drag out the part of the page to keep, then say whether that is
+this page or every page. Cropping every page to one rectangle is the common
+case by a distance: it is what a batch of scans with the same margin of grey
+needs, and doing it a page at a time on a forty page document is not a feature.
+
+A crop is a crop box, not a rewrite. **What falls outside is still in the file,
+merely not shown or printed.** That is what every reader means by cropping a
+PDF and it is why Uncrop can put it back, but it is worth knowing before
+cropping something confidential off the edge of a page. To remove it for real,
+redact it first.
+
+### Watermarks, headers, footers and page numbers
+
+One dialog, because they are one thing: the same piece of text on every page,
+differing only in size, angle, opacity and where it sits. Write `{page}` where
+the page number goes and `{pages}` for the total, on any of them, so a header
+can carry numbering as easily as a footer can.
+
+The watermark preset draws under the page rather than over it. Faint text over a
+paragraph is legible either way, but over a photograph it is not, and the paper
+is where a watermark belongs.
+
+Each stamp is ordinary added text once it is placed, so any single one can be
+dragged, retyped or deleted without disturbing the rest, and the whole batch is
+one undo.
+
 ### What covers what
 
 Right click a drawing or an image for the four commands: bring to front, bring

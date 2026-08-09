@@ -39,7 +39,8 @@ export type ViewerMode =
   | 'line'
   | 'arrow'
   | 'rect'
-  | 'ellipse';
+  | 'ellipse'
+  | 'crop';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -47,6 +48,14 @@ export interface ViewerCallbacks {
   onStatus(message: string, tone?: 'info' | 'warn'): void;
   /** The user zoomed by gesture rather than by the toolbar. */
   onZoomedByHand?(zoom: number): void;
+  /**
+   * A page's size or order changed, which needs more than a redraw.
+   *
+   * Cropping changes what the page measures, so the viewer cannot repaint its
+   * way out of it: the page boxes, the thumbnails and the zoom fit all have to
+   * be built again from the rebuilt document.
+   */
+  onPagesChanged(message: string): void;
 }
 
 interface RenderedPage {
@@ -282,7 +291,10 @@ export class Viewer {
     this.mode = mode;
     for (const p of this.pages) {
       p.overlay.classList.toggle('placing', mode === 'add' || mode === 'sign' || mode === 'note');
-      p.overlay.classList.toggle('erasing', mode === 'erase' || mode === 'redact' || mode === 'highlight');
+      p.overlay.classList.toggle(
+      'erasing',
+      mode === 'erase' || mode === 'redact' || mode === 'highlight' || mode === 'crop',
+    );
       p.overlay.classList.toggle(
         'drawing',
         mode === 'pen' || mode === 'inkErase' || mode === 'line' || mode === 'arrow' || mode === 'rect' || mode === 'ellipse',
@@ -345,6 +357,10 @@ export class Viewer {
         }
         if (this.mode === 'line' || this.mode === 'arrow' || this.mode === 'rect' || this.mode === 'ellipse') {
           this.beginShape(this.pages[i], e, this.mode);
+          return;
+        }
+        if (this.mode === 'crop') {
+          this.beginRegion(this.pages[i], e, 'crop');
           return;
         }
         if (this.mode !== 'erase' && this.mode !== 'redact' && this.mode !== 'highlight') return;
@@ -1307,7 +1323,7 @@ export class Viewer {
     window.addEventListener('pointercancel', up);
   }
 
-  private beginRegion(p: RenderedPage, down: PointerEvent, kind: 'erase' | 'redact' | 'highlight'): void {
+  private beginRegion(p: RenderedPage, down: PointerEvent, kind: 'erase' | 'redact' | 'highlight' | 'crop'): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();
 
@@ -1321,7 +1337,9 @@ export class Viewer {
         ? 'erase-preview redact-preview'
         : kind === 'highlight'
           ? 'erase-preview highlight-preview'
-          : 'erase-preview';
+          : kind === 'crop'
+            ? 'erase-preview crop-preview'
+            : 'erase-preview';
     p.overlay.appendChild(preview);
 
     const draw = (x: number, y: number): { left: number; top: number; width: number; height: number } => {
@@ -1362,6 +1380,14 @@ export class Viewer {
         width: Math.abs(x1 - x0),
         height: Math.abs(y1 - y0),
       };
+
+      if (kind === 'crop') {
+        // Asked rather than assumed. Cropping one page and cropping all of
+        // them are both ordinary things to want, and a batch of scans with the
+        // same grey margin is the case that makes this worth having at all.
+        this.askCrop(p, area, e);
+        return;
+      }
 
       if (kind === 'highlight') {
         this.doc.addErasure(p.index, { ...area, color: { ...this.highlightColor }, blend: true });
@@ -1686,6 +1712,66 @@ export class Viewer {
     );
 
     p.overlay.appendChild(box);
+  }
+
+  /**
+   * Asks whether a crop is for this page or the whole document.
+   *
+   * A confirmation rather than an immediate apply, unlike erase or highlight,
+   * because the two answers differ by forty pages and getting it wrong is a
+   * lot to look at even when it undoes cleanly.
+   */
+  private askCrop(
+    p: RenderedPage,
+    area: { x: number; y: number; width: number; height: number },
+    at: { clientX: number; clientY: number },
+  ): void {
+    this.closeArrangeMenu();
+    const doc = this.doc;
+    if (!doc) return;
+
+    const menu = document.createElement('div');
+    menu.className = 'arrange-menu';
+    menu.style.left = `${at.clientX}px`;
+    menu.style.top = `${at.clientY}px`;
+
+    const apply = (all: boolean): void => {
+      this.closeArrangeMenu();
+      if (!doc.cropPage(p.index, area, all)) return;
+      this.cb.onPagesChanged(
+        all ? 'Every page cropped to that area.' : `Page ${p.index + 1} cropped to that area.`,
+      );
+    };
+    for (const [label, all] of [
+      ['Crop this page', false],
+      ['Crop every page', true],
+    ] as Array<[string, boolean]>) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.textContent = label;
+      item.addEventListener('click', () => apply(all));
+      menu.appendChild(item);
+    }
+
+    const note = document.createElement('div');
+    note.className = 'arrange-where';
+    // Said here because it is the one thing about cropping a PDF that
+    // surprises people, and saying it afterwards would be too late.
+    note.textContent = 'What is outside stays in the file, hidden.';
+    menu.appendChild(note);
+
+    document.body.appendChild(menu);
+    this.arrangeMenu = menu;
+    const dismiss = (e: Event): void => {
+      if (menu.contains(e.target as Node)) return;
+      this.closeArrangeMenu();
+      window.removeEventListener('pointerdown', dismiss, true);
+    };
+    window.addEventListener('pointerdown', dismiss, true);
+
+    const box = menu.getBoundingClientRect();
+    if (box.right > window.innerWidth) menu.style.left = `${window.innerWidth - box.width - 8}px`;
+    if (box.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - box.height - 8}px`;
   }
 
   /**

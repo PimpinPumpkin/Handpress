@@ -600,6 +600,31 @@ overlay biggest first, so the smallest thing under the pointer is on top and
 gets the click. Before that, a logo dragged onto a full width panel became
 unreachable, and right clicking it offered to rearrange the panel.
 
+## A watermark, a header, a footer and page numbers are one feature
+
+They differ only in size, angle, opacity and where they sit, so
+`stampEveryPage` in `src/app/model.ts` builds all four and the presets in
+`main.ts` are the only difference between them. Building them separately would
+have been four sets of bugs about where text lands on a page whose size is not
+the one before it.
+
+Two things live in the writer for this. Rotation goes in the *text* matrix, not
+the page matrix, and is applied about the origin before the origin is moved
+into place, so the words pivot on their own start rather than swinging in from
+a corner; a rotation written into the page matrix would turn everything drawn
+after it too. Transparency is a graphics state rather than an operator, so
+faint text gets its own ExtGState inside the stamp's `q`, which is what stops
+it leaking on to the rest of the page.
+
+`behind` puts a stamp in the same back zone as an object sent to the back, so
+there is one answer to what is underneath rather than two that disagree.
+
+Cropping is a `/CropBox` on the page plan entry, alongside rotation, and is
+held inside the media box because a crop box reaching outside it is invalid and
+readers disagree about what to do with one. Nothing outside is deleted, which
+is worth saying in the interface every time: `tools/test-crop.ts` asserts the
+content stream is byte-identical after a crop.
+
 ## Every edit used to redraw the whole document
 
 `onEdited` called `renderThumbs`, which rasterised every page in the document,

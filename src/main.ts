@@ -111,6 +111,20 @@ const els = {
   btnRotateLeft: $<HTMLButtonElement>('btnRotateLeft'),
   btnRotateRight: $<HTMLButtonElement>('btnRotateRight'),
   btnDeletePage: $<HTMLButtonElement>('btnDeletePage'),
+  btnStamp: $<HTMLButtonElement>('btnStamp'),
+  stampModal: $('stampModal'),
+  stampPreset: $<HTMLSelectElement>('stampPreset'),
+  stampText: $<HTMLInputElement>('stampText'),
+  stampSize: $<HTMLInputElement>('stampSize'),
+  stampRotate: $<HTMLInputElement>('stampRotate'),
+  stampOpacity: $<HTMLInputElement>('stampOpacity'),
+  stampColor: $<HTMLInputElement>('stampColor'),
+  stampRange: $<HTMLInputElement>('stampRange'),
+  stampHint: $('stampHint'),
+  stampCancel: $<HTMLButtonElement>('stampCancel'),
+  stampGo: $<HTMLButtonElement>('stampGo'),
+  btnCrop: $<HTMLButtonElement>('btnCrop'),
+  btnUncrop: $<HTMLButtonElement>('btnUncrop'),
   btnCompress: $<HTMLButtonElement>('btnCompress'),
   btnSplit: $<HTMLButtonElement>('btnSplit'),
   splitModal: $('splitModal'),
@@ -220,6 +234,9 @@ const viewer = new Viewer(els.viewer, {
   onStatus: setStatus,
   onZoomedByHand: (zoom) => {
     els.zoomSelect.value = nearestZoom(zoom);
+  },
+  onPagesChanged(message) {
+    void applyPageChange(true).then(() => setStatus(message));
   },
 });
 
@@ -728,6 +745,9 @@ const WRITERS = [
   'btnExtract',
   'btnReplaceOne',
   'btnReplaceAll',
+  'btnStamp',
+  'btnCrop',
+  'btnUncrop',
   'btnRotateLeft',
   'btnRotateRight',
   'btnDeletePage',
@@ -861,13 +881,17 @@ els.docTitle.addEventListener('click', () => beginRename());
 
 /* ---------------- drawing on the page ---------------- */
 
-const readPenColor = (): void => {
-  const hex = els.penColor.value;
-  viewer.penColor = {
+/** Reads a colour input's #rrggbb into the 0 to 1 triples the writer wants. */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  return {
     r: parseInt(hex.slice(1, 3), 16) / 255,
     g: parseInt(hex.slice(3, 5), 16) / 255,
     b: parseInt(hex.slice(5, 7), 16) / 255,
   };
+}
+
+const readPenColor = (): void => {
+  viewer.penColor = hexToRgb(els.penColor.value);
 };
 
 els.penColor.addEventListener('input', readPenColor);
@@ -956,6 +980,7 @@ const MODE_BUTTONS: Record<string, string> = {
   arrow: 'btnArrow',
   rect: 'btnRect',
   ellipse: 'btnEllipse',
+  crop: 'btnCrop',
 };
 
 function syncEditState(): void {
@@ -1008,7 +1033,8 @@ function setMode(
     | 'line'
     | 'arrow'
     | 'rect'
-    | 'ellipse',
+    | 'ellipse'
+    | 'crop',
 ): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
@@ -1025,6 +1051,7 @@ function setMode(
   els.btnArrow.classList.toggle('tool-active', mode === 'arrow');
   els.btnRect.classList.toggle('tool-active', mode === 'rect');
   els.btnEllipse.classList.toggle('tool-active', mode === 'ellipse');
+  els.btnCrop.classList.toggle('tool-active', mode === 'crop');
   revealGroupOf(MODE_BUTTONS[mode] ?? '');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
@@ -1034,6 +1061,7 @@ function setMode(
     arrow: 'Drag from the tail to the point.',
     rect: 'Drag out a box around something.',
     ellipse: 'Drag out an oval around something.',
+    crop: 'Drag out the part of the page to keep.',
     select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
@@ -1078,12 +1106,7 @@ els.btnNote.addEventListener('click', () => {
 });
 
 els.highlightColor.addEventListener('change', () => {
-  const hex = els.highlightColor.value;
-  viewer.highlightColor = {
-    r: parseInt(hex.slice(1, 3), 16) / 255,
-    g: parseInt(hex.slice(3, 5), 16) / 255,
-    b: parseInt(hex.slice(5, 7), 16) / 255,
-  };
+  viewer.highlightColor = hexToRgb(els.highlightColor.value);
 });
 
 els.btnRedact.addEventListener('click', () => {
@@ -1101,12 +1124,7 @@ els.addSize.addEventListener('change', () => {
   viewer.addSize = parseFloat(els.addSize.value);
 });
 els.addColor.addEventListener('change', () => {
-  const hex = els.addColor.value;
-  viewer.addColor = {
-    r: parseInt(hex.slice(1, 3), 16) / 255,
-    g: parseInt(hex.slice(3, 5), 16) / 255,
-    b: parseInt(hex.slice(5, 7), 16) / 255,
-  };
+  viewer.addColor = hexToRgb(els.addColor.value);
 });
 
 /* ---------------- signature ---------------- */
@@ -1892,6 +1910,111 @@ function openExtract(): void {
  * well because the far more common job is "turn this one", and that should not
  * require opening a panel and finding the right thumbnail in it.
  */
+/* ---------- watermarks, headers, footers and page numbers ---------- */
+
+/**
+ * The four things one stamp can be.
+ *
+ * Presets rather than four buttons, because the difference between a watermark
+ * and a footer is entirely where it sits and how big it is, and four separate
+ * dialogs would be the same dialog four times.
+ */
+const STAMP_PRESETS: Record<
+  string,
+  {
+    text: string;
+    size: number;
+    rotate: number;
+    opacity: number;
+    color: string;
+    place: 'top-centre' | 'bottom-centre' | 'centre';
+    /** Under the page rather than over it. Only a watermark wants this. */
+    behind: boolean;
+  }
+> = {
+  watermark: { text: 'DRAFT', size: 60, rotate: 45, opacity: 12, color: '#808080', place: 'centre', behind: true },
+  header: { text: 'Confidential', size: 10, rotate: 0, opacity: 100, color: '#555555', place: 'top-centre', behind: false },
+  footer: { text: 'Confidential', size: 10, rotate: 0, opacity: 100, color: '#555555', place: 'bottom-centre', behind: false },
+  numbers: { text: '{page} of {pages}', size: 10, rotate: 0, opacity: 100, color: '#333333', place: 'bottom-centre', behind: false },
+};
+
+function fillStampPreset(): void {
+  const preset = STAMP_PRESETS[els.stampPreset.value] ?? STAMP_PRESETS.watermark;
+  els.stampText.value = preset.text;
+  els.stampSize.value = String(preset.size);
+  els.stampRotate.value = String(preset.rotate);
+  els.stampOpacity.value = String(preset.opacity);
+  els.stampColor.value = preset.color;
+  els.stampHint.textContent = '';
+}
+
+els.stampPreset.addEventListener('change', fillStampPreset);
+
+els.btnStamp.addEventListener('click', () => {
+  if (!doc) return;
+  fillStampPreset();
+  els.stampRange.value = '';
+  els.stampModal.hidden = false;
+  els.stampText.focus();
+  els.stampText.select();
+});
+
+els.stampCancel.addEventListener('click', () => {
+  els.stampModal.hidden = true;
+});
+
+els.stampGo.addEventListener('click', async () => {
+  if (!doc) return;
+  const preset = STAMP_PRESETS[els.stampPreset.value] ?? STAMP_PRESETS.watermark;
+  const wanted = els.stampRange.value.trim() ? parseRange(els.stampRange.value, doc.pageCount) : undefined;
+  if (wanted && !wanted.length) {
+    els.stampHint.textContent = 'That does not name any page in this document.';
+    return;
+  }
+
+  els.stampModal.hidden = true;
+  setBusy(true, 'Stamping the pages…');
+  try {
+    const done = await doc.stampEveryPage({
+      text: els.stampText.value,
+      size: Math.max(4, parseFloat(els.stampSize.value) || 12),
+      color: hexToRgb(els.stampColor.value),
+      opacity: Math.min(1, Math.max(0.05, (parseFloat(els.stampOpacity.value) || 100) / 100)),
+      rotate: parseFloat(els.stampRotate.value) || 0,
+      place: preset.place,
+      margin: 36,
+      bold: false,
+      italic: false,
+      behind: preset.behind,
+      pages: wanted,
+    });
+    if (!done) {
+      setStatus('Nothing was stamped.', 'warn');
+      return;
+    }
+    await doc.refresh();
+    await viewer.refreshRendered();
+    void renderThumbs();
+    syncEditState();
+    setStatus(`Stamped ${done} page${done === 1 ? '' : 's'}. Each one can be dragged or retyped like any added text.`);
+  } catch (e) {
+    setStatus(`Could not stamp the pages: ${reason(e)}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
+
+els.btnCrop.addEventListener('click', () => setMode('crop'));
+
+els.btnUncrop.addEventListener('click', () => {
+  if (!doc) return;
+  if (!doc.uncropPage(viewer.currentPageIndex(), true)) {
+    setStatus('No page is cropped.');
+    return;
+  }
+  void applyPageChange(true).then(() => setStatus('Every page is showing in full again.'));
+});
+
 els.btnRotateLeft.addEventListener('click', () => {
   if (!doc) return;
   void applyPageChange(doc.rotatePage(viewer.currentPageIndex(), -90));

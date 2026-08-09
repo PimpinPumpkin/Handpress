@@ -188,6 +188,18 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14" /><path d="M9 7V5h6v2" /><path d="M7 7l1 13h8l1-13" /></svg>
             <span>Delete page</span>
           </button>
+          <button class="tool" id="btnStamp" type="button" title="Put a watermark, header, footer or page numbers on every page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9h10" /><path d="M7 13h6" /></svg>
+            <span>Stamp</span>
+          </button>
+          <button class="tool" id="btnCrop" type="button" title="Drag out the part of the page to keep">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v15h15" /><path d="M2 7h15v15" /></svg>
+            <span>Crop</span>
+          </button>
+          <button class="tool" id="btnUncrop" type="button" title="Show the whole of every page again">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5" /><path d="M20 15v5h-5" /><path d="M15 4h5v5" /><path d="M9 20H4v-5" /></svg>
+            <span>Uncrop</span>
+          </button>
           <div class="tool-sep"></div>
           <button class="tool" id="btnAddPages" type="button" title="Append the pages of another PDF">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="12" height="16" rx="1.5" /><path d="M18 10v8" /><path d="M14 14h8" /></svg>
@@ -402,6 +414,44 @@
           <span class="modal-spacer"></span>
           <button class="btn" id="splitCancel" type="button">Cancel</button>
           <button class="btn btn-primary" id="splitGo" type="button">Split it</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="stampModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="stampTitle">
+        <h2 id="stampTitle">Stamp every page</h2>
+        <p class="modal-sub">
+          One piece of text on every page: a watermark, a header, a footer or page numbers. Write
+          <code>{page}</code> where the page number goes and <code>{pages}</code> for the total. Each stamp is
+          ordinary added text afterwards, so any one of them can be dragged, retyped or removed.
+        </p>
+        <label class="sig-check" for="stampPreset">What kind</label>
+        <select class="zoom-select" id="stampPreset">
+          <option value="watermark">Watermark, large and faint across the middle</option>
+          <option value="header">Header, along the top</option>
+          <option value="footer">Footer, along the bottom</option>
+          <option value="numbers">Page numbers, bottom centre</option>
+        </select>
+        <label class="sig-check" for="stampText">Text</label>
+        <input class="range-input" id="stampText" type="text" value="DRAFT" />
+        <div class="stamp-row">
+          <label class="sig-check" for="stampSize">Size</label>
+          <input class="range-input" id="stampSize" type="number" min="4" max="200" step="1" value="60" />
+          <label class="sig-check" for="stampRotate">Turn</label>
+          <input class="range-input" id="stampRotate" type="number" min="-90" max="90" step="5" value="45" />
+          <label class="sig-check" for="stampOpacity">Opacity</label>
+          <input class="range-input" id="stampOpacity" type="number" min="5" max="100" step="5" value="12" />
+          <label class="sig-check" for="stampColor">Colour</label>
+          <input type="color" class="add-color" id="stampColor" value="#808080" />
+        </div>
+        <label class="sig-check" for="stampRange">Which pages, if not all of them</label>
+        <input class="range-input" id="stampRange" type="text" placeholder="for example 1-3, 5, 8-" />
+        <p class="sig-hint" id="stampHint"></p>
+        <div class="modal-actions">
+          <span class="modal-spacer"></span>
+          <button class="btn" id="stampCancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="stampGo" type="button">Stamp them</button>
         </div>
       </div>
     </div>

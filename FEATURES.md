@@ -90,8 +90,9 @@ different questions. Handpress is not a review tool.
 | Merge documents | Yes | Yes |
 | Split | Yes | Yes, by size or by range |
 | Extract | Yes | Yes |
-| Crop | Yes | No |
-| Headers, footers, page numbers, watermarks, Bates | Yes | No |
+| Crop | Yes | Yes, one page or all of them |
+| Headers, footers, page numbers, watermarks | Yes | Yes, one dialog for all four |
+| Bates numbering | Yes | No, page numbers only |
 
 ## Documents
 

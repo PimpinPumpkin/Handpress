@@ -1178,6 +1178,33 @@ body {
   padding: 4px 10px;
 }
 
+/* The crop preview shows what will be kept rather than what will go, so it is
+   an outline with the area inside left clear, the opposite of an erasure. */
+.erase-preview.crop-preview {
+  background: transparent;
+  border: 1px dashed var(--accent);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+}
+
+/* The four numbers a stamp needs, on one line rather than four rows of dialog. */
+.stamp-row {
+  display: grid;
+  grid-template-columns: repeat(4, auto 1fr);
+  align-items: center;
+  gap: 6px 8px;
+  margin: 8px 0;
+}
+
+.stamp-row .range-input {
+  margin: 0;
+  min-width: 0;
+}
+
+.stamp-row .sig-check {
+  margin: 0;
+  white-space: nowrap;
+}
+
 /* ---------- what covers what ---------- */
 
 .arrange-menu {

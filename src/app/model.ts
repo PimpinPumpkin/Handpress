@@ -16,6 +16,7 @@ import { getPageContent } from '../pdf/page';
 import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
 import { groupParagraphs, overflowOf, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
 import { splitChunks } from '../pdf/split';
+import { standardTextWidth } from '../pdf/fonts';
 import {
   applyEdits,
   type EditWarning,
@@ -87,6 +88,15 @@ export interface PagePlanEntry {
   source: number;
   /** Extra rotation in degrees, added to whatever the page already had. */
   rotate: number;
+  /**
+   * The visible area, in the page's own coordinates, or absent for all of it.
+   *
+   * A crop is a CropBox rather than a rewrite: nothing outside it is deleted,
+   * it is simply not shown or printed. That is what every reader means by
+   * cropping a PDF, and it is reversible, but it is worth knowing that a
+   * cropped page still carries whatever was outside the box.
+   */
+  crop?: { x: number; y: number; width: number; height: number };
 }
 
 /** A page plan entry that is a blank page rather than one from a file. */
@@ -814,7 +824,7 @@ export class HandpressDocument {
   hasPageChanges(): boolean {
     if (!this.pagePlan) return false;
     if (this.pagePlan.length !== this.originalPageCount) return true;
-    return this.pagePlan.some((e, i) => e.doc !== 0 || e.source !== i || e.rotate !== 0);
+    return this.pagePlan.some((e, i) => e.doc !== 0 || e.source !== i || e.rotate !== 0 || !!e.crop);
   }
 
   /**
@@ -909,6 +919,115 @@ export class HandpressDocument {
     return out;
   }
 
+  /**
+   * Stamps the same text onto every page, or a range of them.
+   *
+   * One mechanism for four jobs. A watermark is large, turned, faint and in
+   * the middle; a header is small and at the top; a footer is small and at the
+   * bottom; page numbers are a footer whose text is a token. Building them
+   * from four separate features would be four sets of bugs about where text
+   * lands on a page whose size is not the one before it.
+   *
+   * `{page}` and `{pages}` are replaced per page, so numbering works on any of
+   * the four and not only on the one called page numbers.
+   *
+   * The whole batch is one undo, and every stamp is an ordinary piece of added
+   * text afterwards: it can be dragged, retyped or deleted one at a time.
+   */
+  async stampEveryPage(spec: {
+    text: string;
+    size: number;
+    color: { r: number; g: number; b: number };
+    opacity: number;
+    rotate: number;
+    place: 'top-left' | 'top-centre' | 'top-right' | 'centre' | 'bottom-left' | 'bottom-centre' | 'bottom-right';
+    margin: number;
+    bold: boolean;
+    italic: boolean;
+    /** Draw under the page rather than over it, which is what a watermark wants. */
+    behind?: boolean;
+    /** Zero-based pages to stamp. Absent means all of them. */
+    pages?: number[];
+  }): Promise<number> {
+    const wanted = spec.pages ?? Array.from({ length: this.pageCount }, (_, i) => i);
+    if (!wanted.length || !spec.text.trim()) return 0;
+
+    const before = this.snapshot();
+    const undoDepth = this.undoStack.length;
+    // The stamp is drawn in a standard face, so its widths are known without
+    // embedding anything, which is what makes centring possible before the
+    // file has been built.
+    const alias = spec.bold
+      ? spec.italic
+        ? 'Helvetica-BoldOblique'
+        : 'Helvetica-Bold'
+      : spec.italic
+        ? 'Helvetica-Oblique'
+        : 'Helvetica';
+    let done = 0;
+
+    for (const index of wanted) {
+      const page = await this.getPage(index).catch(() => null);
+      if (!page) continue;
+      // A document can mix page sizes, so each stamp is placed against the
+      // page it lands on rather than against the first one.
+      const across = page.rotation % 180 ? page.height : page.width;
+      const down = page.rotation % 180 ? page.width : page.height;
+
+      const text = spec.text
+        .replaceAll('{page}', String(index + 1))
+        .replaceAll('{pages}', String(this.pageCount));
+      const width = standardTextWidth(alias, text, spec.size);
+
+      // A turned stamp is measured along its own axis, so the width that
+      // matters for centring it is the width it actually covers.
+      const turn = (spec.rotate * Math.PI) / 180;
+      const spanX = Math.abs(width * Math.cos(turn));
+      const spanY = Math.abs(width * Math.sin(turn));
+
+      const left = spec.margin;
+      const right = across - spec.margin - spanX;
+      const middleX = (across - spanX) / 2;
+      const x = spec.place.endsWith('left')
+        ? left
+        : spec.place.endsWith('right')
+          ? right
+          : middleX;
+
+      // Measured to the baseline. The top margin allows for the ascent so the
+      // words sit under the edge rather than through it.
+      const y = spec.place.startsWith('top')
+        ? down - spec.margin - spec.size * 0.8
+        : spec.place.startsWith('bottom')
+          ? spec.margin
+          : (down - spanY) / 2;
+
+      if (
+        this.addInsertion(index, {
+          x,
+          y,
+          size: spec.size,
+          color: { ...spec.color },
+          text,
+          bold: spec.bold,
+          italic: spec.italic,
+          rotate: spec.rotate,
+          opacity: spec.opacity,
+          behind: spec.behind,
+        })
+      ) {
+        done++;
+      }
+    }
+
+    this.undoStack.length = undoDepth;
+    if (done) {
+      this.undoStack.push(before);
+      this.redoStack = [];
+    }
+    return done;
+  }
+
   /** Turns a page by a quarter turn, positive being clockwise. */
   rotatePage(position: number, degrees: number): boolean {
     const plan = this.plan();
@@ -918,6 +1037,50 @@ export class HandpressDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return true;
+  }
+
+  /**
+   * Sets the visible area of a page, or of every page.
+   *
+   * Cropping every page to one rectangle is the common case by a distance:
+   * it is what a batch of scans with the same margin of grey needs, and doing
+   * it a page at a time on a forty page document is not a feature.
+   *
+   * The rectangle is in the page's own coordinates, which for a rotated page
+   * are still the unrotated ones. That is the same frame every other edit
+   * here works in, so a crop dragged on screen lands where it was dragged.
+   */
+  cropPage(position: number, area: { x: number; y: number; width: number; height: number }, all = false): boolean {
+    const plan = this.plan();
+    if (position < 0 || position >= plan.length) return false;
+    if (area.width < 1 || area.height < 1) return false;
+    const before = this.snapshot();
+    if (all) for (let i = 0; i < plan.length; i++) plan[i] = { ...plan[i], crop: { ...area } };
+    else plan[position] = { ...plan[position], crop: { ...area } };
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** Puts a cropped page, or every page, back to its full size. */
+  uncropPage(position: number, all = false): boolean {
+    const plan = this.plan();
+    if (position < 0 || position >= plan.length) return false;
+    const targets = all ? plan.map((_, i) => i) : [position];
+    if (!targets.some((i) => plan[i].crop)) return false;
+    const before = this.snapshot();
+    for (const i of targets) {
+      const { crop: _drop, ...rest } = plan[i];
+      plan[i] = rest;
+    }
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** True when any page is currently cropped, so the interface can offer to undo it. */
+  hasCrop(): boolean {
+    return !!this.pagePlan?.some((e) => !!e.crop);
   }
 
   /**
@@ -1593,6 +1756,7 @@ export class HandpressDocument {
                   : copiedByDoc.get(entry.doc)?.get(entry.source),
             blank: entry.doc === BLANK_PAGE,
             rotate: entry.rotate,
+            crop: entry.crop,
           }))
           .filter((x) => x.blank || !!x.page);
 
@@ -1602,13 +1766,23 @@ export class HandpressDocument {
           // back to the first page of the document and then to US Letter.
           const fallback = originals[0]?.getSize() ?? { width: 612, height: 792 };
           let lastSize = fallback;
-          for (const { page, blank, rotate } of chosen) {
+          for (const { page, blank, rotate, crop } of chosen) {
             if (blank || !page) {
               doc.addPage([lastSize.width, lastSize.height]);
               continue;
             }
             lastSize = page.getSize();
             if (rotate) page.setRotation(degrees((page.getRotation().angle + rotate) % 360));
+            // Held inside the media box: a crop box that reaches outside it is
+            // invalid, and readers disagree about what to do with one.
+            if (crop) {
+              const media = page.getMediaBox();
+              const x = Math.max(media.x, crop.x);
+              const y = Math.max(media.y, crop.y);
+              const w = Math.min(media.x + media.width, crop.x + crop.width) - x;
+              const h = Math.min(media.y + media.height, crop.y + crop.height) - y;
+              if (w > 1 && h > 1) page.setCropBox(x, y, w, h);
+            }
             doc.addPage(page);
           }
         }
