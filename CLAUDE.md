@@ -661,6 +661,22 @@ blending it over its own opaque pixels changes nothing; where something does,
 it shows through as a ghost. The drop repaints without the echo, so what
 settles is the true order alone.
 
+**An over layer is a full page of pixels, so it is never built eagerly.** The
+first version rendered one per object at scene build, and a report with
+sixteen objects on every page held a quarter of a gigabyte per page: the tab
+did not slow down, it died, and a dead renderer answers nothing, which looks
+exactly like a freeze. `Scene.primeOver` renders the layer when the object is
+actually grabbed, from the scene's own pdf.js document, which stays open for
+that purpose and is released by `Scene.destroy`. Only the most recent layer
+is kept, the viewer holds at most four scenes at once, and every path that
+drops a scene goes through `clearScenes`, because a scene that falls out of
+the map without destroy() leaks a worker-side document per edit. The build
+itself was measured, not guessed: 141ms for the heaviest real page, with the
+scene document holding a copy of just the one page, since pdf-lib serialises
+every object in a context whether referenced or not, and raw streams instead
+of deflate, since nothing in a document that lives for milliseconds deserves
+compression.
+
 **The over layer is what keeps a drag in the painting order.** A copy floated
 on a layer above the page pops over content the object was naturally behind,
 which reads as the object jumping the queue the moment it is touched. With
@@ -742,6 +758,21 @@ outside that is an object flickering out of existence. If either render fails
 there is no scene at all, and the drag falls back to drawing the object
 itself. The over layer is the one optional picture, because losing it only
 costs the painting order, not the object.
+
+**A drop opens a window where every cached thing is one move behind.** The
+model changes at the drop, the rebuild lands half a second later, and the
+scene takes seconds more. A drag started inside that window used to stage
+against the pre-drop scene, lose it when the rebuild cleared the map, and
+then every repaint quietly returned on finding nothing: the object simply
+stopped drawing until release, and clicking away then back "fixed" it by
+waiting the window out. Four rules close it. `rebuild` invalidates scenes
+synchronously at entry, before anything is awaited. A scene entry carries the
+epoch it was built for and `stage` refuses a mismatch, sending the drag down
+the fallback path instead. The drag carries its scene with it, so a mid-drag
+clear cannot silence it. And the drop advances the world it can reach right
+away: the box's own position, the bounds used for tile matching, the image
+edit snapshot and the graphic's accumulated move, so the fallback previews
+from geometry that matches what is on screen.
 
 **The fallback path has to tell the same story as the scene.** Two bugs lived
 there, both only visible in the window after a drop while the next scene is

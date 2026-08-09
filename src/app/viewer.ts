@@ -429,7 +429,7 @@ export class Viewer {
     // this one's page numbers. Left in the map, a drag on page three of the
     // new file would composite page three of the old one.
     this.sceneEpoch++;
-    this.scenes.clear();
+    this.clearScenes();
     this.sceneBuilding.clear();
     this.root.innerHTML = '';
     this.pages = [];
@@ -596,8 +596,7 @@ export class Viewer {
     // repaint directly. The scenes describe the bytes before the change, so
     // they go here, along with the epoch that discards any build in flight.
     this.sceneEpoch++;
-    if (onlyPage === undefined) this.scenes.clear();
-    else this.scenes.delete(onlyPage);
+    this.clearScenes(onlyPage);
     // Only the drawn scale is invalidated. The text model comes from the
     // original bytes and never changes, so throwing it away here only widened
     // the window in which a page had no model to click into.
@@ -732,7 +731,24 @@ export class Viewer {
   }
 
   /** Pages taken apart into a backdrop and one picture per object. */
-  private scenes = new Map<number, { scene: Scene; zoom: number }>();
+  private scenes = new Map<number, { scene: Scene; zoom: number; epoch: number }>();
+
+  /**
+   * Drops scenes, releasing the rendered documents they draw from.
+   *
+   * A scene holds a pdf.js document open so over layers can be rendered on
+   * demand, so letting one fall out of the map without destroy() leaks a
+   * worker-side document per edit for the life of the session.
+   */
+  private clearScenes(only?: number): void {
+    if (only === undefined) {
+      for (const held of this.scenes.values()) held.scene.destroy();
+      this.scenes.clear();
+      return;
+    }
+    this.scenes.get(only)?.scene.destroy();
+    this.scenes.delete(only);
+  }
   private sceneBuilding = new Set<number>();
   /**
    * Which version of the document a scene build belongs to.
@@ -756,29 +772,63 @@ export class Viewer {
    * wrong number of pixels for another, and scaling it up is exactly the
    * softness this exists to avoid.
    */
+  /**
+   * One scene build at a time, across all pages.
+   *
+   * A build parses the document and renders dozens of crops, and every page
+   * scrolled into view asks for one. Let loose together on a long report they
+   * all contend for the same main thread and the tab reads as frozen; queued,
+   * each finishes and the page it belongs to becomes draggable, one after
+   * another, while the app stays usable throughout.
+   */
+  private sceneChain: Promise<void> = Promise.resolve();
+
   private async ensureScene(p: RenderedPage): Promise<void> {
     if (!this.doc || !p.model) return;
     const had = this.scenes.get(p.index);
-    if (had && Math.abs(had.zoom - this.zoom) < 0.001) return;
+    if (had && Math.abs(had.zoom - this.zoom) < 0.001 && had.epoch === this.sceneEpoch) return;
     if (this.sceneBuilding.has(p.index)) return;
     this.sceneBuilding.add(p.index);
-    const epoch = this.sceneEpoch;
+
     let stale = false;
-    try {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const scene = await this.doc.sceneFor(p.index, this.zoom * dpr);
-      // The page may have changed while this was being built, in which case
-      // what came back describes bytes nobody is looking at any more.
-      // Installing it anyway is how a moved object came back at its old
-      // position on the next drag.
-      stale = epoch !== this.sceneEpoch;
-      if (scene && !stale) this.scenes.set(p.index, { scene, zoom: this.zoom });
-    } finally {
-      this.sceneBuilding.delete(p.index);
-    }
+    const job = async (): Promise<void> => {
+      // Read at the moment the job runs, not when it was queued: a zoom or an
+      // edit while it waited in line means building for the world as it is.
+      const epoch = this.sceneEpoch;
+      const zoom = this.zoom;
+      try {
+        if (!this.doc) return;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const scene = await this.doc.sceneFor(p.index, zoom * dpr);
+        // The page may have changed while this was being built, in which case
+        // what came back describes bytes nobody is looking at any more.
+        // Installing it anyway is how a moved object came back at its old
+        // position on the next drag.
+        stale = epoch !== this.sceneEpoch;
+        if (scene && stale) scene.destroy();
+        if (scene && !stale) {
+          this.clearScenes(p.index);
+          this.scenes.set(p.index, { scene, zoom, epoch });
+          // A scene is a page of pixels and an open document, and a long
+          // report scrolled end to end would otherwise hold one per page.
+          // The oldest go; coming back to a page just builds it again.
+          while (this.scenes.size > 4) {
+            const oldest = this.scenes.keys().next().value;
+            if (oldest === undefined || oldest === p.index) break;
+            this.clearScenes(oldest);
+          }
+        }
+      } finally {
+        this.sceneBuilding.delete(p.index);
+      }
+    };
+    const run = this.sceneChain.then(job, job);
+    this.sceneChain = run.catch(() => undefined);
+    await run;
+
     // A discarded build leaves the page with no scene at all, and nothing
     // else would ask for one until the next render. Ask again now, from the
-    // bytes as they are; the epoch check above ends the recursion.
+    // bytes as they are; the staleness check above ends the recursion.
     if (stale) void this.ensureScene(p);
   }
 
@@ -789,9 +839,19 @@ export class Viewer {
    * through and nothing is drawn twice. What comes back is the picture of it,
    * for the drag layer to move about.
    */
-  private stage(p: RenderedPage, where: { x0: number; y0: number; x1: number; y1: number }): Tile | null {
+  private stage(
+    p: RenderedPage,
+    where: { x0: number; y0: number; x1: number; y1: number },
+  ): { tile: Tile; scene: Scene } | null {
     const held = this.scenes.get(p.index);
     if (!held || Math.abs(held.zoom - this.zoom) > 0.001) return null;
+    // A scene from before the last edit describes bytes nobody is looking at.
+    // Grabbing an object again in the moment between a drop and the rebuild
+    // finishing used to stage against exactly that scene, and the first thing
+    // the rebuild did was clear the map out from under the drag: every later
+    // repaint quietly did nothing, so the object simply stopped drawing until
+    // release. Refusing here sends that drag down the fallback path instead.
+    if (held.epoch !== this.sceneEpoch) return null;
 
     // Matched on where it sits rather than by name. The scene describes the
     // page as rendered and the selection names objects as the original
@@ -820,7 +880,11 @@ export class Viewer {
     // which is why dragging anything blanked the caption on every panel.
     ctx.drawImage(held.scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
     this.blitTile(p, ctx, tile, 0, 0, tile.hole);
-    return tile;
+    // The over layer starts rendering now, while the pointer is still inside
+    // the click threshold. It usually lands within the first few moves; until
+    // it does the copy rides on top, which is the old behaviour, briefly.
+    held.scene.primeOver(tile);
+    return { tile, scene: held.scene };
   }
 
   /**
@@ -832,14 +896,16 @@ export class Viewer {
    * painting order: what covered it at rest keeps covering it while it moves,
    * instead of the copy popping over content it was naturally behind.
    */
-  private stageMove(p: RenderedPage, tile: Tile, dx: number, dy: number, settled = false): void {
-    const held = this.scenes.get(p.index);
-    if (!held) return;
+  private stageMove(p: RenderedPage, staged: { tile: Tile; scene: Scene }, dx: number, dy: number, settled = false): void {
+    // The scene rides with the drag rather than being looked up per move. A
+    // rebuild can clear the map mid-gesture, and a repaint that silently
+    // returns on finding it empty is a drag that stops drawing halfway.
+    const { tile, scene } = staged;
     const ctx = p.canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
-    ctx.drawImage(held.scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
+    ctx.drawImage(scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
     this.blitTile(p, ctx, tile, 0, 0, tile.hole);
     this.blitTile(p, ctx, tile, dx, dy);
     if (tile.over) ctx.drawImage(tile.over, 0, 0, p.canvas.width, p.canvas.height);
@@ -2365,6 +2431,11 @@ export class Viewer {
       viewport as never,
       (dx, dy) => {
         if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
+        // The model stores a fresh edit object, so the one in this closure is
+        // a snapshot. Advanced here, or a re-grab before the overlay rebuilds
+        // previews the image one whole move behind where it visibly sits.
+        state.dx += dx;
+        state.dy += dy;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
       (add) => this.pick('image', id, p.index, box, true, add),
@@ -3027,6 +3098,13 @@ export class Viewer {
       viewport as never,
       (dx, dy) => {
         if (!this.doc?.moveGraphic(p.index, graphic.id, dx, dy)) return;
+        // graphicsOn hands out copies, so the graphic in this closure is a
+        // snapshot. The accumulated move advances with the drop, or a re-grab
+        // before the overlay rebuilds replays the drawing one move behind.
+        graphic.moved = {
+          dx: (graphic.moved?.dx ?? 0) + dx,
+          dy: (graphic.moved?.dy ?? 0) + dy,
+        };
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
       (add) => this.pick('graphic', graphic.id, p.index, box, true, add),
@@ -3326,7 +3404,7 @@ export class Viewer {
       let moved = false;
       let lifted: { ghost: HTMLCanvasElement; cover: HTMLElement } | null = null;
       let drawn: HTMLCanvasElement | null = null;
-      let staged: Tile | null = null;
+      let staged: { tile: Tile; scene: Scene } | null = null;
 
       const move = (e: PointerEvent): void => {
         const dx = e.clientX - down.clientX;
@@ -3390,13 +3468,29 @@ export class Viewer {
         const rect = parent.getBoundingClientRect();
         const [x0, y0] = viewport.convertToPdfPoint(down.clientX - rect.left, down.clientY - rect.top);
         const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
+        const pdx = x1 - x0;
+        const pdy = y1 - y0;
+        // The overlay takes a rebuild's worth of time to catch up, and a
+        // re-grab inside that window used to find everything one move behind:
+        // the box still at the old spot, the bounds a move out of date, so
+        // the next drag matched nothing or previewed in the wrong place. The
+        // box and the bounds advance to the drop right now instead, so the
+        // world a re-grab sees is consistent even before the rebuild lands.
+        if (where) {
+          where.x0 += pdx;
+          where.x1 += pdx;
+          where.y0 += pdy;
+          where.y1 += pdy;
+        }
+        box.style.left = `${parseFloat(box.style.left || '0') + (e.clientX - down.clientX)}px`;
+        box.style.top = `${parseFloat(box.style.top || '0') + (e.clientY - down.clientY)}px`;
         // The echo comes off before the rebuild, so what sits on screen while
         // the document is rewritten is the true painting order and nothing
         // else. Left on, a drop under later content showed the ghost for the
         // half second the rebuild takes, which reads as the move having only
         // half happened.
-        if (staged && page) this.stageMove(page, staged, x1 - x0, y1 - y0, true);
-        onDrop(x1 - x0, y1 - y0);
+        if (staged && page) this.stageMove(page, staged, pdx, pdy, true);
+        onDrop(pdx, pdy);
       };
 
       window.addEventListener('pointermove', move);
@@ -3578,6 +3672,12 @@ export class Viewer {
 
   /** Rebuilds the document and repaints, shared by anything that changes it. */
   private async rebuild(onlyPage?: number): Promise<void> {
+    // Synchronously, before anything is awaited. The model has already
+    // changed by the time this is called, so a scene describing the page is
+    // stale this instant, not once the render queue drains: a drag started
+    // in that gap used to stage against the old scene and then lose it.
+    this.sceneEpoch++;
+    this.clearScenes(onlyPage);
     return this.serialize(async () => {
       if (!this.doc) return;
       try {
@@ -3591,8 +3691,7 @@ export class Viewer {
         // The epoch moves with it, so a build still in flight from the old
         // bytes is discarded when it lands rather than installed over this.
         this.sceneEpoch++;
-        if (onlyPage === undefined) this.scenes.clear();
-        else this.scenes.delete(onlyPage);
+        this.clearScenes(onlyPage);
         await this.refreshRendered(onlyPage);
         for (const page of this.pages) this.restorePick(page);
       } catch (e) {

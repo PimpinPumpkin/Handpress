@@ -21,7 +21,7 @@
 
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument, PDFName } from 'pdf-lib';
-import { getPageContent, setPageContent } from '../pdf/page';
+import { getPageContent } from '../pdf/page';
 import { findGraphics, type Graphic } from '../pdf/graphics';
 import { walkPage, type Matrix, type WalkResult } from '../pdf/content';
 import { neutralAdvance } from '../pdf/writer';
@@ -49,10 +49,17 @@ export interface Tile {
    * Painted over the moving copy, so a drag stays in the object's own place
    * in the painting order: what covered it at rest keeps covering it while
    * it moves, instead of the copy popping over content it was naturally
-   * behind. Null when nothing later draws, or when the layer cannot be built
-   * honestly, in which case the copy rides on top the way it always did.
+   * behind. Rendered on demand by `Scene.primeOver` when the object is
+   * grabbed, never eagerly: it is a full page of pixels per object, and a
+   * report with sixteen objects on every page held eagerly was a quarter of
+   * a gigabyte per page, which is what an out-of-memory crash looks like
+   * from the outside. Null until primed, or when nothing later draws, and
+   * then the copy rides on top, which for the brief unprimed moment is the
+   * old behaviour rather than a wrong one.
    */
   over: HTMLCanvasElement | null;
+  /** True while the over layer render is in flight, so it is asked for once. */
+  overPending?: boolean;
   /**
    * Page-space box both pictures cover, which is the object's own box grown
    * by whatever its stroke hangs outside it. A path's bounds are its points,
@@ -78,6 +85,15 @@ export interface Scene {
   /** Page size the scene was built at, so a zoom change can be spotted. */
   width: number;
   height: number;
+  /**
+   * Renders the over layer for one tile, if it has one, keeping only the most
+   * recent so a page full of objects costs one layer of pixels, not sixteen.
+   * Called when an object is grabbed; the first few frames of the very first
+   * drag may run without it, which shows the copy on top until it arrives.
+   */
+  primeOver(tile: Tile): void;
+  /** Releases the rendered document the layers are drawn from. */
+  destroy(): void;
 }
 
 const enc = new TextEncoder();
@@ -85,6 +101,20 @@ const fmt = (n: number): string => String(Math.round(n * 1000) / 1000);
 
 /** Room for rounding, so a tile never loses its outermost pixel. */
 const EDGE = 1;
+
+/**
+ * Sets a page's content without compressing it.
+ *
+ * The scene document exists for a few milliseconds between being saved and
+ * being rendered, so deflating up to fifty copies of the page's content into
+ * it buys nothing and costs a visible stall on a heavy page. Only what is
+ * written to disk deserves compression, and none of this is.
+ */
+function setRawContent(doc: PDFDocument, page: ReturnType<PDFDocument['addPage']>, bytes: Uint8Array): void {
+  const stream = doc.context.stream(bytes);
+  const ref = doc.context.register(stream);
+  page.node.set(PDFName.of('Contents'), ref);
+}
 
 /**
  * How far a stroke reaches outside the path it follows, in page space.
@@ -220,13 +250,24 @@ export async function buildScene(
   scale: number,
   worker?: pdfjs.PDFWorker,
 ): Promise<Scene | null> {
+  let task: ReturnType<typeof pdfjs.getDocument> | null = null;
   try {
-    const doc = await PDFDocument.load(bytes.slice(), {
+    const src = await PDFDocument.load(bytes.slice(), {
       throwOnInvalidObject: false,
       updateMetadata: false,
     });
-    if (pageIndex >= doc.getPageCount()) return null;
-    const page = doc.getPage(pageIndex);
+    if (pageIndex >= src.getPageCount()) return null;
+
+    // Only the one page comes along. pdf-lib serialises every object in a
+    // document's context whether anything references it or not, so building
+    // the scene inside the loaded document meant every save carried the whole
+    // file: on a twelve page report full of photographs that was seconds of
+    // work per page, done again for every page scrolled past, which is what a
+    // frozen tab looks like from the outside. Copying the page pulls over
+    // exactly the objects it references and nothing else.
+    const doc = await PDFDocument.create();
+    const [page] = await doc.copyPages(src, [pageIndex]);
+    doc.addPage(page);
     const content = getPageContent(page);
     const size = page.getSize();
 
@@ -353,24 +394,24 @@ export async function buildScene(
 
       const hole = doc.addPage([size.width, size.height]);
       if (resources) hole.node.set(PDFName.of('Resources'), resources);
-      setPageContent(doc, hole, withoutRanges(content.bytes, [part]));
+      setRawContent(doc, hole, withoutRanges(content.bytes, [part]));
       hole.setCropBox(part.x0, part.y0, w, h);
 
       const tile = doc.addPage([size.width, size.height]);
       if (resources) tile.node.set(PDFName.of('Resources'), resources);
-      setPageContent(doc, tile, part.bytes);
+      setRawContent(doc, tile, part.bytes);
       tile.setCropBox(part.x0, part.y0, w, h);
 
       if (laterDraws(part.end)) {
         at.over = doc.getPageCount();
         const over = doc.addPage([size.width, size.height]);
         if (resources) over.node.set(PDFName.of('Resources'), resources);
-        setPageContent(doc, over, overContent(content.bytes, walk, inlineImages, part.end));
+        setRawContent(doc, over, overContent(content.bytes, walk, inlineImages, part.end));
       }
       pageAt.push(at);
     }
 
-    const task = pdfjs.getDocument({ worker, data: await doc.save({ useObjectStreams: false }) });
+    task = pdfjs.getDocument({ worker, data: await doc.save({ useObjectStreams: false }) });
     const rendered = await task.promise;
 
     // The object's own picture is rendered on a transparent background, so
@@ -390,7 +431,7 @@ export async function buildScene(
       return canvas;
     };
 
-    const backdrop = await draw(pageIndex);
+    const backdrop = await draw(0);
     if (!backdrop) {
       await task.destroy().catch(() => undefined);
       return null;
@@ -401,16 +442,16 @@ export async function buildScene(
       const at = pageAt[n];
       const hole = await draw(at.hole);
       const canvas = await draw(at.tile, true);
-      // The over layer is transparent everywhere nothing later draws, so it
-      // composites as a plain overlay. Losing it is not losing the object:
-      // the drag still works, the copy just rides on top.
-      const over = at.over === null ? null : await draw(at.over, true);
       if (hole && canvas) {
         tiles.push({
           id: part.id,
           canvas,
           hole,
-          over,
+          // Not rendered here. An over layer is a full page of pixels per
+          // object, and rendering all of them up front is what crashed the
+          // tab on a real report. primeOver draws it when the object is
+          // actually grabbed, and keeps only the most recent.
+          over: null,
           x0: part.x0,
           y0: part.y0,
           x1: part.x1,
@@ -422,18 +463,47 @@ export async function buildScene(
         });
       }
     }
-    await task.destroy().catch(() => undefined);
 
     // Every object must have both its pictures. One missing and a drag either
     // cannot erase the object or cannot show it moving, which from outside is
     // an object flickering out of existence. Better no scene at all: the drag
     // then falls back to drawing the object itself.
-    if (tiles.length !== parts.length) return null;
+    if (tiles.length !== parts.length) {
+      await task.destroy().catch(() => undefined);
+      return null;
+    }
 
-    return { backdrop, tiles, width: size.width, height: size.height };
+    // The rendered document stays alive so over layers can be drawn from it
+    // on demand; destroy() is how the scene's owner lets it go.
+    let holder: Tile | null = null;
+    const primeOver = (tile: Tile): void => {
+      const n = tiles.indexOf(tile);
+      const at = n < 0 ? undefined : pageAt[n];
+      if (at?.over == null || tile.over || tile.overPending) return;
+      tile.overPending = true;
+      void draw(at.over, true)
+        .then((canvas) => {
+          if (!canvas) return;
+          // One layer at a time. Whoever held it last lets go, so a page
+          // with sixteen objects costs one page of pixels, not sixteen.
+          if (holder && holder !== tile) holder.over = null;
+          tile.over = canvas;
+          holder = tile;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          tile.overPending = false;
+        });
+    };
+    const destroy = (): void => {
+      void task?.destroy().catch(() => undefined);
+    };
+
+    return { backdrop, tiles, width: size.width, height: size.height, primeOver, destroy };
   } catch {
     // A page that will not come apart is one that drags the old way rather
     // than one that throws in the middle of a gesture.
+    void task?.destroy().catch(() => undefined);
     return null;
   }
 }
