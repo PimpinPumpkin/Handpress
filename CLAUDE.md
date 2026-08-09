@@ -600,6 +600,32 @@ overlay biggest first, so the smallest thing under the pointer is on top and
 gets the click. Before that, a logo dragged onto a full width panel became
 unreachable, and right clicking it offered to rearrange the panel.
 
+## A spell checker is judged on what it does not flag
+
+The lookup is the easy part. A PDF is a poor source of prose, and the naive
+version flagged 23.7% of a dense paper with every one correct: web addresses,
+acronyms, surnames, and figure labels the producer drew without spaces. The
+filters in `src/pdf/spell.ts` take that under 3%, and they are the feature.
+
+Findings worth keeping:
+
+- The word list is Webster's Second, a *headword* list: "computer" but not
+  "computers", and with arbitrary holes ("box" and "has" are both absent while
+  "boxwood" and "hasten" are there). Endings are stripped at lookup rather than
+  the list being expanded fivefold, and the supplement covers the holes.
+- A word that divides cleanly into other words is a run-together label, not a
+  mistake, but only above eleven characters: below that the rule swallowed
+  "docment" (doc, ment) and "definately" (define, ately).
+- Suggestions must count a swap of two neighbours as one edit. Plain
+  Levenshtein makes "recieve" two edits from "receive", so a cap of one throws
+  away the two commonest typos there are, and suggested "relieve" instead.
+- Among equally near suggestions, prefer the ones made of the same letters.
+  Without that "the" came seventh for "teh", behind five substitutions.
+- A capitalised word with no near match is a name. That quietens a whole
+  bibliography, and a real typo almost always has a correction one edit away.
+
+`tools/test-spell.ts` is mostly negative cases for that reason.
+
 ## Restyling is the one place the styling rule is broken on purpose
 
 Every other path keeps a run's font, size and colour exactly as the producer

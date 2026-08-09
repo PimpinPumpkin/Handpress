@@ -365,6 +365,48 @@ at, and the grouping refuses them rather than guessing. A moved drawing keeps
 its place in the painting order too, so one taken from the top of a page and
 dropped into the middle of it can land behind something drawn later.
 
+### Spelling
+
+Two different things. While you are typing, the browser's own checker marks
+mistakes as you make them, using the dictionary the machine already has in
+whatever languages it has them. That costs nothing and needs no dictionary of
+ours.
+
+**Spelling** checks the whole document at once, which needs a word list, so one
+is fetched the first time you run it and kept for the session. It is English
+only.
+
+Most of the work is in what it refuses to flag. A PDF is a poor source of
+prose: web addresses, acronyms, surnames, and figure labels whose producer drew
+them without spaces all arrive looking like mistakes. The first version flagged
+23.7% of a dense academic paper and every single one was correct. Masking
+addresses, skipping acronyms and capitalised names, and recognising a word that
+divides cleanly into other words as a run-together label takes that under 3%. A
+checker that cries wolf is one nobody runs twice.
+
+If more than a quarter of the words come back unknown, it says the document is
+probably in another language rather than listing them all. A German form
+checked against an English list is not a document with two hundred mistakes.
+
+The word list is Webster's Second of 1934, which is public domain and already
+on most machines, plus a supplement of modern and British words kept in the
+repository. Being a headword list it has "computer" and not "computers", so an
+unknown word is stripped of its ending and looked up again. One consequence is
+that a misspelling whose correct form is an inflection gets flagged with no
+suggestion offered.
+
+### Making a form
+
+**Add field** drags out a box, then asks what kind it is and what it is called.
+Text boxes, tick boxes and dropdowns. The name is asked for rather than
+generated because it is what the field is called in the saved file and in any
+data exported from it, and a form whose fields are Field 1 through Field 9 is a
+form nobody can process.
+
+Names are made unique against what the document already has. Two fields sharing
+a name in a PDF are two widgets of one field, so typing in either fills both:
+occasionally what someone wants, never what they expect.
+
 ### Changing how existing text is set
 
 Select a line and the properties panel, which already says how it is set, will

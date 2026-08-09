@@ -33,7 +33,7 @@ check anything you are about to rely on.
 | Add a text box | Yes | Yes |
 | Font matching for characters the subset lacks | Yes | Yes, local fonts then a standard face |
 | Change font, size, colour of existing text | Yes | Yes, per line, from the three standard families |
-| Spell check | Yes | No |
+| Spell check | Yes | Yes, English, plus the browser's own while typing |
 | Find and replace | Yes | Yes, one at a time or all |
 
 ## Marking up
@@ -53,6 +53,16 @@ check anything you are about to rely on.
 | Measuring tools | Yes | No |
 | Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
 | Bring to front, send to back, forward and back a step | Yes | Yes, with the page's own drawing as one rung |
+
+**On spell checking.** English only, against a word list rather than a
+language model, and the interesting part is what it refuses to flag. A PDF is a
+poor source of prose: web addresses, acronyms, surnames and figure labels drawn
+without spaces all arrive looking like mistakes, and the naive version flagged
+23.7% of a dense paper with every one of them correct. Filtering those takes it
+under 3%. A document that comes back more than a quarter unknown is reported as
+probably not English rather than listed as two hundred mistakes. Words whose
+correct form is an inflection the list lacks are flagged with no suggestion
+offered, which is honest but is a gap.
 
 **On restyling.** Everything else here goes to lengths to keep a run's styling
 exactly as the producer wrote it, so this deliberately breaks that rule for one
@@ -115,7 +125,7 @@ different questions. Handpress is not a review tool.
 | Redact so the text is gone | Yes | Yes |
 | Print | Yes | Yes |
 | Fill forms | Yes | Yes |
-| Create form fields | Yes | No |
+| Create form fields | Yes | Text boxes, tick boxes and dropdowns |
 | Digital signature, certificate based | Yes | Reads and warns; cannot sign |
 | Drawn or typed signature | Yes | Yes |
 | Export to Word, Excel, PowerPoint | Yes | No |

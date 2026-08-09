@@ -115,6 +115,8 @@ const els = {
   btnPolyline: $<HTMLButtonElement>('btnPolyline'),
   btnCloud: $<HTMLButtonElement>('btnCloud'),
   btnCallout: $<HTMLButtonElement>('btnCallout'),
+  btnSpell: $<HTMLButtonElement>('btnSpell'),
+  btnField: $<HTMLButtonElement>('btnField'),
   btnStamp: $<HTMLButtonElement>('btnStamp'),
   stampModal: $('stampModal'),
   stampPreset: $<HTMLSelectElement>('stampPreset'),
@@ -753,6 +755,8 @@ const WRITERS = [
   'btnExtract',
   'btnReplaceOne',
   'btnReplaceAll',
+  'btnSpell',
+  'btnField',
   'btnStamp',
   'btnCrop',
   'btnUncrop',
@@ -993,6 +997,7 @@ const MODE_BUTTONS: Record<string, string> = {
   polyline: 'btnPolyline',
   cloud: 'btnCloud',
   callout: 'btnCallout',
+  field: 'btnField',
 };
 
 function syncEditState(): void {
@@ -1050,7 +1055,8 @@ function setMode(
     | 'polygon'
     | 'polyline'
     | 'cloud'
-    | 'callout',
+    | 'callout'
+    | 'field',
 ): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
@@ -1072,6 +1078,7 @@ function setMode(
   els.btnPolyline.classList.toggle('tool-active', mode === 'polyline');
   els.btnCloud.classList.toggle('tool-active', mode === 'cloud');
   els.btnCallout.classList.toggle('tool-active', mode === 'callout');
+  els.btnField.classList.toggle('tool-active', mode === 'field');
   revealGroupOf(MODE_BUTTONS[mode] ?? '');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
@@ -1086,6 +1093,7 @@ function setMode(
     polyline: 'Click each corner. Double click or Enter to finish.',
     cloud: 'Click each corner of the area to cloud. Double click or Enter to finish.',
     callout: 'Drag from what you are commenting on to where the note should sit.',
+    field: 'Drag out the box, then say what kind of field it is and what it is called.',
     select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
@@ -2032,6 +2040,139 @@ els.btnPolygon.addEventListener('click', () => setMode('polygon'));
 els.btnPolyline.addEventListener('click', () => setMode('polyline'));
 els.btnCloud.addEventListener('click', () => setMode('cloud'));
 els.btnCallout.addEventListener('click', () => setMode('callout'));
+els.btnField.addEventListener('click', () => setMode('field'));
+
+/* ---------------- spelling ---------------- */
+
+/**
+ * Checks the document and lists what it did not recognise.
+ *
+ * The results go in the properties panel rather than a dialog, because
+ * correcting a word means looking at the page while doing it, and a dialog
+ * over the page is the wrong shape for that.
+ */
+els.btnSpell.addEventListener('click', async () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  setBusy(true, 'Checking the spelling…');
+  try {
+    const result = await doc.spellCheck();
+    if (!result.ready) {
+      setStatus('The word list is not installed in this build, so spelling cannot be checked.', 'warn');
+      return;
+    }
+    if (result.foreign) {
+      // Saying the dictionary is wrong beats listing two hundred correct words
+      // as mistakes, which is what a German form checked against English does.
+      setStatus(
+        `${Math.round((result.matches.length / Math.max(1, result.checked)) * 100)}% of the words here are not in ` +
+          'the English word list, so this document is probably in another language. Only English can be checked.',
+        'warn',
+      );
+      showSpelling([]);
+      return;
+    }
+    matches = result.matches;
+    matchIndex = result.matches.length ? 0 : -1;
+    viewer.setMatches(matches, matchIndex);
+    showSpelling(result.matches);
+    setStatus(
+      result.matches.length
+        ? `${result.matches.length} word${result.matches.length === 1 ? '' : 's'} to look at, out of ${result.checked}.`
+        : `Nothing to flag in ${result.checked} words.`,
+    );
+    if (matchIndex >= 0) await viewer.revealMatch(matchIndex);
+  } catch (e) {
+    setStatus(`Could not check the spelling: ${reason(e)}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
+
+/** Lists what the check found, with corrections that can be clicked. */
+function showSpelling(found: SearchMatch[]): void {
+  els.panelBody.innerHTML = '';
+  if (!found.length) {
+    els.panelBody.innerHTML = '<p class="panel-empty">Nothing to flag.</p>';
+    return;
+  }
+
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  head.textContent = `${found.length} to look at`;
+  els.panelBody.appendChild(head);
+
+  const list = document.createElement('div');
+  list.className = 'spell-list';
+  // Grouped by the word itself: a document that says "recieve" eleven times
+  // is one decision, not eleven.
+  const byWord = new Map<string, SearchMatch[]>();
+  for (const m of found) {
+    const word = m.text.slice(m.start, m.end);
+    byWord.set(word, [...(byWord.get(word) ?? []), m]);
+  }
+
+  for (const [word, hits] of byWord) {
+    const row = document.createElement('div');
+    row.className = 'spell-row';
+
+    const label = document.createElement('button');
+    label.type = 'button';
+    label.className = 'spell-word';
+    label.textContent = hits.length > 1 ? `${word} (${hits.length})` : word;
+    label.title = 'Go to it';
+    label.addEventListener('click', () => {
+      const at = matches.indexOf(hits[0]);
+      if (at < 0) return;
+      matchIndex = at;
+      updateSearchUi();
+      void viewer.revealMatch(at);
+    });
+    row.appendChild(label);
+
+    const fixes = document.createElement('div');
+    fixes.className = 'spell-fixes';
+    const suggestions = doc?.suggestSpelling(word) ?? [];
+    if (!suggestions.length) {
+      const none = document.createElement('span');
+      none.className = 'spell-none';
+      none.textContent = 'no near match';
+      fixes.appendChild(none);
+    }
+    for (const fix of suggestions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn';
+      // Matched to how the word was written, so a capitalised word stays so.
+      b.textContent = /^[A-Z]/.test(word) ? fix[0].toUpperCase() + fix.slice(1) : fix;
+      b.title = `Replace all ${hits.length} of them`;
+      b.addEventListener('click', async () => {
+        if (!doc) return;
+        setBusy(true, 'Correcting…');
+        try {
+          const done = await doc.replace(word, b.textContent ?? fix);
+          if (!done) {
+            setStatus('That word could not be replaced.', 'warn');
+            return;
+          }
+          await doc.refresh();
+          await viewer.refreshRendered();
+          void renderThumbs();
+          syncEditState();
+          els.btnSpell.click();
+        } finally {
+          setBusy(false);
+        }
+      });
+      fixes.appendChild(b);
+    }
+    row.appendChild(fixes);
+    list.appendChild(row);
+  }
+  els.panelBody.appendChild(list);
+}
 
 els.btnCrop.addEventListener('click', () => setMode('crop'));
 

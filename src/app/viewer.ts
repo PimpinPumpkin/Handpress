@@ -44,7 +44,8 @@ export type ViewerMode =
   | 'polygon'
   | 'polyline'
   | 'cloud'
-  | 'callout';
+  | 'callout'
+  | 'field';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -368,7 +369,8 @@ export class Viewer {
         mode === 'polygon' ||
         mode === 'polyline' ||
         mode === 'cloud' ||
-        mode === 'callout',
+        mode === 'callout' ||
+        mode === 'field',
     );
       p.overlay.classList.toggle(
         'drawing',
@@ -442,8 +444,8 @@ export class Viewer {
           this.beginCallout(this.pages[i], e);
           return;
         }
-        if (this.mode === 'crop') {
-          this.beginRegion(this.pages[i], e, 'crop');
+        if (this.mode === 'crop' || this.mode === 'field') {
+          this.beginRegion(this.pages[i], e, this.mode);
           return;
         }
         if (this.mode !== 'erase' && this.mode !== 'redact' && this.mode !== 'highlight') return;
@@ -1686,7 +1688,11 @@ export class Viewer {
     window.addEventListener('pointercancel', up);
   }
 
-  private beginRegion(p: RenderedPage, down: PointerEvent, kind: 'erase' | 'redact' | 'highlight' | 'crop'): void {
+  private beginRegion(
+    p: RenderedPage,
+    down: PointerEvent,
+    kind: 'erase' | 'redact' | 'highlight' | 'crop' | 'field',
+  ): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();
 
@@ -1700,7 +1706,7 @@ export class Viewer {
         ? 'erase-preview redact-preview'
         : kind === 'highlight'
           ? 'erase-preview highlight-preview'
-          : kind === 'crop'
+          : kind === 'crop' || kind === 'field'
             ? 'erase-preview crop-preview'
             : 'erase-preview';
     p.overlay.appendChild(preview);
@@ -1743,6 +1749,11 @@ export class Viewer {
         width: Math.abs(x1 - x0),
         height: Math.abs(y1 - y0),
       };
+
+      if (kind === 'field') {
+        this.askField(p, area, e);
+        return;
+      }
 
       if (kind === 'crop') {
         // Asked rather than assumed. Cropping one page and cropping all of
@@ -2078,6 +2089,85 @@ export class Viewer {
   }
 
   /**
+   * Asks what kind of field this is and what it should be called.
+   *
+   * The name is asked for rather than generated because it is what the field
+   * is called in the saved file and in any data exported from it, and a form
+   * whose fields are Field 1 through Field 9 is a form nobody can process.
+   */
+  private askField(
+    p: RenderedPage,
+    area: { x: number; y: number; width: number; height: number },
+    at: { clientX: number; clientY: number },
+  ): void {
+    this.closeArrangeMenu();
+    const doc = this.doc;
+    if (!doc) return;
+
+    const menu = document.createElement('div');
+    menu.className = 'arrange-menu field-menu';
+    menu.style.left = `${at.clientX}px`;
+    menu.style.top = `${at.clientY}px`;
+
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'range-input';
+    name.placeholder = 'What it is called';
+    name.value = '';
+    menu.appendChild(name);
+
+    const make = (kind: 'text' | 'checkbox' | 'dropdown'): void => {
+      const chosen = name.value.trim();
+      if (!chosen) {
+        name.focus();
+        this.cb.onStatus('Give the field a name first: it is how the answers come back.', 'warn');
+        return;
+      }
+      this.closeArrangeMenu();
+      const options = kind === 'dropdown' ? (prompt('Choices, separated by commas') ?? '').split(',').map((o) => o.trim()).filter(Boolean) : undefined;
+      if (!doc.addField(p.index, { ...area, kind, name: chosen, options })) return;
+      void this.rebuild(p.index).then(() => {
+        this.cb.onStatus(`Added a ${kind === 'text' ? 'text box' : kind} called ${JSON.stringify(chosen)}.`);
+        this.cb.onEdited();
+      });
+    };
+
+    for (const [label, kind] of [
+      ['Text box', 'text'],
+      ['Tick box', 'checkbox'],
+      ['Dropdown', 'dropdown'],
+    ] as Array<[string, 'text' | 'checkbox' | 'dropdown']>) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.textContent = label;
+      item.addEventListener('click', () => make(kind));
+      menu.appendChild(item);
+    }
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        make('text');
+      }
+      e.stopPropagation();
+    });
+
+    document.body.appendChild(menu);
+    this.arrangeMenu = menu;
+    name.focus();
+
+    const dismiss = (e: Event): void => {
+      if (menu.contains(e.target as Node)) return;
+      this.closeArrangeMenu();
+      window.removeEventListener('pointerdown', dismiss, true);
+    };
+    window.addEventListener('pointerdown', dismiss, true);
+
+    const box = menu.getBoundingClientRect();
+    if (box.right > window.innerWidth) menu.style.left = `${window.innerWidth - box.width - 8}px`;
+    if (box.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - box.height - 8}px`;
+  }
+
+  /**
    * Asks whether a crop is for this page or the whole document.
    *
    * A confirmation rather than an immediate apply, unlike erase or highlight,
@@ -2367,7 +2457,8 @@ export class Viewer {
       this.mode === 'polyline' ||
       this.mode === 'cloud' ||
       this.mode === 'callout' ||
-      this.mode === 'crop'
+      this.mode === 'crop' ||
+      this.mode === 'field'
     );
   }
 
@@ -2677,6 +2768,10 @@ export class Viewer {
     const editor = document.createElement('div');
     editor.className = 'line-editor line-editor-add';
     editor.contentEditable = 'plaintext-only';
+    // The browser's own checker, which is free, uses the dictionary the
+    // machine already has in whatever languages it has them, and marks a typo
+    // as it is made rather than waiting for a check to be run.
+    editor.spellcheck = true;
     editor.spellcheck = false;
     editor.textContent = insertion.text;
     editor.style.font = cssFont;
@@ -2804,6 +2899,10 @@ export class Viewer {
     const editor = document.createElement('div');
     editor.className = 'line-editor';
     editor.contentEditable = 'plaintext-only';
+    // The browser's own checker, which is free, uses the dictionary the
+    // machine already has in whatever languages it has them, and marks a typo
+    // as it is made rather than waiting for a check to be run.
+    editor.spellcheck = true;
     editor.spellcheck = false;
     editor.textContent = this.doc.textFor(p.index, line);
     editor.style.font = cssFont;

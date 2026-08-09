@@ -2,14 +2,15 @@
   "name": "handpress",
   "license": "AGPL-3.0-only",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
-    "dev": "npm run ocr-assets && vite",
-    "build": "npm run ocr-assets && tsc && vite build",
+    "dev": "npm run ocr-assets && npm run dict-assets && vite",
+    "build": "npm run ocr-assets && npm run dict-assets && tsc && vite build",
     "ocr-assets": "node tools/ocr-assets.mjs",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler pages deploy dist --project-name handpress"
+    "deploy": "npm run build && wrangler pages deploy dist --project-name handpress",
+    "dict-assets": "node tools/dict-assets.mjs"
   },
   "devDependencies": {
     "tsx": "^4.23.5",

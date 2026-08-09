@@ -35,6 +35,8 @@ import { findGraphics, type Graphic } from '../pdf/graphics';
 import { decryptToBytes } from '../pdf/decrypt';
 import { describeSignatures, findSignatures, type SignatureReport } from '../pdf/signatures';
 import { applyFormValues, readForm, type FormField } from '../pdf/forms';
+import { addFields, type NewField } from '../pdf/newfields';
+import { Dictionary, FOREIGN_SHARE, findMisspellings } from '../pdf/spell';
 import { addNotes, type PageNote } from '../pdf/notes';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -67,6 +69,7 @@ interface EditState {
   stamps: Map<number, Map<string, ImageStamp>>;
   notes: Map<number, Map<string, PageNote>>;
   formValues: Map<string, string>;
+  newFields: Map<number, Map<string, NewField>>;
   /** Page order and rotation, as a list of operations against the original. */
   pagePlan: PagePlanEntry[];
   extraDocs: Array<{ name: string; bytes: Uint8Array }>;
@@ -199,6 +202,9 @@ export class HandpressDocument {
   private stamps = new Map<number, Map<string, ImageStamp>>();
   /** pageIndex -> note id -> a comment attached to a point on the page. */
   private notes = new Map<number, Map<string, PageNote>>();
+  /** pageIndex -> field id -> an interactive field being added to the document. */
+  private newFields = new Map<number, Map<string, NewField>>();
+  private nextFieldId = 1;
   /** Interactive form field values, keyed by the field's own name. */
   private formValues = new Map<string, string>();
   /** Fields as the original document declares them, read once. */
@@ -377,6 +383,7 @@ export class HandpressDocument {
     for (const m of this.insertions.values()) if (m.size) return true;
     for (const m of this.stamps.values()) if (m.size) return true;
     for (const m of this.notes.values()) if (m.size) return true;
+    for (const m of this.newFields.values()) if (m.size) return true;
     return this.formValues.size > 0;
   }
 
@@ -405,6 +412,7 @@ export class HandpressDocument {
     for (const m of this.insertions.values()) n += m.size;
     for (const m of this.stamps.values()) n += m.size;
     for (const m of this.notes.values()) n += m.size;
+    for (const m of this.newFields.values()) n += m.size;
     return n + this.formValues.size;
   }
 
@@ -434,6 +442,7 @@ export class HandpressDocument {
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       notes: new Map([...this.notes].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
+      newFields: new Map([...this.newFields].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       pagePlan: (this.pagePlan ?? []).map((e) => ({ ...e })),
       extraDocs: [...this.extraDocs],
     };
@@ -453,6 +462,7 @@ export class HandpressDocument {
     this.stamps = state.stamps;
     this.notes = state.notes;
     this.formValues = state.formValues;
+    this.newFields = state.newFields;
     this.pagePlan = state.pagePlan.length ? state.pagePlan : null;
     this.extraDocs = state.extraDocs;
   }
@@ -853,6 +863,75 @@ export class HandpressDocument {
       if (changed) done += hits.length;
     }
     return done;
+  }
+
+  /* ---------------- spelling ---------------- */
+
+  /** The word list, fetched once and kept, or null when it is not installed. */
+  private dictionary: Dictionary | null = null;
+  private dictionaryTried = false;
+
+  /**
+   * Loads the word list, which is fetched rather than bundled.
+   *
+   * Two and a half megabytes of English has no business in the script that
+   * opens a document, and most sessions never run a spell check. It is asked
+   * for the first time one is run and kept for the rest of the session.
+   */
+  private async loadDictionary(): Promise<Dictionary | null> {
+    if (this.dictionary || this.dictionaryTried) return this.dictionary;
+    this.dictionaryTried = true;
+    try {
+      const res = await fetch('dict/en.txt');
+      if (!res.ok) return null;
+      this.dictionary = new Dictionary((await res.text()).split('\n'));
+    } catch {
+      // Offline, or the list was never built. The caller says so.
+      this.dictionary = null;
+    }
+    return this.dictionary;
+  }
+
+  /**
+   * Every word in the document the dictionary does not recognise.
+   *
+   * Reported the same shape as a search hit, so jumping between them and
+   * replacing them both go through machinery that already works.
+   *
+   * `foreign` says the document looks like it is in another language: a German
+   * form checked against an English list is not a document with two hundred
+   * mistakes in it, and listing them as though it were is worse than saying
+   * nothing at all.
+   */
+  async spellCheck(): Promise<{ matches: SearchMatch[]; checked: number; foreign: boolean; ready: boolean }> {
+    const dict = await this.loadDictionary();
+    if (!dict) return { matches: [], checked: 0, foreign: false, ready: false };
+
+    const matches: SearchMatch[] = [];
+    let checked = 0;
+    for (let pageIndex = 0; pageIndex < this.pageCount; pageIndex++) {
+      const page = await this.getPage(pageIndex).catch(() => null);
+      if (!page) continue;
+
+      const look = (text: string, where: { lineId: string; insertionId?: string }): void => {
+        checked += (text.match(/[A-Za-z]{3,}/g) ?? []).length;
+        for (const bad of findMisspellings(dict, text)) {
+          matches.push({ pageIndex, ...where, start: bad.start, end: bad.end, text });
+        }
+      };
+      for (const line of page.lines) look(this.textFor(pageIndex, line), { lineId: line.id });
+      for (const insertion of this.insertionsFor(pageIndex)) {
+        look(insertion.text, { lineId: '', insertionId: insertion.id });
+      }
+    }
+
+    const foreign = checked > 40 && matches.length / checked > FOREIGN_SHARE;
+    return { matches, checked, foreign, ready: true };
+  }
+
+  /** Corrections for a word, nearest first. Empty when the list is not loaded. */
+  suggestSpelling(word: string): string[] {
+    return this.dictionary?.suggest(word.toLowerCase()) ?? [];
   }
 
   /* ---------------- page operations ---------------- */
@@ -1610,6 +1689,47 @@ export class HandpressDocument {
     return this.formFields.length > 0;
   }
 
+  /** Fields being added to a page, which do not exist in the file yet. */
+  newFieldsOn(pageIndex: number): NewField[] {
+    return [...(this.newFields.get(pageIndex)?.values() ?? [])];
+  }
+
+  /**
+   * Adds an interactive field to a page.
+   *
+   * The name is what it will be called in the saved file and in any data
+   * exported from it, so it is asked for rather than generated: a form whose
+   * fields are Field 1 through Field 9 is a form nobody can process.
+   *
+   * Made unique at build time rather than here, because a page deleted and
+   * restored would otherwise keep renaming the same field.
+   */
+  addField(pageIndex: number, field: Omit<NewField, 'id'>): NewField | null {
+    if (field.width < 4 || field.height < 4) return null;
+    const before = this.snapshot();
+    let page = this.newFields.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.newFields.set(pageIndex, page);
+    }
+    const made: NewField = { ...field, id: `field${this.nextFieldId++}` };
+    page.set(made.id, made);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return made;
+  }
+
+  /** Takes a field back off the page, before it has ever been in the file. */
+  removeField(pageIndex: number, id: string): boolean {
+    const page = this.newFields.get(pageIndex);
+    if (!page?.has(id)) return false;
+    const before = this.snapshot();
+    page.delete(id);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
   setFieldValue(name: string, value: string): boolean {
     const current = this.formFields.find((f) => f.name === name);
     if (!current) return false;
@@ -1849,6 +1969,17 @@ export class HandpressDocument {
           kind: 'stream-missing',
           detail: `page rearrangement failed: ${(e as Error).message}`,
         });
+      }
+    }
+
+    // Fields are created before values are written, so a value typed into a
+    // field that is itself being added still lands.
+    if (this.newFields.size) {
+      const byPage = new Map(
+        [...this.newFields].map(([pageIndex, m]) => [pageIndex, [...m.values()]] as [number, NewField[]]),
+      );
+      for (const w of await addFields(doc, byPage)) {
+        warnings.push({ lineId: w.field, kind: 'unencodable', detail: w.detail });
       }
     }
 

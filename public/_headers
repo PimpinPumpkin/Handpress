@@ -9,6 +9,14 @@
 /ocr/*
   Cache-Control: public, max-age=31536000, immutable
 
+# The word list the spell checker reads. It is rebuilt only when the source
+# dictionary or the supplement changes, which is to say almost never, and it is
+# two and a half megabytes: worth keeping once it has been fetched. A month
+# rather than a year, because unlike the recogniser's data its name does not
+# change when its contents do.
+/dict/*
+  Cache-Control: public, max-age=2592000
+
 # Everything the build fingerprints. Same reasoning, less of it.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
