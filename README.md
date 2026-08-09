@@ -365,6 +365,41 @@ at, and the grouping refuses them rather than guessing. A moved drawing keeps
 its place in the painting order too, so one taken from the top of a page and
 dropped into the middle of it can land behind something drawn later.
 
+### Replying to a comment
+
+Click any comment, including one the document arrived with, and the panel shows
+the thread with somewhere to answer. A reply is an ordinary annotation carrying
+`/IRT`, which points at the comment it answers, plus `/RT /R` to say the
+relationship is a reply rather than a grouping.
+
+That is the PDF specification's own mechanism, which is also Acrobat's, so a
+thread written here opens as a thread in Acrobat, Preview and anything else that
+reads annotations. None of it needs a server or an account.
+
+What does need a server is shared review: the links, tracking who has commented
+yet, merging comments from several people. That is a different thing and is not
+planned. Threads are not.
+
+Comments that came with the file are marked apart from your own and cannot be
+moved or edited, because they are somebody else's annotation. They can be
+answered.
+
+### The same thing to a pile of files
+
+**Batch** takes files chosen at once and does the same things to all of them:
+read every scanned page, stamp every page, turn every page, make them smaller,
+lock them with a password. They come back as one zip.
+
+Acrobat calls this an Action and runs it over a folder on a server or a disk.
+There is neither here, so the files are handled in this tab, one at a time.
+Nothing is uploaded, which is also why forty scans take as long as forty scans.
+
+Only steps that need no decision per document are offered. Anything aimed at a
+particular page or a particular sentence is an edit, not a batch step, and
+pretending otherwise produces a feature that appears to work and quietly does
+the wrong thing to file forty. A file that cannot be read is reported by name
+and the rest carry on.
+
 ### Spelling
 
 Two different things. While you are typing, the browser's own checker marks

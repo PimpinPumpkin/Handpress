@@ -61,6 +61,8 @@ export interface ViewerCallbacks {
    * be built again from the rebuilt document.
    */
   onPagesChanged(message: string): void;
+  /** A comment was clicked, so its thread should be shown and made repliable. */
+  onThread(pageIndex: number, commentId: string): void;
 }
 
 interface RenderedPage {
@@ -894,7 +896,15 @@ export class Viewer {
     // Notes are annotations, so the canvas never draws them: a reader shows its
     // own icon and its own popup. The marker here stands in for that icon and
     // is what makes the comment editable while the document is open.
-    for (const note of this.doc.notesFor(p.index)) this.addNoteMarker(p, note, viewport);
+    // Comments the document arrived with get a marker too, so somebody else's
+    // review can be read and answered rather than only one's own.
+    for (const comment of this.doc.commentsOn(p.index)) {
+      // A reply sits on top of its parent, and readers lay threads out
+      // themselves, so drawing one marker per reply would stack icons on the
+      // same spot. The thread opens from the comment it answers.
+      if (comment.replyTo) continue;
+      this.addNoteMarker(p, comment, viewport);
+    }
   }
 
   /**
@@ -1046,7 +1056,7 @@ export class Viewer {
   /** Draws one note's marker and wires dragging and editing to it. */
   private addNoteMarker(
     p: RenderedPage,
-    note: PageNote,
+    note: { id: string; x: number; y: number; text: string; author: string; mine?: boolean },
     viewport: { convertToViewportPoint(x: number, y: number): number[] },
   ): void {
     const [nx, ny] = viewport.convertToViewportPoint(note.x, note.y);
@@ -1058,17 +1068,23 @@ export class Viewer {
     marker.style.width = `${NOTE_SIZE * this.zoom}px`;
     marker.style.height = `${NOTE_SIZE * this.zoom}px`;
     marker.textContent = '\u201c';
-    marker.title = `${note.text || 'Empty note'}\n\nDrag to move, click to edit.`;
+    const mine = note.mine !== false;
+    marker.classList.toggle('note-theirs', !mine);
+    marker.title = mine
+      ? `${note.text || 'Empty note'}\n\nDrag to move, click to edit.`
+      : `${note.author ? `${note.author}: ` : ''}${note.text}\n\nClick to read the thread and reply.`;
 
     this.makeDraggable(
       marker,
       viewport as never,
       (dx, dy) => {
-        if (!this.doc) return;
+        // Only our own. A comment that came with the file belongs to whoever
+        // wrote it, and moving it would rewrite their annotation.
+        if (!this.doc || !mine) return;
         if (!this.doc.moveNote(p.index, note.id, dx, dy)) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      () => this.openNoteEditor(p, note, viewport),
+      () => this.cb.onThread(p.index, note.id),
       // Deliberately not lifted. A note is an annotation, so the marker is our
       // own drawing rather than page pixels; copying the canvas underneath it
       // would float whatever the page happens to have there.

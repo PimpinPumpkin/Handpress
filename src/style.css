@@ -1217,6 +1217,55 @@ body {
   width: 100%;
 }
 
+/* ---------- comment threads ---------- */
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.thread-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--chrome-3);
+  border-left: 3px solid var(--accent);
+}
+
+/* Somebody else's comment, which cannot be edited or moved here. */
+.thread-item.thread-theirs {
+  border-left-color: var(--warn);
+}
+
+.thread-who {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 3px;
+}
+
+.thread-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.thread-reply {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--chrome-line);
+  background: var(--chrome-1);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+/* A comment the document arrived with, marked apart from one made here. */
+.note-marker.note-theirs {
+  background: var(--warn);
+}
+
 /* ---------- spelling ---------- */
 
 .spell-list {

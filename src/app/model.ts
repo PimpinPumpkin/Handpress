@@ -37,7 +37,7 @@ import { describeSignatures, findSignatures, type SignatureReport } from '../pdf
 import { applyFormValues, readForm, type FormField } from '../pdf/forms';
 import { addFields, type NewField } from '../pdf/newfields';
 import { Dictionary, FOREIGN_SHARE, findMisspellings } from '../pdf/spell';
-import { addNotes, type PageNote } from '../pdf/notes';
+import { addNotes, readNotes, type ExistingNote, type PageNote } from '../pdf/notes';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -340,6 +340,9 @@ export class HandpressDocument {
       });
       signatures = findSignatures(libDoc);
       this.formFields = readForm(libDoc).fields;
+      // Comments the file arrived with, so they can be read and answered
+      // rather than only the ones made here.
+      this.documentNotes = readNotes(libDoc);
       // Loading is not the same as being usable: a broken page tree parses
       // happily and then throws the moment anything asks for a page, which is
       // every single thing the editor does.
@@ -715,6 +718,59 @@ export class HandpressDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return true;
+  }
+
+  /** Comments the document arrived with, read once when it was opened. */
+  private documentNotes: ExistingNote[] = [];
+
+  /** Every comment on a page, the ones already in the file and the ones added. */
+  commentsOn(pageIndex: number): Array<{
+    id: string;
+    x: number;
+    y: number;
+    text: string;
+    author: string;
+    written: number;
+    replyTo?: string;
+    /** False for comments the file arrived with, which cannot be edited here. */
+    mine: boolean;
+  }> {
+    const theirs = this.documentNotes
+      .filter((n) => n.pageIndex === pageIndex)
+      .map((n) => ({ ...n, mine: false }));
+    const mine = this.notesFor(pageIndex).map((n) => ({
+      id: n.id,
+      x: n.x,
+      y: n.y,
+      text: n.text,
+      author: n.author,
+      written: n.written,
+      replyTo: n.replyTo,
+      mine: true,
+    }));
+    return [...theirs, ...mine];
+  }
+
+  /**
+   * Answers a comment, whether it came with the document or was added here.
+   *
+   * The reply is an ordinary note carrying the id of the one it answers, which
+   * becomes /IRT at build time. It is placed on top of its parent, because
+   * readers lay a thread out themselves and a reply given a position of its
+   * own just leaves a second icon on the page.
+   */
+  replyToComment(pageIndex: number, parentId: string, text: string, author: string): PageNote | null {
+    if (!text.trim()) return null;
+    const parent = this.commentsOn(pageIndex).find((c) => c.id === parentId);
+    if (!parent) return null;
+    return this.addNote(pageIndex, {
+      x: parent.x,
+      y: parent.y,
+      text,
+      author,
+      written: Date.now(),
+      replyTo: parentId,
+    });
   }
 
   notesFor(pageIndex: number): PageNote[] {
@@ -1824,7 +1880,7 @@ export class HandpressDocument {
         const page = doc.getPage(pageIndex);
         // Notes are annotations rather than page content, so they are attached
         // to the page object and never touch the content stream.
-        if (pageNotes.length) addNotes(doc, page, pageNotes);
+        if (pageNotes.length) addNotes(doc, page, pageNotes, pageIndex);
         const content = getPageContent(page);
         const walk = walkPage(content.bytes, content.resources);
         const lines = groupLines(walk.ops);

@@ -239,6 +239,10 @@
           </button>
         </div>
         <div class="tool-group is-hidden" data-group="doc">
+          <button class="tool" id="btnBatch" type="button" title="Do the same thing to a pile of files at once">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="12" height="14" rx="1.5" /><path d="M7 3h11a1.5 1.5 0 0 1 1.5 1.5V17" /></svg>
+            <span>Batch</span>
+          </button>
           <button class="tool" id="btnSpell" type="button" title="Check the spelling of every page">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17L9 6l5 11" /><path d="M5.8 13.5h6.4" /><path d="M15 15l2.5 2.5L22 13" /></svg>
             <span>Spelling</span>
@@ -438,6 +442,38 @@
           <span class="modal-spacer"></span>
           <button class="btn" id="splitCancel" type="button">Cancel</button>
           <button class="btn btn-primary" id="splitGo" type="button">Split it</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="batchModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="batchTitle">
+        <h2 id="batchTitle">The same thing to a pile of files</h2>
+        <p class="modal-sub">
+          Choose the files and what to do to all of them. They are handled here in this tab, one at a time, and
+          come back as a single zip. Nothing is uploaded, which is also why forty scans take as long as forty
+          scans.
+        </p>
+        <button class="btn" id="batchPick" type="button">Choose files</button>
+        <p class="sig-hint" id="batchChosen">No files chosen.</p>
+
+        <label class="sig-check"><input type="checkbox" id="batchOcr" /> Read every scanned page</label>
+        <label class="sig-check"><input type="checkbox" id="batchStamp" /> Stamp every page, using the Stamp settings</label>
+        <label class="sig-check"><input type="checkbox" id="batchCompress" /> Make the files smaller</label>
+        <label class="sig-check" for="batchRotate">Turn every page</label>
+        <select class="zoom-select" id="batchRotate">
+          <option value="0">Leave as it is</option>
+          <option value="90">A quarter turn right</option>
+          <option value="-90">A quarter turn left</option>
+          <option value="180">Upside down</option>
+        </select>
+        <label class="sig-check" for="batchPassword">Lock them with a password, if you want one</label>
+        <input class="range-input" id="batchPassword" type="password" placeholder="Leave empty for no password" />
+        <p class="sig-hint" id="batchHint"></p>
+        <div class="modal-actions">
+          <span class="modal-spacer"></span>
+          <button class="btn" id="batchCancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="batchGo" type="button">Run it</button>
         </div>
       </div>
     </div>

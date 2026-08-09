@@ -22,6 +22,7 @@ import { zip } from './pdf/zip';
 import { encrypt } from './pdf/encrypt';
 import { AUTOSAVE_LIMIT, forget, howLongAgo, keep, recover } from './app/autosave';
 import { recompressInBrowser } from './app/recompress';
+import { runBatch } from './app/batch';
 import { standardTextWidth } from './pdf/fonts';
 import type { TextLine } from './pdf/content';
 
@@ -116,6 +117,18 @@ const els = {
   btnCloud: $<HTMLButtonElement>('btnCloud'),
   btnCallout: $<HTMLButtonElement>('btnCallout'),
   btnSpell: $<HTMLButtonElement>('btnSpell'),
+  btnBatch: $<HTMLButtonElement>('btnBatch'),
+  batchModal: $('batchModal'),
+  batchPick: $<HTMLButtonElement>('batchPick'),
+  batchChosen: $('batchChosen'),
+  batchOcr: $<HTMLInputElement>('batchOcr'),
+  batchStamp: $<HTMLInputElement>('batchStamp'),
+  batchCompress: $<HTMLInputElement>('batchCompress'),
+  batchRotate: $<HTMLSelectElement>('batchRotate'),
+  batchPassword: $<HTMLInputElement>('batchPassword'),
+  batchHint: $('batchHint'),
+  batchCancel: $<HTMLButtonElement>('batchCancel'),
+  batchGo: $<HTMLButtonElement>('batchGo'),
   btnField: $<HTMLButtonElement>('btnField'),
   btnStamp: $<HTMLButtonElement>('btnStamp'),
   stampModal: $('stampModal'),
@@ -244,7 +257,88 @@ const viewer = new Viewer(els.viewer, {
   onPagesChanged(message) {
     void applyPageChange(true).then(() => setStatus(message));
   },
+  onThread(pageIndex, commentId) {
+    showThread(pageIndex, commentId);
+  },
 });
+
+/* ---------------- comment threads ---------------- */
+
+/**
+ * Shows a comment and everything said in reply to it, with somewhere to answer.
+ *
+ * A reply is an ordinary annotation carrying /IRT, which is the PDF
+ * specification's own mechanism and therefore Acrobat's: a thread written here
+ * opens as a thread there, and none of it needs a server. What does need one is
+ * shared review, the links and the tracking of who has commented yet, and that
+ * is a different feature.
+ */
+function showThread(pageIndex: number, rootId: string): void {
+  if (!doc) return;
+  const all = doc.commentsOn(pageIndex);
+  const root = all.find((c) => c.id === rootId);
+  if (!root) return;
+
+  // Everything hanging off the root, however deep, in the order it was written.
+  const chain = [root];
+  for (let guard = 0; guard < 200; guard++) {
+    const next = all.filter((c) => c.replyTo && chain.some((p) => p.id === c.replyTo) && !chain.includes(c));
+    if (!next.length) break;
+    chain.push(...next);
+  }
+  chain.sort((a, b) => (a === root ? -1 : b === root ? 1 : a.written - b.written));
+
+  els.panelBody.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  head.textContent = chain.length > 1 ? `Thread, ${chain.length} comments` : 'Comment';
+  els.panelBody.appendChild(head);
+
+  const list = document.createElement('div');
+  list.className = 'thread';
+  for (const c of chain) {
+    const item = document.createElement('div');
+    item.className = c.mine ? 'thread-item' : 'thread-item thread-theirs';
+    const who = document.createElement('div');
+    who.className = 'thread-who';
+    who.textContent = [c.author || 'Unsigned', c.written ? new Date(c.written).toLocaleDateString() : '']
+      .filter(Boolean)
+      .join(' \u00b7 ');
+    const body = document.createElement('div');
+    body.className = 'thread-text';
+    body.textContent = c.text || '(empty)';
+    item.append(who, body);
+    list.appendChild(item);
+  }
+  els.panelBody.appendChild(list);
+
+  const box = document.createElement('textarea');
+  box.className = 'thread-reply';
+  box.placeholder = 'Reply';
+  box.rows = 3;
+  box.spellcheck = true;
+  els.panelBody.appendChild(box);
+
+  const send = document.createElement('button');
+  send.type = 'button';
+  send.className = 'btn btn-primary';
+  send.textContent = 'Reply';
+  send.addEventListener('click', () => {
+    if (!doc || !box.value.trim()) return;
+    // Replies answer the comment that was clicked, not the last one in the
+    // thread, which is what makes a branching conversation possible and is
+    // how every reader lays one out.
+    if (!doc.replyToComment(pageIndex, rootId, box.value, viewer.noteAuthor)) return;
+    box.value = '';
+    void viewer.rebuildPage(pageIndex).then(() => {
+      syncEditState();
+      scheduleAutosave();
+      showThread(pageIndex, rootId);
+      setStatus('Replied. It is a real annotation, so other readers will see the thread.');
+    });
+  });
+  els.panelBody.appendChild(send);
+}
 
 /* ---------------- opening ---------------- */
 
@@ -1861,10 +1955,10 @@ function parseRange(text: string, pageCount: number): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
-function downloadPdf(bytes: Uint8Array, filename: string): void {
+function downloadPdf(bytes: Uint8Array, filename: string, type = 'application/pdf'): void {
   const copy = new Uint8Array(bytes.length);
   copy.set(bytes);
-  const url = URL.createObjectURL(new Blob([copy], { type: 'application/pdf' }));
+  const url = URL.createObjectURL(new Blob([copy], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
@@ -2041,6 +2135,118 @@ els.btnPolyline.addEventListener('click', () => setMode('polyline'));
 els.btnCloud.addEventListener('click', () => setMode('cloud'));
 els.btnCallout.addEventListener('click', () => setMode('callout'));
 els.btnField.addEventListener('click', () => setMode('field'));
+
+/* ---------------- the same thing to a pile of files ---------------- */
+
+/**
+ * Files chosen for a batch.
+ *
+ * Held rather than read straight away: a hundred scans is a gigabyte, and
+ * nobody has agreed to anything yet at the point of choosing them.
+ */
+let batchFiles: File[] = [];
+
+function describeBatchFiles(): void {
+  els.batchChosen.textContent = batchFiles.length
+    ? `${batchFiles.length} file${batchFiles.length === 1 ? '' : 's'}: ${batchFiles
+        .slice(0, 3)
+        .map((f) => f.name)
+        .join(', ')}${batchFiles.length > 3 ? ` and ${batchFiles.length - 3} more` : ''}`
+    : 'No files chosen.';
+}
+
+els.btnBatch.addEventListener('click', () => {
+  batchFiles = [];
+  describeBatchFiles();
+  els.batchHint.textContent = '';
+  els.batchModal.hidden = false;
+});
+
+els.batchCancel.addEventListener('click', () => {
+  els.batchModal.hidden = true;
+  batchFiles = [];
+});
+
+els.batchPick.addEventListener('click', () => {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'application/pdf,.pdf';
+  picker.multiple = true;
+  picker.addEventListener('change', () => {
+    batchFiles = [...(picker.files ?? [])];
+    describeBatchFiles();
+  });
+  picker.click();
+});
+
+els.batchGo.addEventListener('click', async () => {
+  if (!batchFiles.length) {
+    els.batchHint.textContent = 'Choose some files first.';
+    return;
+  }
+  const rotate = parseInt(els.batchRotate.value, 10) || 0;
+  const wantsSomething =
+    els.batchOcr.checked || els.batchStamp.checked || els.batchCompress.checked || rotate || els.batchPassword.value;
+  if (!wantsSomething) {
+    els.batchHint.textContent = 'Choose at least one thing to do to them.';
+    return;
+  }
+
+  const files = batchFiles;
+  els.batchModal.hidden = true;
+  setBusy(true, 'Starting…');
+  try {
+    const preset = STAMP_PRESETS[els.stampPreset.value] ?? STAMP_PRESETS.watermark;
+    const result = await runBatch(
+      await Promise.all(
+        files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })),
+      ),
+      {
+        recognise: els.batchOcr.checked ? { language: ocrLanguage() } : undefined,
+        stamp: els.batchStamp.checked
+          ? {
+              text: els.stampText.value,
+              size: Math.max(4, parseFloat(els.stampSize.value) || 12),
+              color: hexToRgb(els.stampColor.value),
+              opacity: Math.min(1, Math.max(0.05, (parseFloat(els.stampOpacity.value) || 100) / 100)),
+              rotate: parseFloat(els.stampRotate.value) || 0,
+              place: preset.place,
+              margin: 36,
+              bold: false,
+              italic: false,
+              behind: preset.behind,
+            }
+          : undefined,
+        rotate,
+        compress: els.batchCompress.checked,
+        password: els.batchPassword.value || undefined,
+      },
+      (message: string, fraction: number) => setBusy(true, `${message} ${Math.round(fraction * 100)}%`),
+    );
+
+    if (!result.done) {
+      setStatus(
+        `Nothing came through. ${result.failed.map((f: { name: string; detail: string }) => `${f.name}: ${f.detail}`).join('; ')}`,
+        'warn',
+      );
+      return;
+    }
+    downloadPdf(result.bytes, 'Handpress batch.zip', 'application/zip');
+    setStatus(
+      result.failed.length
+        ? `${result.done} done, ${result.failed.length} could not be read: ${result.failed
+            .map((f: { name: string }) => f.name)
+            .join(', ')}.`
+        : `${result.done} file${result.done === 1 ? '' : 's'} done, saved as one zip.`,
+      result.failed.length ? 'warn' : 'info',
+    );
+  } catch (e) {
+    setStatus(`The batch stopped: ${reason(e)}`, 'warn');
+  } finally {
+    setBusy(false);
+    batchFiles = [];
+  }
+});
 
 /* ---------------- spelling ---------------- */
 

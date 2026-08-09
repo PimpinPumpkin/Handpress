@@ -600,6 +600,42 @@ overlay biggest first, so the smallest thing under the pointer is on top and
 gets the click. Before that, a logo dragged onto a full width panel became
 unreachable, and right clicking it offered to rearrange the panel.
 
+## Comment threads never needed a server
+
+This was assumed to need one for a while and it does not. A reply is an
+annotation carrying `/IRT` at the comment it answers and `/RT /R` to say the
+relationship is a reply; that is the specification's mechanism, which is what
+Acrobat uses, so nothing proprietary and nothing remote is involved.
+`src/pdf/notes.ts` writes parents before replies and resolves chains of any
+depth, falling back to writing an orphan as a comment of its own rather than
+losing it.
+
+`readNotes` is the other half and the more important one: without reading the
+comments a document arrived with, replying only ever works on comments made in
+the same session, which is not what a thread is for. Identity is the page plus
+the position in that page's annotation list, which is stable because every
+build starts again from the original bytes.
+
+What does need a server is shared review: links, tracking who has commented,
+merging several people's comments. Do not confuse the two again.
+
+## A batch is a recipe with no per-document decisions in it
+
+`src/app/batch.ts` opens each file, applies the recipe, and zips the results.
+The rule for what belongs in a recipe is that it needs no decision about a
+particular page or sentence; anything else is an edit and would quietly do the
+wrong thing to file forty.
+
+Two things it does that the single-document path does not. The recogniser is
+opened once for the whole run, because starting it costs tens of megabytes of
+wasm and several seconds, and doing that per file is the difference between a
+batch that finishes and one nobody waits for. And it rasterises offscreen
+rather than through the viewer, which has no canvas here and would serialise
+every document behind one queue.
+
+Each document holds a pdf.js worker, so each is closed in a `finally`. Forty
+left open is forty threads.
+
 ## A spell checker is judged on what it does not flag
 
 The lookup is the easy part. A PDF is a poor source of prose, and the naive

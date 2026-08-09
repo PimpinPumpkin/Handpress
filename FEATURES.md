@@ -47,12 +47,27 @@ check anything you are about to rely on.
 | Highlight, underline, strikethrough of text | Yes, as annotations | Highlight only, drawn onto the page |
 | Sticky note comment | Yes | Yes |
 | Text callout box | Yes | Yes, box, leader and text in one drag |
-| Reply to a comment, comment threads | Yes | No |
+| Reply to a comment, comment threads | Yes | Yes, including comments the file arrived with |
 | Comment list, filter, summarise | Yes | No |
 | Stamps | Yes, a library | Signatures only |
 | Measuring tools | Yes | No |
 | Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
 | Bring to front, send to back, forward and back a step | Yes | Yes, with the page's own drawing as one rung |
+
+**On comment threads.** These need no server and nothing proprietary. A reply
+is an ordinary annotation carrying `/IRT`, pointing at the comment it answers,
+and `/RT /R` to say the relationship is a reply: that is the PDF specification's
+own mechanism and therefore Acrobat's, so a thread written here opens as a
+thread there. Comments the document arrived with are read and can be answered,
+which is the point. What genuinely needs a server is *shared review*: the links,
+the tracking of who has commented yet, and merging comments from several people.
+That is a different feature and is not planned.
+
+**On batch.** Acrobat runs an Action over a folder. There is no server here and
+no folder, so it is files chosen at once and a zip handed back, processed in the
+tab one at a time. Only steps needing no decision per document belong in a
+recipe: reading scans, stamping, turning, compressing, locking. Anything that
+has to be aimed at a particular page or sentence is an edit, not a batch step.
 
 **On spell checking.** English only, against a word list rather than a
 language model, and the interesting part is what it refuses to flag. A PDF is a
@@ -133,7 +148,7 @@ different questions. Handpress is not a review tool.
 | Compare two documents | Yes | No |
 | Accessibility tagging and checking | Yes | No |
 | PDF/A and preflight | Yes | No |
-| Actions, batch processing | Yes | No |
+| Actions, batch processing | Yes, over a folder | Yes, over files chosen at once, out as a zip |
 | Cloud storage, sharing, review links | Yes | No, by design |
 
 ## Where Handpress is ahead
