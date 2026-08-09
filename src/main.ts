@@ -24,6 +24,7 @@ import { AUTOSAVE_LIMIT, forget, howLongAgo, keep, recover } from './app/autosav
 import { recompressInBrowser } from './app/recompress';
 import { runBatch } from './app/batch';
 import type { Finding as PreflightFinding } from './pdf/preflight';
+import type { CompareReport } from './pdf/compare';
 import { standardTextWidth } from './pdf/fonts';
 import type { TextLine } from './pdf/content';
 
@@ -119,6 +120,7 @@ const els = {
   btnCallout: $<HTMLButtonElement>('btnCallout'),
   btnMeasure: $<HTMLButtonElement>('btnMeasure'),
   btnMeasureArea: $<HTMLButtonElement>('btnMeasureArea'),
+  btnCompare: $<HTMLButtonElement>('btnCompare'),
   btnPreflight: $<HTMLButtonElement>('btnPreflight'),
   btnSpell: $<HTMLButtonElement>('btnSpell'),
   btnBatch: $<HTMLButtonElement>('btnBatch'),
@@ -2380,6 +2382,140 @@ els.batchGo.addEventListener('click', async () => {
     batchFiles = [];
   }
 });
+
+/* ---------------- comparing two versions ---------------- */
+
+/**
+ * Compares the open document with another file and lists what differs.
+ *
+ * Text only, because two versions of a contract differ in what they say, and a
+ * comparison that also reported every rule that moved a fraction of a point
+ * would bury that. The list is clickable: each change reveals the line it is
+ * about, which is what the search machinery already does.
+ */
+els.btnCompare.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'application/pdf,.pdf';
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0];
+    if (!file || !doc) return;
+    setBusy(true, `Comparing with ${file.name}…`);
+    try {
+      const report = await doc.compareWith(new Uint8Array(await file.arrayBuffer()));
+      if (!report) {
+        setStatus('That file could not be read closely enough to compare.', 'warn');
+        return;
+      }
+      showComparison(report, file.name);
+      const pageNote = [
+        report.pagesAdded ? `${report.pagesAdded} page${report.pagesAdded === 1 ? '' : 's'} added` : '',
+        report.pagesRemoved ? `${report.pagesRemoved} page${report.pagesRemoved === 1 ? '' : 's'} removed` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      setStatus(
+        report.same
+          ? 'Nothing differs. The two read the same, whatever their bytes say.'
+          : [`${report.added} added, ${report.removed} removed, ${report.changed} rewritten`, pageNote]
+              .filter(Boolean)
+              .join('. ') + '.',
+      );
+    } catch (e) {
+      setStatus(`Could not compare: ${reason(e)}`, 'warn');
+    } finally {
+      setBusy(false);
+    }
+  });
+  picker.click();
+});
+
+function showComparison(report: CompareReport, otherName: string): void {
+  els.panelBody.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  const n = report.changes.length + report.pagesAdded + report.pagesRemoved;
+  head.textContent = report.same ? 'No differences' : `${n} difference${n === 1 ? '' : 's'}`;
+  els.panelBody.appendChild(head);
+
+  const against = document.createElement('div');
+  against.className = 'preflight-why';
+  against.textContent = `Against ${otherName}`;
+  els.panelBody.appendChild(against);
+
+  if (report.same) return;
+
+  // Pages with no partner are listed first and in their own words, since a
+  // blank page inserted or taken out has no line to point at.
+  for (const pair of report.pages) {
+    if (pair.mine !== null && pair.theirs !== null) continue;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = pair.mine !== null ? 'compare-row compare-added' : 'compare-row compare-removed';
+    const where = document.createElement('div');
+    where.className = 'compare-where';
+    where.textContent = pair.mine !== null ? 'A page that is not in the other file' : 'A page only in the other file';
+    const what = document.createElement('div');
+    what.className = 'compare-now';
+    what.textContent = pair.mine !== null ? `Page ${pair.mine + 1}` : `Page ${(pair.theirs ?? 0) + 1} of the other`;
+    row.append(where, what);
+    if (pair.mine !== null) row.addEventListener('click', () => void viewer.scrollToPage(pair.mine as number));
+    else row.disabled = true;
+    els.panelBody.appendChild(row);
+  }
+
+  const list = document.createElement('div');
+  list.className = 'compare';
+  for (const change of report.changes.slice(0, 400)) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `compare-row compare-${change.kind}`;
+
+    const where = document.createElement('div');
+    where.className = 'compare-where';
+    // A line that exists in only one of them has only one page to name.
+    where.textContent =
+      change.page !== null
+        ? `Page ${change.page + 1} \u00b7 ${change.kind}`
+        : `Page ${(change.otherPage ?? 0) + 1} of the other \u00b7 ${change.kind}`;
+    row.appendChild(where);
+
+    if (change.was) {
+      const was = document.createElement('div');
+      was.className = 'compare-was';
+      was.textContent = change.was;
+      row.appendChild(was);
+    }
+    if (change.text) {
+      const now = document.createElement('div');
+      now.className = 'compare-now';
+      now.textContent = change.text;
+      row.appendChild(now);
+    }
+
+    if (change.page !== null) {
+      row.addEventListener('click', () => void viewer.scrollToPage(change.page as number));
+    } else {
+      row.disabled = true;
+      row.title = 'This line is only in the other file, so there is nothing here to go to.';
+    }
+    list.appendChild(row);
+  }
+  els.panelBody.appendChild(list);
+
+  if (report.changes.length > 400) {
+    const more = document.createElement('div');
+    more.className = 'preflight-why';
+    // Said rather than silently truncated: a list that stops without saying so
+    // reads as a complete answer.
+    more.textContent = `${report.changes.length - 400} more, not listed.`;
+    els.panelBody.appendChild(more);
+  }
+}
 
 /* ---------------- preflight ---------------- */
 

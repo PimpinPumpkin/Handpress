@@ -38,6 +38,7 @@ import { applyFormValues, readForm, type FormField } from '../pdf/forms';
 import { addFields, type NewField } from '../pdf/newfields';
 import { Dictionary, FOREIGN_SHARE, findMisspellings } from '../pdf/spell';
 import { preflight, type PreflightReport } from '../pdf/preflight';
+import { compareDocuments, type CompareReport } from '../pdf/compare';
 import { addNotes, readNotes, type ExistingNote, type PageNote } from '../pdf/notes';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -940,6 +941,53 @@ export class HandpressDocument {
         updateMetadata: false,
       });
       return preflight(libDoc, this.wasEncrypted);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Compares this document with another file.
+   *
+   * Text only. Two versions of a contract differ in what they say, and a
+   * comparison that also reported every image and rule that moved by a
+   * fraction of a point would bury that under noise nobody asked about.
+   *
+   * The text on this side is what it currently reads, edits and all, so
+   * comparing after making changes shows the changes.
+   */
+  async compareWith(other: Uint8Array): Promise<CompareReport | null> {
+    const theirs = await this.textOf(other);
+    if (!theirs) return null;
+
+    const mine: string[][] = [];
+    for (let i = 0; i < this.pageCount; i++) {
+      const page = await this.getPage(i).catch(() => null);
+      mine.push(page ? page.lines.map((l) => this.textFor(i, l)) : []);
+    }
+    return compareDocuments(mine, theirs);
+  }
+
+  /** Every line of every page of another file, without opening it properly. */
+  private async textOf(bytes: Uint8Array): Promise<string[][] | null> {
+    try {
+      const doc = await PDFDocument.load(bytes.slice(), {
+        throwOnInvalidObject: false,
+        updateMetadata: false,
+      });
+      const out: string[][] = [];
+      for (const page of doc.getPages()) {
+        try {
+          const content = getPageContent(page);
+          const walk = walkPage(content.bytes, content.resources);
+          out.push(groupLines(walk.ops).map((l) => l.text));
+        } catch {
+          // A page that will not parse contributes nothing rather than
+          // stopping the comparison of the rest.
+          out.push([]);
+        }
+      }
+      return out;
     } catch {
       return null;
     }

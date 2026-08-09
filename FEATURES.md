@@ -54,6 +54,14 @@ check anything you are about to rely on.
 | Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
 | Bring to front, send to back, forward and back a step | Yes | Yes, with the page's own drawing as one rung |
 
+**On comparing.** Text only. Two versions of a contract differ in what they
+say, and a comparison that also reported every rule and image that moved a
+fraction of a point would bury that. Pages are matched to each other by how
+much text they share before anything is compared, because comparing by page
+number reports every page after an insertion as rewritten, which is the failure
+that makes a comparison useless on a real pair of files. Acrobat also shows the
+two side by side; this lists the differences and jumps to them.
+
 **On preflight.** This reports and does not convert. Making a file properly
 archival means embedding fonts whose glyphs are not in the file at all, and a
 conversion that quietly substitutes typefaces and calls the result archival is
@@ -152,7 +160,7 @@ different questions. Handpress is not a review tool.
 | Drawn or typed signature | Yes | Yes |
 | Export to Word, Excel, PowerPoint | Yes | No |
 | Export to image | Yes | Yes, page as PNG |
-| Compare two documents | Yes | No |
+| Compare two documents | Yes | Yes, by text, with pages matched to each other |
 | Accessibility tagging and checking | Yes | No |
 | PDF/A and preflight | Yes, checks and converts | Checks and reports; does not convert |
 | Actions, batch processing | Yes, over a folder | Yes, over files chosen at once, out as a zip |

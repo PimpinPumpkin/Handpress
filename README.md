@@ -377,6 +377,25 @@ never restart and never repeat.
 The counter only advances on a page that was actually stamped, so a page that
 could not be read does not silently consume a number and leave a gap.
 
+### Comparing two versions
+
+**Compare** takes another file and lists what differs: lines added, removed and
+rewritten, with what each one used to say. Clicking a difference goes to it.
+
+The hard part is not the diff. A PDF has no idea it is a version of anything,
+so a page inserted into one of them shifts every page after it, and comparing
+by page number then reports the whole rest of the document as rewritten.
+Handpress matches pages to each other first, by how much text they share, and
+compares only within matched pairs. A page with no partner is reported as a page
+rather than as a hundred changed lines.
+
+Whole pages are counted separately from lines, because a blank page inserted has
+no text to differ and would otherwise be invisible.
+
+Text only, and spacing is ignored while case is not: text pulled out of a PDF
+has spacing that depends on how it was drawn, but "Shall" becoming "shall" is a
+real edit in the kind of document anybody compares two versions of.
+
 ### Checking a file before you rely on it
 
 **Preflight** reports what would stop a file being archived, and what would make

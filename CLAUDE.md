@@ -635,6 +635,26 @@ rectangle of page *pixels*, and a drawing's box is a loose rectangle around a
 shape, so dragging a circle floated a square of everything behind the circle.
 An image is its rectangle and keeps the copy.
 
+## Comparing is page alignment first, diff second
+
+`src/pdf/compare.ts`. The diff is ordinary; what makes a comparison useful on a
+real pair of files is that pages are matched to each other by shared text
+before anything is compared. Compared by page number, one inserted page makes
+every page after it read as completely rewritten.
+
+Three things learned building it:
+
+- **Case is not noise, spacing is.** Extracted text has spacing that depends on
+  how the producer drew it, so a one space difference is meaningless. Folding
+  case as well was wrong: "Shall" becoming "shall" is a real edit in exactly
+  the documents people compare.
+- **Pair a rewrite by adjacency, not by line number.** The two sides advance
+  through different documents, so a rewritten line comes out as line 1 against
+  line 2, and matching on the number reported every rewrite as an unrelated
+  addition plus removal.
+- **Count whole pages separately.** A blank page inserted has no text to
+  differ, so without that the two files read as identical.
+
 ## Bates numbering cannot be worked out from the page index
 
 It runs on across a whole set of documents, so the counter comes into
