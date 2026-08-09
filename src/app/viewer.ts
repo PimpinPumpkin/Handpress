@@ -2425,6 +2425,10 @@ export class Viewer {
       const factor = Math.max(0.15, (widthPx + (e.clientX - startX)) / widthPx);
       if (Math.abs(factor - 1) < 0.01) return;
       if (!this.doc?.editImage(p.index, id, { scale: factor })) return;
+      // The closure's snapshot advances with the edit, like the move does,
+      // so a drag started before the overlay rebuilds previews at the size
+      // the image now is rather than the size it was.
+      state.scale *= factor;
       void this.rebuild(p.index).then(() => this.cb.onEdited());
     });
     box.appendChild(handle);
