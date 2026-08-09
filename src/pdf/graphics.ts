@@ -203,6 +203,21 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
   const groups: PathOp[][] = [];
   let open: PathOp[] | null = null;
 
+  // Everything on the page that is not a path, in stream order. A group's byte
+  // range covers everything between its first path and its last, so a word or
+  // a picture drawn in the middle of a run would be carried along by any move.
+  // Consecutive numbering was supposed to rule that out and on one real
+  // document it did not, so the gap between one path and the next is checked
+  // against the bytes. Finding one ends the run rather than discarding it:
+  // dropping the group outright takes an object that was perfectly movable in
+  // two halves and makes it unselectable, which is a worse answer than two
+  // objects.
+  const foreign = [...walk.ops, ...walk.images]
+    .map((o) => ({ streamId: o.streamId, start: o.start }))
+    .sort((a, b) => a.start - b.start);
+  const intervenes = (streamId: string, from: number, to: number): boolean =>
+    from < to && foreign.some((o) => o.streamId === streamId && o.start >= from && o.start < to);
+
   for (const path of walk.paths) {
     // A path big enough to be background is near everything, so left in the
     // sequence it drags the whole page into one group: on a document with a
@@ -222,6 +237,7 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
       last.streamId === path.streamId &&
       path.index === last.index + 1 &&
       path.depth === last.depth &&
+      !intervenes(path.streamId, last.end, path.start) &&
       near(bounds(open!), path);
     if (joins) open!.push(path);
     else {
@@ -250,11 +266,9 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
     const marks = walk.stateMarks.get(first.streamId) ?? [];
     if (!isBalanced(marks, start, end)) continue;
 
-    // Consecutive numbering was supposed to prove nothing else is drawn inside
-    // the range, and on one real document it did not: a group came out
-    // straddling fifty-six show operators, and taking it off the page would
-    // have taken every word with it. So the property is checked directly
-    // against the bytes rather than inferred from the numbering.
+    // A backstop. Runs are already ended at anything drawn through them, so
+    // this should never fire; it is here because the cost of it being wrong
+    // once is a drag that takes fifty-six words of the page along with it.
     const swallows = (op: { streamId: string; start: number }): boolean =>
       op.streamId === first.streamId && op.start >= start && op.start < end;
     if (walk.ops.some(swallows) || walk.images.some(swallows)) continue;

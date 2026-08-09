@@ -27,11 +27,22 @@ import { walkPage, type Matrix } from '../pdf/content';
 export interface Tile {
   id: string;
   canvas: HTMLCanvasElement;
-  /** Page-space box the picture covers. */
+  /**
+   * Page-space box the picture covers, which is the object's own box grown by
+   * whatever its stroke hangs outside it. A path's bounds are its points, and a
+   * stroked shape is drawn half a line width beyond them on every side: cut to
+   * the points, an ellipse comes back with slivers shaved off its widest parts,
+   * which is precisely where the stroke sticks out furthest.
+   */
   x0: number;
   y0: number;
   x1: number;
   y1: number;
+  /** The object's own box, which is what the selection knows it by. */
+  hx0: number;
+  hy0: number;
+  hx1: number;
+  hy1: number;
 }
 
 export interface Scene {
@@ -45,6 +56,20 @@ export interface Scene {
 
 const enc = new TextEncoder();
 const fmt = (n: number): string => String(Math.round(n * 1000) / 1000);
+
+/** Room for rounding, so a tile never loses its outermost pixel. */
+const EDGE = 1;
+
+/**
+ * How far a stroke reaches outside the path it follows, in page space.
+ *
+ * The line width is in the space the object's own matrix maps from, so it has
+ * to be carried through that matrix before it means anything on the page.
+ */
+function strokeReach(ctm: Matrix, lineWidth: number): number {
+  const scale = Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2])) || 1;
+  return (Math.max(lineWidth, 1) * scale) / 2 + EDGE;
+}
 
 /** Draws the object at a matrix, with the state and clip the page gave it. */
 function tileContent(
@@ -150,35 +175,57 @@ export async function buildScene(
       y0: number;
       x1: number;
       y1: number;
+      hx0: number;
+      hy0: number;
+      hx1: number;
+      hy1: number;
     }> = [];
 
     for (const g of graphics) {
       if (g.streamId !== 'page' || g.state.clipComplex) continue;
+      const pad = strokeReach(g.ctm, g.state.lineWidth);
       parts.push({
         id: g.id,
         bytes: tileContent(content.bytes, g.start, g.end, g.ctm, g.state),
         start: g.start,
         end: g.end,
-        x0: g.x0,
-        y0: g.y0,
-        x1: g.x1,
-        y1: g.y1,
+        x0: g.x0 - pad,
+        y0: g.y0 - pad,
+        x1: g.x1 + pad,
+        y1: g.y1 + pad,
+        hx0: g.x0,
+        hy0: g.y0,
+        hx1: g.x1,
+        hy1: g.y1,
       });
     }
     for (const im of images) {
       if (im.streamId !== 'page') continue;
+      // An image is exactly its rectangle, with nothing hanging outside it, so
+      // it needs only enough room not to lose a pixel to rounding.
       parts.push({
         id: `${im.streamId}:${im.index}`,
         bytes: tileContent(content.bytes, im.start, im.end, im.ctm, undefined),
         start: im.start,
         end: im.end,
-        x0: im.x0,
-        y0: im.y0,
-        x1: im.x1,
-        y1: im.y1,
+        x0: im.x0 - EDGE,
+        y0: im.y0 - EDGE,
+        x1: im.x1 + EDGE,
+        y1: im.y1 + EDGE,
+        hx0: im.x0,
+        hy0: im.y0,
+        hx1: im.x1,
+        hy1: im.y1,
       });
     }
     if (!parts.length) return null;
+
+    // Composited in the order the page paints them, which is the order their
+    // operators appear. Sorted any other way the pieces are all present and
+    // some are in front of things they belong behind, so a shape that the page
+    // draws over a panel ends up under it and reads as having disappeared.
+    // Built biggest-first for hit testing, which is a different question.
+    parts.sort((a, b) => a.start - b.start);
 
     setPageContent(doc, page, withoutRanges(content.bytes, parts));
     page.node.set(PDFName.of('Annots'), doc.context.obj([]));
@@ -220,7 +267,20 @@ export async function buildScene(
     const tiles: Tile[] = [];
     for (const [n, part] of parts.entries()) {
       const canvas = await draw(firstTile + n);
-      if (canvas) tiles.push({ id: part.id, canvas, x0: part.x0, y0: part.y0, x1: part.x1, y1: part.y1 });
+      if (canvas) {
+        tiles.push({
+          id: part.id,
+          canvas,
+          x0: part.x0,
+          y0: part.y0,
+          x1: part.x1,
+          y1: part.y1,
+          hx0: part.hx0,
+          hy0: part.hy0,
+          hx1: part.hx1,
+          hy1: part.hy1,
+        });
+      }
     }
     await task.destroy().catch(() => undefined);
 

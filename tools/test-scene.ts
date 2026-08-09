@@ -176,5 +176,54 @@ if (!graphics.length && !images.length) {
   check('every object removed is one object to draw', ids.size === parts.length, `${ids.size} of ${parts.length}`);
 }
 
+/* ---------- the pieces go back in the order the page paints them ---------- */
+{
+  // The scene builds its objects biggest-first, because that is what hit
+  // testing wants, and adds images after drawings. Composited in that order
+  // the page is all there and some of it is in front of things it belongs
+  // behind: a shape the page draws over a panel ends up under it, which reads
+  // as the shape having disappeared. Paint order is byte order, so sorting is
+  // the whole fix and this is what pins it.
+  const parts = [
+    ...graphics.map((g) => ({ start: g.start })),
+    ...images.map((im) => ({ start: im.start })),
+  ].sort((a, b) => a.start - b.start);
+  check(
+    'the pieces are in stream order',
+    parts.every((p, i) => i === 0 || parts[i - 1].start <= p.start),
+  );
+  // And the order really is different from the order they are found in, or
+  // the sort is a no-op on this document and proves nothing.
+  const found = [...graphics.map((g) => g.start), ...images.map((im) => im.start)];
+  const sorted = [...found].sort((a, b) => a - b);
+  if (found.some((v, i) => v !== sorted[i])) {
+    check('and that is not the order they were found in', true);
+  } else {
+    pass++;
+  }
+}
+
+/* ---------- a stroke hangs outside the path it follows ---------- */
+{
+  // A path's bounds are its points. A stroked shape is drawn half a line width
+  // beyond them on every side, so a tile cut to the points comes back with
+  // slivers shaved off the widest parts of an ellipse, which is exactly where
+  // the stroke reaches furthest.
+  const reach = (ctm: number[], lineWidth: number): number => {
+    const scale = Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2])) || 1;
+    return (Math.max(lineWidth, 1) * scale) / 2 + 1;
+  };
+  check('every object gets room for its stroke', graphics.every((g) => reach(g.ctm, g.state.lineWidth) > 0));
+  const fat = graphics.filter((g) => g.state.lineWidth > 2);
+  if (fat.length) {
+    check(
+      'a thick stroke gets more room than a hairline',
+      fat.every((g) => reach(g.ctm, g.state.lineWidth) > reach(g.ctm, 0)),
+    );
+  } else {
+    pass++;
+  }
+}
+
 console.log(`\nscene: ${pass} passed, ${fail} failed`);
 if (fail) process.exitCode = 1;

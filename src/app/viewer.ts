@@ -398,9 +398,16 @@ export class Viewer {
         mode === 'callout' ||
         mode === 'field' ||
         mode === 'measure' ||
-        mode === 'measureArea' ||
-        mode === 'objects',
+        mode === 'measureArea',
     );
+      // Deliberately not the class above. That one exists for tools that draw
+      // a region across the page and turns off pointer events on every object
+      // so nothing intercepts the drag, which is the exact opposite of what
+      // the Select tool wants: there an object must still be clickable and
+      // draggable, and only a press on bare page starts a band. Sharing the
+      // class made every drawing, image and stroke on the page unselectable in
+      // the one mode whose whole purpose is selecting them.
+      p.overlay.classList.toggle('picking', mode === 'objects');
       p.overlay.classList.toggle(
         'drawing',
         mode === 'pen' || mode === 'inkErase' || mode === 'line' || mode === 'arrow' || mode === 'rect' || mode === 'ellipse',
@@ -755,7 +762,10 @@ export class Viewer {
     const wanted = held.scene.tiles
       .map((t) => ({
         t,
-        off: Math.hypot(t.x0 - where.x0, t.y0 - where.y0) + Math.hypot(t.x1 - where.x1, t.y1 - where.y1),
+        // Matched on the object's own box. A tile is drawn a little larger
+        // than that so its stroke is not shaved off, and matching on the box
+        // it is drawn at would compare two different measurements.
+        off: Math.hypot(t.hx0 - where.x0, t.hy0 - where.y0) + Math.hypot(t.hx1 - where.x1, t.hy1 - where.y1),
       }))
       .sort((a, b) => a.off - b.off)[0];
     if (!wanted || wanted.off > 2 || !p.viewport) return null;

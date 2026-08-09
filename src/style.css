@@ -1916,6 +1916,14 @@ body {
   cursor: crosshair;
 }
 
+/* The Select tool. Objects keep their pointer events, unlike every other tool
+   that drags across the page, because here the drag is only a band when it
+   starts on nothing. */
+.page-overlay.picking {
+  cursor: default;
+  touch-action: none;
+}
+
 .erase-preview {
   position: absolute;
   background: rgba(208, 69, 63, 0.22);

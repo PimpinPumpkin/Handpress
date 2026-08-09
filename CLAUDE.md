@@ -676,6 +676,24 @@ picture rendered for one zoom is the wrong number of pixels for another.
   document does; those two schemes have no reason to agree. Position is what
   both agree about.
 
+**Composite in the order the page paints, which is byte order.** The objects
+are found biggest-first, because that is what hit testing wants, and images are
+found after drawings. Composited in that order everything is present and some
+of it is in front of things it belongs behind: a shape the page draws over a
+panel ends up under it, which from the outside is indistinguishable from that
+shape having disappeared. `parts` is sorted by `start` for exactly this, and
+the two orderings answer different questions and must not be shared.
+
+**A tile is bigger than its object.** A path's bounds are its points, and a
+stroked shape is drawn half a line width outside them all the way round. Cut to
+the points, an ellipse comes back with slivers shaved off its widest parts,
+which is precisely where the stroke reaches furthest. `strokeReach` carries the
+line width through the object's own matrix, since the width is in the space
+that matrix maps from. The grown box is what the tile is cropped and drawn at;
+the object's own box is kept alongside as `hx0..hy1`, because that is what the
+selection knows it by and matching one against the other compares two different
+measurements.
+
 And one invariant: every object taken out of the backdrop must have a picture
 to put back. If any tile fails to render there is no scene at all, because a
 scene missing one object is indistinguishable from that object having been
@@ -686,6 +704,11 @@ inside this range" from consecutive numbering, and on one corpus document that
 was wrong: a group came out straddling fifty-six show operators, so taking it
 off the page would have taken every word with it. The property is now checked
 directly against the bytes instead of inferred.
+
+Finding one ends the run rather than discarding the group. Throwing it away
+takes an object that was perfectly movable in two halves and makes it
+unselectable, which is a worse answer than two objects. The whole-range check
+stays as a backstop that should now never fire.
 
 ## Dragging draws the object, it does not copy pixels
 
@@ -734,6 +757,14 @@ The Select tool only starts a band when the press landed on the overlay itself.
 A press on an object belongs to that object, so it stays clickable and
 draggable in that mode: a select tool that could only draw bands would be a
 worse edit mode, not a better one.
+
+That intent lived in the code and was undone by a stylesheet. Every tool that
+drags a region across the page puts `erasing` on the overlay, and that class
+turns off pointer events on every `.line-box` so nothing intercepts the drag.
+The Select tool was added to the same list, which made every drawing, image and
+stroke unselectable in the one mode whose entire purpose is selecting them. It
+has its own `picking` class now. A mode that wants the cursor or the touch
+behaviour of another mode does not want the rest of it.
 
 Watch for automatic semicolon insertion when refactoring these: `return` with
 the expression on the next line returns undefined, and every nudge silently did
