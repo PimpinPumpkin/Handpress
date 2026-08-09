@@ -859,6 +859,21 @@ The original stays on the page under the moving copy until the drag is let go,
 which is why the layer is slightly transparent. Hiding it would mean rendering
 the page without the object, which is a full page render per drag.
 
+## A drag can be walked away from
+
+Escape cancels a drag in progress: listeners off, outlines reset, the staged
+composite repainted at rest, floating copies removed on the spot since no
+rebuild is coming to clean them up. Every editor offers this and nothing here
+did; once an object was in hand the only ways out were to put it somewhere or
+to put it back by hand.
+
+Reaching for an object warms what dragging it will need: `warmObject` on
+pointerenter rebuilds the scene if an eviction or an edit took it, and primes
+the object's over layer, which is a render. Primed only at drag start it
+lands a few moves in, and until then the copy rides on top of things it
+should be under; primed on approach it is nearly always ready before the
+press.
+
 ## A selection is a set, even when it holds one thing
 
 `picked` is the last thing touched, which is what the panel describes; the set

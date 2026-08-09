@@ -839,7 +839,16 @@ export class Viewer {
    * through and nothing is drawn twice. What comes back is the picture of it,
    * for the drag layer to move about.
    */
-  private stage(
+  /**
+   * The scene tile for an object, found by where it sits.
+   *
+   * Matched on position rather than by name: the scene describes the page as
+   * rendered and the selection names objects as the original document knows
+   * them, and those two numbering schemes have no reason to agree. Matched
+   * on the object's own box, not the padded one the tile is drawn at, or the
+   * comparison mixes two different measurements.
+   */
+  private tileAt(
     p: RenderedPage,
     where: { x0: number; y0: number; x1: number; y1: number },
   ): { tile: Tile; scene: Scene } | null {
@@ -853,21 +862,37 @@ export class Viewer {
     // release. Refusing here sends that drag down the fallback path instead.
     if (held.epoch !== this.sceneEpoch) return null;
 
-    // Matched on where it sits rather than by name. The scene describes the
-    // page as rendered and the selection names objects as the original
-    // document knows them, and those two numbering schemes have no reason to
-    // agree. Position is the thing both of them do agree about.
     const wanted = held.scene.tiles
       .map((t) => ({
         t,
-        // Matched on the object's own box. A tile is drawn a little larger
-        // than that so its stroke is not shaved off, and matching on the box
-        // it is drawn at would compare two different measurements.
         off: Math.hypot(t.hx0 - where.x0, t.hy0 - where.y0) + Math.hypot(t.hx1 - where.x1, t.hy1 - where.y1),
       }))
       .sort((a, b) => a.off - b.off)[0];
-    if (!wanted || wanted.off > 2 || !p.viewport) return null;
-    const tile = wanted.t;
+    if (!wanted || wanted.off > 2) return null;
+    return { tile: wanted.t, scene: held.scene };
+  }
+
+  /**
+   * Warms what a drag will need, called when the pointer reaches an object.
+   *
+   * The scene, if an eviction or an edit took it, and the object's over
+   * layer, which is a render. Primed at drag start it usually lands a few
+   * moves in, and until it does the copy rides on top of things it should be
+   * under; primed on approach it is nearly always there before the press.
+   */
+  private warmObject(p: RenderedPage, where: { x0: number; y0: number; x1: number; y1: number }): void {
+    void this.ensureScene(p);
+    const found = this.tileAt(p, where);
+    if (found) found.scene.primeOver(found.tile);
+  }
+
+  private stage(
+    p: RenderedPage,
+    where: { x0: number; y0: number; x1: number; y1: number },
+  ): { tile: Tile; scene: Scene } | null {
+    const found = this.tileAt(p, where);
+    if (!found || !p.viewport) return null;
+    const { tile, scene } = found;
 
     const ctx = p.canvas.getContext('2d');
     if (!ctx) return null;
@@ -878,13 +903,12 @@ export class Viewer {
     // version rebuilt the page from a flattened backdrop plus every tile, and
     // any text the page draws over an object was under that object's tile,
     // which is why dragging anything blanked the caption on every panel.
-    ctx.drawImage(held.scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
+    ctx.drawImage(scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
     this.blitTile(p, ctx, tile, 0, 0, tile.hole);
-    // The over layer starts rendering now, while the pointer is still inside
-    // the click threshold. It usually lands within the first few moves; until
-    // it does the copy rides on top, which is the old behaviour, briefly.
-    held.scene.primeOver(tile);
-    return { tile, scene: held.scene };
+    // The over layer starts rendering now if hovering did not already get
+    // it, while the pointer is still inside the click threshold.
+    scene.primeOver(tile);
+    return { tile, scene };
   }
 
   /**
@@ -3403,6 +3427,14 @@ export class Viewer {
   ): void {
     const THRESHOLD = 3;
 
+    // Reaching for an object is the moment to get ready for it: the scene,
+    // if an eviction or an edit took it, and the over layer, which is a
+    // render. Primed only at drag start it lands a few moves in, and until
+    // then the copy rides on top of things it should be under.
+    if (page && where) {
+      box.addEventListener('pointerenter', () => this.warmObject(page, where));
+    }
+
     box.addEventListener('pointerdown', (down) => {
       if (down.button !== 0) return;
       // In a region mode the drag belongs to the region being drawn, not to
@@ -3470,9 +3502,38 @@ export class Viewer {
         for (const one of fellows) one.box.style.transform = `translate(${dx}px, ${dy}px)`;
       };
 
+      // Escape lets go of a drag without dropping it. Every editor offers
+      // this and nothing here did: once an object was in hand the only ways
+      // out were to put it somewhere or to put it back by hand.
+      const cancel = (e: KeyboardEvent): void => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('keydown', cancel);
+        box.classList.remove('dragging');
+        box.style.transform = '';
+        for (const one of fellows) one.box.style.transform = '';
+        if (!moved) return;
+        // Back to rest: the staged composite repaints at a zero offset, and
+        // the floating copies come off now, since no rebuild is coming to
+        // clean them up.
+        if (staged && page) this.stageMove(page, staged, 0, 0, true);
+        if (drawn) {
+          drawn.remove();
+          this.pendingDrawn = this.pendingDrawn.filter((d) => d !== drawn);
+        }
+        if (lifted) {
+          lifted.ghost.remove();
+          lifted.cover.remove();
+        }
+        this.cb.onStatus('Move cancelled.');
+      };
+
       const up = (e: PointerEvent): void => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        window.removeEventListener('keydown', cancel);
         box.classList.remove('dragging');
         box.style.transform = '';
         for (const one of fellows) one.box.style.transform = '';
@@ -3581,6 +3642,7 @@ export class Viewer {
 
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
+      window.addEventListener('keydown', cancel);
     });
   }
 
