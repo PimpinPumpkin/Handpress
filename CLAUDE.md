@@ -835,7 +835,13 @@ the page without the object, which is a full page render per drag.
 ## A selection is a set, even when it holds one thing
 
 `picked` is the last thing touched, which is what the panel describes; the set
-is what the keyboard moves and deletes. Shift, command or control add to it,
+is what the keyboard moves and deletes, and what a drag moves when the thing
+dragged is itself in the set: the drop goes through the same `nudgeOne` the
+arrow keys use, so dragging three things and nudging three things produce the
+same edits and the same undo. Membership is checked by box element identity,
+not by re-deriving the pick key, because `data-pick` stores the id raw while
+selectors escape it, and comparing the two spellings is a bug that only shows
+on ids with punctuation in them. Shift, command or control add to it,
 and a band drawn on bare page takes everything it overlaps rather than only
 what is wholly inside, because a band round a group rarely clears their edges.
 

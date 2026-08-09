@@ -3416,11 +3416,23 @@ export class Viewer {
       let lifted: { ghost: HTMLCanvasElement; cover: HTMLElement } | null = null;
       let drawn: HTMLCanvasElement | null = null;
       let staged: { tile: Tile; scene: Scene } | null = null;
+      // Dragging one of several picked things drags them all, the way the
+      // arrow keys already move them all: same edits, same undo. The set is
+      // read at the first movement, and only counts when the thing being
+      // dragged is itself in it, so dragging something unpicked stays a drag
+      // of that one thing.
+      let fellows: Array<{ kind: string; id: string; page: number; box: HTMLElement }> = [];
 
       const move = (e: PointerEvent): void => {
         const dx = e.clientX - down.clientX;
         const dy = e.clientY - down.clientY;
         if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
+        if (!moved) {
+          const all = this.everything();
+          if (all.length > 1 && all.some((one) => one.box === box)) {
+            fellows = all.filter((one) => one.box !== box);
+          }
+        }
         if (!moved && page && where) {
           // The page has already been taken apart, so lifting the object out
           // is repainting from pictures that exist: no rendering happens here,
@@ -3453,6 +3465,9 @@ export class Viewer {
         }
         if (lifted) lifted.ghost.style.transform = `translate(${dx}px, ${dy}px)`;
         if (drawn) drawn.style.transform = `translate(${dx}px, ${dy}px)`;
+        // The rest of the selection rides along as outlines, so a group drag
+        // reads as the group moving rather than one thing leaving the others.
+        for (const one of fellows) one.box.style.transform = `translate(${dx}px, ${dy}px)`;
       };
 
       const up = (e: PointerEvent): void => {
@@ -3460,6 +3475,7 @@ export class Viewer {
         window.removeEventListener('pointerup', up);
         box.classList.remove('dragging');
         box.style.transform = '';
+        for (const one of fellows) one.box.style.transform = '';
         // The drawn copy stays where it was let go until the page has really
         // been redrawn underneath it, so the object never blinks back to where
         // it started. dropLifted clears both kinds.
@@ -3481,6 +3497,49 @@ export class Viewer {
         const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
         const pdx = x1 - x0;
         const pdy = y1 - y0;
+
+        if (fellows.length) {
+          // A group drop goes through the same call the arrow keys make, so
+          // dragging three things and nudging three things produce the same
+          // edits and the same undo. One rebuild per touched page, not one
+          // per object. The dragged object's own closure snapshots cannot be
+          // reached from here, so its cold-window preview can lag one move;
+          // its box and bounds below do not.
+          const all = this.everything();
+          const self = all.find((one) => one.box === box);
+          const pages = new Set<number>();
+          let any = false;
+          for (const one of self ? [self, ...fellows] : fellows) {
+            if (this.nudgeOne(one, pdx, pdy)) {
+              pages.add(one.page);
+              any = true;
+            }
+          }
+          if (!any) {
+            if (staged && page) this.stageMove(page, staged, 0, 0, true);
+            if (drawn) {
+              drawn.remove();
+              this.pendingDrawn = this.pendingDrawn.filter((d) => d !== drawn);
+            }
+            if (lifted) {
+              lifted.ghost.remove();
+              lifted.cover.remove();
+            }
+            return;
+          }
+          if (where) {
+            where.x0 += pdx;
+            where.x1 += pdx;
+            where.y0 += pdy;
+            where.y1 += pdy;
+          }
+          box.style.left = `${parseFloat(box.style.left || '0') + (e.clientX - down.clientX)}px`;
+          box.style.top = `${parseFloat(box.style.top || '0') + (e.clientY - down.clientY)}px`;
+          if (staged && page) this.stageMove(page, staged, pdx, pdy, true);
+          for (const touched of pages) void this.rebuild(touched).then(() => this.cb.onEdited());
+          return;
+        }
+
         if (!onDrop(pdx, pdy)) {
           // The model refused, so nothing changed and no rebuild is coming.
           // The composite goes back to rest, and the floating copies come
