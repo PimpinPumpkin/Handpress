@@ -63,10 +63,12 @@ declares itself tagged without one is worse than a file that declares nothing:
 it passes the checker and still fails the person the checker exists for.
 Preflight reports the absence rather than papering over it.
 
-**On selection.** Click anything and it stays picked, with handles. Arrow keys
-nudge it a point, ten with shift; Delete removes it; Escape lets go. Text is the
-exception: clicking a line opens it for typing, so the arrow keys belong to the
-caret, and the line is moved by dragging.
+**On selection.** Click anything and it stays picked, with handles. Shift,
+command or control adds to the set, and the Select tool drags a band round
+several at once. Arrow keys nudge the whole set a point, ten with shift;
+dragging any member moves the set together; Delete removes it; Escape lets
+go. Text is the exception: clicking a line opens it for typing, so the arrow
+keys belong to the caret, and the line is moved by dragging.
 
 **On comparing.** Text only. Two versions of a contract differ in what they
 say, and a comparison that also reported every rule and image that moved a
