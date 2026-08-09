@@ -643,15 +643,28 @@ object properly. Acrobat does not render on drag. It holds the page as objects
 and recomposites.
 
 `src/app/scene.ts` does the same. Once a page is on screen, it is taken apart
-in the background into the page with its movable objects spliced out, plus one
-picture per object, cropped to it. A drag then repaints the canvas from those
-pieces with the dragged one left out, and moves its picture on a layer. No
-rendering happens during the gesture at all.
+in the background into the whole page plus two small pictures per object: the
+object alone, on a transparent background so the copy that follows the pointer
+is the object and not a white card with the object on it, and a **hole**, the
+page without that one object, cropped to its box. A drag is then three
+drawImage calls: the page, the hole patched over the dragged object's spot,
+its picture on a layer. No rendering happens during the gesture at all.
 
-Everything goes into **one** document: the backdrop stays on its own page and
-each object is appended as a page of its own sharing the original's resources.
-One document load and a page render each. A document load per object is the
-difference between a second and a minute on a page with twenty marks on it.
+**Why holes rather than a backdrop with the objects removed.** The first
+design flattened the page-minus-objects into one backdrop and blitted every
+tile back on top, and that ordering cannot be made right from outside, not
+even by compositing in byte order: a caption the page draws over a band lives
+in the flattened backdrop, so the band's tile covered it, and dragging
+*anything* blanked the text on every panel at once. Held mid-drag in a real
+browser, the header and footer bands were empty blue. A hole is a real render
+of the true content minus one object, so everything behind and in front of
+that object is right by construction, and nothing else is redrawn at all.
+
+Everything goes into **one** document: the page itself, untouched, is the
+backdrop, and each object appends its two cropped pages sharing the original's
+resources. One document load and a page render each. A document load per
+object is the difference between a second and a minute on a page with twenty
+marks on it.
 
 A tile keeps its clip, or a logo cut to its own shape would show itself uncut
 the moment the page composites rather than renders, which is a change appearing
@@ -676,14 +689,6 @@ picture rendered for one zoom is the wrong number of pixels for another.
   document does; those two schemes have no reason to agree. Position is what
   both agree about.
 
-**Composite in the order the page paints, which is byte order.** The objects
-are found biggest-first, because that is what hit testing wants, and images are
-found after drawings. Composited in that order everything is present and some
-of it is in front of things it belongs behind: a shape the page draws over a
-panel ends up under it, which from the outside is indistinguishable from that
-shape having disappeared. `parts` is sorted by `start` for exactly this, and
-the two orderings answer different questions and must not be shared.
-
 **A tile is bigger than its object.** A path's bounds are its points, and a
 stroked shape is drawn half a line width outside them all the way round. Cut to
 the points, an ellipse comes back with slivers shaved off its widest parts,
@@ -707,10 +712,10 @@ page operations refresh directly without passing through `rebuild`, and in
 comes home to a different epoch is thrown away and started again from the
 bytes as they now are.
 
-And one invariant: every object taken out of the backdrop must have a picture
-to put back. If any tile fails to render there is no scene at all, because a
-scene missing one object is indistinguishable from that object having been
-deleted until the page renders again.
+And one invariant: every object must have both its pictures. Missing either,
+a drag cannot erase the object or cannot show it moving, and from the outside
+that is an object flickering out of existence. If any render fails there is
+no scene at all, and the drag falls back to drawing the object itself.
 
 **A real bug this found.** `findGraphics` inferred "nothing else is drawn
 inside this range" from consecutive numbering, and on one corpus document that

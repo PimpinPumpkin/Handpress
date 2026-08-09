@@ -808,17 +808,18 @@ export class Viewer {
       .sort((a, b) => a.off - b.off)[0];
     if (!wanted || wanted.off > 2 || !p.viewport) return null;
     const tile = wanted.t;
-    if (!p.viewport) return null;
 
     const ctx = p.canvas.getContext('2d');
     if (!ctx) return null;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
+    // The whole page, then the hole patched over the one object being lifted.
+    // Nothing else is redrawn, so nothing else can end up covered: the first
+    // version rebuilt the page from a flattened backdrop plus every tile, and
+    // any text the page draws over an object was under that object's tile,
+    // which is why dragging anything blanked the caption on every panel.
     ctx.drawImage(held.scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
-    for (const other of held.scene.tiles) {
-      if (other === tile) continue;
-      this.blitTile(p, ctx, other, 0, 0);
-    }
+    this.blitTile(p, ctx, tile, 0, 0, tile.hole);
     return tile;
   }
 
@@ -829,6 +830,7 @@ export class Viewer {
     tile: Tile,
     dx: number,
     dy: number,
+    picture?: HTMLCanvasElement,
   ): void {
     const viewport = p.viewport;
     if (!viewport) return;
@@ -836,7 +838,7 @@ export class Viewer {
     const [ax, ay] = viewport.convertToViewportPoint(tile.x0 + dx, tile.y1 + dy);
     const [bx, by] = viewport.convertToViewportPoint(tile.x1 + dx, tile.y0 + dy);
     ctx.drawImage(
-      tile.canvas,
+      picture ?? tile.canvas,
       Math.min(ax, bx) * ratio,
       Math.min(ay, by) * ratio,
       Math.abs(bx - ax) * ratio,

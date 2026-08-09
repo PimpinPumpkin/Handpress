@@ -84,60 +84,42 @@ if (!graphics.length && !images.length) {
   process.exit(0);
 }
 
-/* ---------- the backdrop really loses them ---------- */
+/* ---------- each hole loses exactly its one object ---------- */
 {
+  // The backdrop is the whole page, untouched. What gets surgery is the hole
+  // page behind each object: the full content minus that one object's bytes.
+  // Anything else missing from a hole shows up as content flickering out
+  // while that object is dragged, which is the bug this design replaced.
   const parts = [
     ...graphics.map((g) => ({ start: g.start, end: g.end })),
     ...images.map((im) => ({ start: im.start, end: im.end })),
   ];
-  const backdrop = withoutRanges(content.bytes, parts);
-  check('the backdrop is shorter than the page', backdrop.length < content.bytes.length);
-
-  const removed = parts.reduce((a, r) => a + (r.end - r.start), 0);
-  // Exactly what was asked for and nothing else. A splice that overlaps or
-  // slips takes a neighbour's operators with it, which is invisible until a
-  // page composites wrongly.
-  check(
-    'exactly the object bytes come out',
-    backdrop.length === content.bytes.length - removed,
-    `${content.bytes.length - backdrop.length} out, ${removed} expected`,
-  );
-
-  // What is left has to still parse, which a cut through the middle of an
-  // operator would not. It may legitimately be empty: a page that is one
-  // picture and nothing else has a blank backdrop, which is right.
-  let after;
-  try {
-    after = walkPage(backdrop, content.resources);
-    check('what is left still parses', true);
-  } catch (e) {
-    check('what is left still parses', false, (e as Error).message);
-    after = { ops: [], paths: [], images: [] } as unknown as ReturnType<typeof walkPage>;
+  let sized = 0;
+  let parsed = 0;
+  let textKept = 0;
+  let oneGone = 0;
+  for (const part of parts) {
+    const hole = withoutRanges(content.bytes, [part]);
+    if (hole.length === content.bytes.length - (part.end - part.start)) sized++;
+    try {
+      const after = walkPage(hole, content.resources);
+      parsed++;
+      if (after.ops.length === walk.ops.length) textKept++;
+      const pathsGone = walk.paths.length - after.paths.length;
+      const imagesGone =
+        walk.images.filter((i) => i.streamId === 'page').length -
+        after.images.filter((i) => i.streamId === 'page').length;
+      // Exactly one object's worth: a graphic takes its own paths and no
+      // image, an image takes itself and no path.
+      if ((pathsGone === 0) !== (imagesGone === 0)) oneGone++;
+    } catch {
+      // Counted by its absence from parsed.
+    }
   }
-  // Only what was actually taken out. A page whose objects are all images
-  // keeps every path it had, and asserting otherwise tests the fixture rather
-  // than the code.
-  if (graphics.length) {
-    check(
-      'the drawings are gone from the backdrop',
-      after.paths.length < walk.paths.length,
-      `${after.paths.length} of ${walk.paths.length}`,
-    );
-  }
-  if (images.length) {
-    check(
-      'the images are gone from the backdrop',
-      after.images.filter((i) => i.streamId === 'page').length < images.length,
-      `${after.images.filter((i) => i.streamId === 'page').length} of ${images.length}`,
-    );
-  }
-  // Text belongs to the backdrop and must survive untouched: an object range
-  // that swallowed a show operator would take words off the page.
-  check(
-    'the text is untouched',
-    after.ops.length === walk.ops.length,
-    `${after.ops.length} of ${walk.ops.length}`,
-  );
+  check('every hole is exactly one object smaller', sized === parts.length, `${sized} of ${parts.length}`);
+  check('every hole still parses', parsed === parts.length, `${parsed} of ${parts.length}`);
+  check('the text survives in every hole', textKept === parts.length, `${textKept} of ${parts.length}`);
+  check('and each hole lost one kind of thing', oneGone === parts.length, `${oneGone} of ${parts.length}`);
 }
 
 /* ---------- every tile knows where it goes ---------- */
@@ -174,33 +156,6 @@ if (!graphics.length && !images.length) {
   const parts = [...graphics, ...images];
   const ids = new Set(parts.map((p, i) => `${i}`));
   check('every object removed is one object to draw', ids.size === parts.length, `${ids.size} of ${parts.length}`);
-}
-
-/* ---------- the pieces go back in the order the page paints them ---------- */
-{
-  // The scene builds its objects biggest-first, because that is what hit
-  // testing wants, and adds images after drawings. Composited in that order
-  // the page is all there and some of it is in front of things it belongs
-  // behind: a shape the page draws over a panel ends up under it, which reads
-  // as the shape having disappeared. Paint order is byte order, so sorting is
-  // the whole fix and this is what pins it.
-  const parts = [
-    ...graphics.map((g) => ({ start: g.start })),
-    ...images.map((im) => ({ start: im.start })),
-  ].sort((a, b) => a.start - b.start);
-  check(
-    'the pieces are in stream order',
-    parts.every((p, i) => i === 0 || parts[i - 1].start <= p.start),
-  );
-  // And the order really is different from the order they are found in, or
-  // the sort is a no-op on this document and proves nothing.
-  const found = [...graphics.map((g) => g.start), ...images.map((im) => im.start)];
-  const sorted = [...found].sort((a, b) => a - b);
-  if (found.some((v, i) => v !== sorted[i])) {
-    check('and that is not the order they were found in', true);
-  } else {
-    pass++;
-  }
 }
 
 /* ---------- a stroke hangs outside the path it follows ---------- */

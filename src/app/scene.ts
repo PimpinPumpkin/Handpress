@@ -8,9 +8,11 @@
  * draw calls rather than any rendering at all.
  *
  * This does the same. Once a page has been rendered, it is taken apart in the
- * background into the page with its movable objects removed, plus one small
- * picture per object. From then on a drag is backdrop plus tiles, with the one
- * being dragged drawn at an offset, which is a handful of drawImage calls.
+ * background into the whole page, plus two small pictures per object: the
+ * object on its own, and the page without that one object, cropped to its
+ * box. From then on a drag is three drawImage calls: the page, the hole
+ * patched over the dragged object's spot, and its picture on a layer under
+ * the pointer. Nothing else is touched, so nothing else can be covered.
  *
  * The cost is one extra pass over the page, paid once, off the critical path.
  * That is the trade the whole thing rests on and it is the right way round:
@@ -28,11 +30,23 @@ export interface Tile {
   id: string;
   canvas: HTMLCanvasElement;
   /**
-   * Page-space box the picture covers, which is the object's own box grown by
-   * whatever its stroke hangs outside it. A path's bounds are its points, and a
-   * stroked shape is drawn half a line width beyond them on every side: cut to
-   * the points, an ellipse comes back with slivers shaved off its widest parts,
-   * which is precisely where the stroke sticks out furthest.
+   * The page without this one object, cropped to the same box.
+   *
+   * Lifting an object out is drawing this patch over its spot: it erases the
+   * object and shows exactly what the page looks like behind it, text and
+   * all, because it is a real render of the true content minus one thing.
+   * The first design instead removed every object from one shared backdrop
+   * and blitted the others back on top, and that order is a lie: a caption
+   * the page draws over a band lives in the backdrop, so the band's tile
+   * covered it and every drag made the text on every panel vanish.
+   */
+  hole: HTMLCanvasElement;
+  /**
+   * Page-space box both pictures cover, which is the object's own box grown
+   * by whatever its stroke hangs outside it. A path's bounds are its points,
+   * and a stroked shape is drawn half a line width beyond them on every side:
+   * cut to the points, an ellipse comes back with slivers shaved off its
+   * widest parts, which is precisely where the stroke sticks out furthest.
    */
   x0: number;
   y0: number;
@@ -46,7 +60,7 @@ export interface Tile {
 }
 
 export interface Scene {
-  /** The page with every tile's object removed from it. */
+  /** The whole page, exactly as it draws, nothing removed. */
   backdrop: HTMLCanvasElement;
   tiles: Tile[];
   /** Page size the scene was built at, so a zoom change can be spotted. */
@@ -131,11 +145,11 @@ function withoutRanges(bytes: Uint8Array, ranges: Array<{ start: number; end: nu
 /**
  * Takes a page apart, in one pass.
  *
- * Everything goes into a single document: the backdrop stays on the page it
- * came from and each object is appended as a page of its own, cropped to the
- * object. One document load and a page render each, rather than a document
- * load per object, which is the difference between a second and a minute on a
- * page with twenty marks on it.
+ * Everything goes into a single document: the page itself, untouched, is the
+ * backdrop, and each object appends two pages cropped to its box, the page
+ * without it and the object alone. One document load and a page render each,
+ * rather than a document load per object, which is the difference between a
+ * second and a minute on a page with twenty marks on it.
  */
 export async function buildScene(
   bytes: Uint8Array,
@@ -220,33 +234,56 @@ export async function buildScene(
     }
     if (!parts.length) return null;
 
-    // Composited in the order the page paints them, which is the order their
-    // operators appear. Sorted any other way the pieces are all present and
-    // some are in front of things they belong behind, so a shape that the page
-    // draws over a panel ends up under it and reads as having disappeared.
-    // Built biggest-first for hit testing, which is a different question.
-    parts.sort((a, b) => a.start - b.start);
+    // The crop and the blit have to agree about the box, so it is clamped to
+    // the page here, once. A padded box reaching past the page edge gets its
+    // crop intersected with the media box by the renderer, and a picture of
+    // the intersection drawn into the full box arrives stretched.
+    for (const part of parts) {
+      part.x0 = Math.max(0, part.x0);
+      part.y0 = Math.max(0, part.y0);
+      part.x1 = Math.min(size.width, part.x1);
+      part.y1 = Math.min(size.height, part.y1);
+      if (part.x1 - part.x0 < 1) part.x1 = part.x0 + 1;
+      if (part.y1 - part.y0 < 1) part.y1 = part.y0 + 1;
+    }
 
-    setPageContent(doc, page, withoutRanges(content.bytes, parts));
+    // The page itself is left exactly as it is: the backdrop is the whole
+    // page, not the page with holes in it. The first design removed every
+    // object and blitted them back over the top, and that is an ordering that
+    // cannot be made right from outside: a caption the page draws over a band
+    // lives in the flattened backdrop, so the band's picture covered it and
+    // dragging anything made the text on every panel vanish.
     page.node.set(PDFName.of('Annots'), doc.context.obj([]));
 
-    // Each object as a page of its own, sharing the original's resources so
-    // nothing it names has to be copied or can dangle.
+    // Two pages per object, sharing the original's resources so nothing they
+    // name has to be copied or can dangle: the page without that one object,
+    // cropped to its box, which is what erases it during a drag; and the
+    // object on its own, which is what follows the pointer.
     const resources = page.node.Resources();
-    const firstTile = doc.getPageCount();
+    const firstExtra = doc.getPageCount();
     for (const part of parts) {
+      const w = Math.max(1, part.x1 - part.x0);
+      const h = Math.max(1, part.y1 - part.y0);
+
+      const hole = doc.addPage([size.width, size.height]);
+      if (resources) hole.node.set(PDFName.of('Resources'), resources);
+      setPageContent(doc, hole, withoutRanges(content.bytes, [part]));
+      hole.setCropBox(part.x0, part.y0, w, h);
+
       const tile = doc.addPage([size.width, size.height]);
       if (resources) tile.node.set(PDFName.of('Resources'), resources);
       setPageContent(doc, tile, part.bytes);
-      const w = Math.max(1, part.x1 - part.x0);
-      const h = Math.max(1, part.y1 - part.y0);
       tile.setCropBox(part.x0, part.y0, w, h);
     }
 
     const task = pdfjs.getDocument({ worker, data: await doc.save({ useObjectStreams: false }) });
     const rendered = await task.promise;
 
-    const draw = async (index: number): Promise<HTMLCanvasElement | null> => {
+    // The object's own picture is rendered on a transparent background, so
+    // the copy that follows the pointer is the object and not a white card
+    // with the object on it. The page and the holes keep the renderer's
+    // white: they stand in for paper, and paper is not transparent.
+    const draw = async (index: number, clear = false): Promise<HTMLCanvasElement | null> => {
       const p = await rendered.getPage(index + 1);
       const viewport = p.getViewport({ scale });
       const canvas = document.createElement('canvas');
@@ -254,7 +291,8 @@ export async function buildScene(
       canvas.height = Math.max(1, Math.ceil(viewport.height));
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
-      await p.render({ canvas, canvasContext: ctx, viewport } as never).promise;
+      const background = clear ? 'rgba(0,0,0,0)' : undefined;
+      await p.render({ canvas, canvasContext: ctx, viewport, background } as never).promise;
       return canvas;
     };
 
@@ -266,11 +304,13 @@ export async function buildScene(
 
     const tiles: Tile[] = [];
     for (const [n, part] of parts.entries()) {
-      const canvas = await draw(firstTile + n);
-      if (canvas) {
+      const hole = await draw(firstExtra + n * 2);
+      const canvas = await draw(firstExtra + n * 2 + 1, true);
+      if (hole && canvas) {
         tiles.push({
           id: part.id,
           canvas,
+          hole,
           x0: part.x0,
           y0: part.y0,
           x1: part.x1,
@@ -284,11 +324,10 @@ export async function buildScene(
     }
     await task.destroy().catch(() => undefined);
 
-    // Every object taken out of the backdrop must have a picture to put back.
-    // One missing and that object is simply gone for as long as a drag lasts,
-    // reappearing when the page is rendered again, which is exactly what a
-    // half built scene looks like from the outside. Better no scene at all:
-    // the drag then falls back to drawing the object itself.
+    // Every object must have both its pictures. One missing and a drag either
+    // cannot erase the object or cannot show it moving, which from outside is
+    // an object flickering out of existence. Better no scene at all: the drag
+    // then falls back to drawing the object itself.
     if (tiles.length !== parts.length) return null;
 
     return { backdrop, tiles, width: size.width, height: size.height };
