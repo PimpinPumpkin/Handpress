@@ -425,6 +425,12 @@ export class Viewer {
     // failing cannot take the new document down with it either.
     await this.settleRenders();
     this.doc = doc;
+    // The scenes belong to the outgoing document, and its page numbers are
+    // this one's page numbers. Left in the map, a drag on page three of the
+    // new file would composite page three of the old one.
+    this.sceneEpoch++;
+    this.scenes.clear();
+    this.sceneBuilding.clear();
     this.root.innerHTML = '';
     this.pages = [];
     this.observer?.disconnect();
@@ -585,6 +591,13 @@ export class Viewer {
   /** Re-renders every already-rendered page, used after an edit changes the file. */
   async refreshRendered(onlyPage?: number): Promise<void> {
     const token = ++this.renderToken;
+    // Everything that changes a document comes through here, and not all of
+    // it comes through rebuild(): undo and the page operations refresh and
+    // repaint directly. The scenes describe the bytes before the change, so
+    // they go here, along with the epoch that discards any build in flight.
+    this.sceneEpoch++;
+    if (onlyPage === undefined) this.scenes.clear();
+    else this.scenes.delete(onlyPage);
     // Only the drawn scale is invalidated. The text model comes from the
     // original bytes and never changes, so throwing it away here only widened
     // the window in which a page had no model to click into.
@@ -721,6 +734,20 @@ export class Viewer {
   /** Pages taken apart into a backdrop and one picture per object. */
   private scenes = new Map<number, { scene: Scene; zoom: number }>();
   private sceneBuilding = new Set<number>();
+  /**
+   * Which version of the document a scene build belongs to.
+   *
+   * A build is a whole document load plus a render per object, which is
+   * longer than a drag. So a build started before a drop can finish after
+   * the rebuild has cleared the map, and it then installs a scene made from
+   * the bytes the page no longer shows: the moved object's tile is at its
+   * old position, and every later ensureScene sees a scene at the right zoom
+   * and keeps it. The next drag of anything else composites the moved object
+   * back where it used to be. The epoch is bumped by anything that changes
+   * what a page looks like, and a build that comes home to a different epoch
+   * than it left in is thrown away and started again.
+   */
+  private sceneEpoch = 0;
 
   /**
    * Takes a page apart once it is on screen, unless it already has been.
@@ -735,13 +762,24 @@ export class Viewer {
     if (had && Math.abs(had.zoom - this.zoom) < 0.001) return;
     if (this.sceneBuilding.has(p.index)) return;
     this.sceneBuilding.add(p.index);
+    const epoch = this.sceneEpoch;
+    let stale = false;
     try {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const scene = await this.doc.sceneFor(p.index, this.zoom * dpr);
-      if (scene) this.scenes.set(p.index, { scene, zoom: this.zoom });
+      // The page may have changed while this was being built, in which case
+      // what came back describes bytes nobody is looking at any more.
+      // Installing it anyway is how a moved object came back at its old
+      // position on the next drag.
+      stale = epoch !== this.sceneEpoch;
+      if (scene && !stale) this.scenes.set(p.index, { scene, zoom: this.zoom });
     } finally {
       this.sceneBuilding.delete(p.index);
     }
+    // A discarded build leaves the page with no scene at all, and nothing
+    // else would ask for one until the next render. Ask again now, from the
+    // bytes as they are; the epoch check above ends the recursion.
+    if (stale) void this.ensureScene(p);
   }
 
   /**
@@ -3487,6 +3525,9 @@ export class Viewer {
         await this.doc.refresh();
         // The page has changed, so what it was taken apart into no longer
         // describes it. Cleared before the redraw, which starts a fresh one.
+        // The epoch moves with it, so a build still in flight from the old
+        // bytes is discarded when it lands rather than installed over this.
+        this.sceneEpoch++;
         if (onlyPage === undefined) this.scenes.clear();
         else this.scenes.delete(onlyPage);
         await this.refreshRendered(onlyPage);

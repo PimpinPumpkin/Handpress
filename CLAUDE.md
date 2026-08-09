@@ -694,6 +694,19 @@ the object's own box is kept alongside as `hx0..hy1`, because that is what the
 selection knows it by and matching one against the other compares two different
 measurements.
 
+**A scene build can outlive the page it describes.** A build is a whole
+document load plus a render per object, which is longer than a drag. So a
+build started before a drop lands after the rebuild has cleared the map, and
+installs a scene made from bytes nobody is looking at any more: the moved
+object's tile is at its old position, every later ensureScene sees a scene at
+the right zoom and keeps it, and the next drag of anything composites the
+moved object back where it used to be. `sceneEpoch` is bumped by everything
+that changes what a page shows, in `refreshRendered` because undo and the
+page operations refresh directly without passing through `rebuild`, and in
+`load` because a new document's page numbers are the old one's. A build that
+comes home to a different epoch is thrown away and started again from the
+bytes as they now are.
+
 And one invariant: every object taken out of the backdrop must have a picture
 to put back. If any tile fails to render there is no scene at all, because a
 scene missing one object is indistinguishable from that object having been
