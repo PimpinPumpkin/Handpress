@@ -823,6 +823,28 @@ export class Viewer {
     return tile;
   }
 
+  /**
+   * Repaints the page with the object drawn at an offset, mid-drag.
+   *
+   * Four pictures: the page, the hole where the object was, the object where
+   * the pointer has it, and everything the page draws after the object laid
+   * over the top. The last is what keeps the copy in its own place in the
+   * painting order: what covered it at rest keeps covering it while it moves,
+   * instead of the copy popping over content it was naturally behind.
+   */
+  private stageMove(p: RenderedPage, tile: Tile, dx: number, dy: number): void {
+    const held = this.scenes.get(p.index);
+    if (!held) return;
+    const ctx = p.canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
+    ctx.drawImage(held.scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
+    this.blitTile(p, ctx, tile, 0, 0, tile.hole);
+    this.blitTile(p, ctx, tile, dx, dy);
+    if (tile.over) ctx.drawImage(tile.over, 0, 0, p.canvas.width, p.canvas.height);
+  }
+
   /** Draws one tile where it belongs on the page, optionally shifted. */
   private blitTile(
     p: RenderedPage,
@@ -2339,14 +2361,28 @@ export class Viewer {
       // same rectangle along with it, which is what a picture with text over
       // it or a panel behind it looks like when dragged.
       (target) => {
-        const art = this.imageArt.get(id);
-        if (!art) return;
         const [ax, ay] = target.toCanvas(image.x0 + state.dx, image.y1 + state.dy);
         const [bx, by] = target.toCanvas(
           image.x0 + state.dx + (image.x1 - image.x0) * state.scale,
           image.y0 + state.dy + (image.y1 - image.y0) * state.scale,
         );
-        target.ctx.drawImage(art, Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+        const left = Math.min(ax, bx);
+        const top = Math.min(ay, by);
+        const w = Math.abs(bx - ax);
+        const h = Math.abs(by - ay);
+        const art = this.imageArt.get(id);
+        if (art) {
+          target.ctx.drawImage(art, left, top, w, h);
+          return;
+        }
+        // The rendered picture is warmed on hover and is not always ready: a
+        // drag that starts fast, or right after an edit cleared the cache,
+        // used to draw nothing at all, which looks like picking up air. The
+        // page's own pixels are the fallback. They bring whatever sits behind
+        // the image along for the ride, which is worse than the real picture
+        // and far better than an invisible drag.
+        const ratio = p.canvas.width / Math.max(1, parseFloat(p.canvas.style.width));
+        target.ctx.drawImage(p.canvas, left * ratio, top * ratio, w * ratio, h * ratio, left, top, w, h);
       },
       {
         x0: image.x0 + state.dx,
@@ -2988,8 +3024,16 @@ export class Viewer {
       (target) => {
         const bytes = p.model?.contentBytes;
         if (!bytes || graphic.streamId !== 'page') return;
+        // The byte range replays where the original bytes drew the group, and
+        // the box has any accumulated move already applied to it. The replay
+        // has to move by the same amount, or after one move every fallback
+        // preview starts a whole move's distance behind its own outline.
+        const m = graphic.moved;
+        const shifted: PaintTarget = !m
+          ? target
+          : { ...target, toCanvas: (x, y) => target.toCanvas(x + m.dx, y + m.dy) };
         const s = graphic.state;
-        paintRange(bytes, graphic.start, graphic.end, graphic.ctm, target, {
+        paintRange(bytes, graphic.start, graphic.end, graphic.ctm, shifted, {
           fill: `rgb(${Math.round(s.fill.r * 255)},${Math.round(s.fill.g * 255)},${Math.round(s.fill.b * 255)})`,
           stroke: `rgb(${Math.round(s.stroke.r * 255)},${Math.round(s.stroke.g * 255)},${Math.round(s.stroke.b * 255)})`,
           lineWidth: s.lineWidth,
@@ -3280,20 +3324,6 @@ export class Viewer {
           // is repainting from pictures that exist: no rendering happens here,
           // which is what makes the movement instant rather than merely quick.
           staged = this.stage(page, where);
-          if (staged) {
-            drawn = this.liftDrawn(page, (target) => {
-              const t = staged!;
-              const [ax, ay] = target.toCanvas(t.x0, t.y1);
-              const [bx, by] = target.toCanvas(t.x1, t.y0);
-              target.ctx.drawImage(
-                t.canvas,
-                Math.min(ax, bx),
-                Math.min(ay, by),
-                Math.abs(bx - ax),
-                Math.abs(by - ay),
-              );
-            });
-          }
         }
         if (!moved && !staged && page && drawSelf) {
           // Nothing to composite, so the object draws itself. Slower to start
@@ -3307,6 +3337,18 @@ export class Viewer {
         moved = true;
         box.classList.add('dragging');
         box.style.transform = `translate(${dx}px, ${dy}px)`;
+        if (staged && page && parent) {
+          // The object is drawn into the page itself, at the offset, with
+          // everything the page paints after it laid over the top. That is
+          // what keeps a drag in the object's own place in the painting
+          // order: a copy floated on a layer above the page pops over
+          // content the object was naturally behind, which reads as the
+          // object jumping the queue the moment it is touched.
+          const rect = parent.getBoundingClientRect();
+          const [x0, y0] = viewport.convertToPdfPoint(down.clientX - rect.left, down.clientY - rect.top);
+          const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
+          this.stageMove(page, staged, x1 - x0, y1 - y0);
+        }
         if (lifted) lifted.ghost.style.transform = `translate(${dx}px, ${dy}px)`;
         if (drawn) drawn.style.transform = `translate(${dx}px, ${dy}px)`;
       };

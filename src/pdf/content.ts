@@ -268,6 +268,15 @@ export interface WalkResult {
   images: ImageOp[];
   paths: PathOp[];
   /**
+   * Where each form XObject is invoked, as a splice-ready byte range.
+   *
+   * The walker descends into a form and reports what is inside it, but the
+   * form's own content lives in another stream: nothing else records where in
+   * the page's bytes the whole drawing was asked for. Anything that needs to
+   * blank or reorder a form as a unit works from these.
+   */
+  forms: Array<{ streamId: string; start: number; end: number }>;
+  /**
    * Every q, Q and cm in each stream, by byte offset.
    *
    * Moving a run of paths means putting a matrix in front of the run and
@@ -304,6 +313,7 @@ export function walkPage(contentBytes: Uint8Array, resources: PDFDict | null, st
     ops: [],
     images: [],
     paths: [],
+    forms: [],
     stateMarks: new Map(),
     streams: new Map(),
     fonts: new Map(),
@@ -809,6 +819,13 @@ function walkStream(
                   x1: Math.max(...corners.map((c) => c[0])),
                   y0: Math.min(...corners.map((c) => c[1])),
                   y1: Math.max(...corners.map((c) => c[1])),
+                });
+              }
+              if (isForm) {
+                out.forms.push({
+                  streamId,
+                  start: operandStart >= 0 ? operandStart : t.start,
+                  end: t.end,
                 });
               }
               const childId = `${streamId}>${nameTok.name}`;

@@ -643,12 +643,27 @@ object properly. Acrobat does not render on drag. It holds the page as objects
 and recomposites.
 
 `src/app/scene.ts` does the same. Once a page is on screen, it is taken apart
-in the background into the whole page plus two small pictures per object: the
-object alone, on a transparent background so the copy that follows the pointer
-is the object and not a white card with the object on it, and a **hole**, the
-page without that one object, cropped to its box. A drag is then three
-drawImage calls: the page, the hole patched over the dragged object's spot,
-its picture on a layer. No rendering happens during the gesture at all.
+in the background into the whole page plus up to three pictures per object:
+the object alone, on a transparent background so the copy that follows the
+pointer is the object and not a white card with the object on it; a **hole**,
+the page without that one object, cropped to its box; and an **over layer**,
+everything the page draws after the object, full page on a transparent
+ground. A drag is then four drawImage calls into the page canvas itself: the
+page, the hole over the object's spot, the object at the pointer's offset,
+and the over layer on top. No rendering happens during the gesture at all.
+
+**The over layer is what keeps a drag in the painting order.** A copy floated
+on a layer above the page pops over content the object was naturally behind,
+which reads as the object jumping the queue the moment it is touched. With
+the layer, what covered the object at rest keeps covering it while it moves.
+The layer cannot be a render of the suffix bytes alone, because they lean on
+state the earlier bytes set up, so the earlier bytes stay and only their
+marks are taken away: paths, images, inline images and whole form invocations
+are blanked outright, since none of them leaves state behind, and text
+becomes a pure advance through the writer's own `neutralAdvance`, so the text
+matrix ends up exactly where the skipped operators would have left it. The
+layer is skipped when nothing later draws, and then the copy riding on top is
+also the truth.
 
 **Why holes rather than a backdrop with the objects removed.** The first
 design flattened the page-minus-objects into one backdrop and blitted every
@@ -712,10 +727,23 @@ page operations refresh directly without passing through `rebuild`, and in
 comes home to a different epoch is thrown away and started again from the
 bytes as they now are.
 
-And one invariant: every object must have both its pictures. Missing either,
-a drag cannot erase the object or cannot show it moving, and from the outside
-that is an object flickering out of existence. If any render fails there is
-no scene at all, and the drag falls back to drawing the object itself.
+And one invariant: every object must have its hole and its tile. Missing
+either, a drag cannot erase the object or cannot show it moving, and from the
+outside that is an object flickering out of existence. If either render fails
+there is no scene at all, and the drag falls back to drawing the object
+itself. The over layer is the one optional picture, because losing it only
+costs the painting order, not the object.
+
+**The fallback path has to tell the same story as the scene.** Two bugs lived
+there, both only visible in the window after a drop while the next scene is
+still building. A graphic's fallback preview replays the original bytes, and
+`graphicsOn` shifts the box by the accumulated move without saying so, so
+after one move every fallback preview drew a whole move's distance behind its
+own outline; the shift now rides on the graphic as `moved` and the replay
+adds it. And an image's preview returned quietly when the hover-warmed
+picture was not cached yet, so a fast drag picked up nothing at all; it now
+falls back to copying the page's own pixels, background and all, which is
+worse than the real picture and far better than an invisible drag.
 
 **A real bug this found.** `findGraphics` inferred "nothing else is drawn
 inside this range" from consecutive numbering, and on one corpus document that

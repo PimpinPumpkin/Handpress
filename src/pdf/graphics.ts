@@ -30,6 +30,15 @@ export interface Graphic {
   /** Enough state to draw the group again elsewhere in the stream. */
   state: DrawState;
   /**
+   * Accumulated move applied on top of the bytes, set by the model only.
+   *
+   * The grouping itself never fills this in: it describes the document, and
+   * the document has not changed. The model adds it when it shifts the box by
+   * the edits it holds, so that a preview replaying the original bytes knows
+   * to move what it draws by the same amount the box was moved.
+   */
+  moved?: { dx: number; dy: number };
+  /**
    * A wider byte range to move instead, when the group is cut to its own shape.
    *
    * Nearly every small mark on a real page is drawn inside a clip a point or

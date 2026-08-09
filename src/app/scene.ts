@@ -23,7 +23,9 @@ import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument, PDFName } from 'pdf-lib';
 import { getPageContent, setPageContent } from '../pdf/page';
 import { findGraphics, type Graphic } from '../pdf/graphics';
-import { walkPage, type Matrix } from '../pdf/content';
+import { walkPage, type Matrix, type WalkResult } from '../pdf/content';
+import { neutralAdvance } from '../pdf/writer';
+import { Lexer, Tok } from '../pdf/lexer';
 
 /** One object, drawn on its own, with where it belongs on the page. */
 export interface Tile {
@@ -41,6 +43,16 @@ export interface Tile {
    * covered it and every drag made the text on every panel vanish.
    */
   hole: HTMLCanvasElement;
+  /**
+   * Everything the page draws after this object, on a transparent ground.
+   *
+   * Painted over the moving copy, so a drag stays in the object's own place
+   * in the painting order: what covered it at rest keeps covering it while
+   * it moves, instead of the copy popping over content it was naturally
+   * behind. Null when nothing later draws, or when the layer cannot be built
+   * honestly, in which case the copy rides on top the way it always did.
+   */
+  over: HTMLCanvasElement | null;
   /**
    * Page-space box both pictures cover, which is the object's own box grown
    * by whatever its stroke hangs outside it. A path's bounds are its points,
@@ -118,6 +130,57 @@ function tileContent(
   out.set(head, 0);
   out.set(body, head.length);
   out.set(tail, head.length + body.length);
+  return out;
+}
+
+/**
+ * The content with everything drawn before `cut` made invisible, state intact.
+ *
+ * This is what makes an over layer honest. The bytes after the cut cannot be
+ * rendered alone, because they lean on state the earlier bytes set up: the
+ * matrix, the colours, the font, the clip. So the earlier bytes stay, and only
+ * their marks are taken away: paths, images and whole form invocations are
+ * blanked outright, since none of them leaves state behind, and text becomes a
+ * pure advance so the text matrix still ends up exactly where the skipped
+ * operators would have left it.
+ */
+function overContent(
+  bytes: Uint8Array,
+  walk: WalkResult,
+  inlineImages: Array<{ start: number; end: number }>,
+  cut: number,
+): Uint8Array {
+  const patches: Array<{ start: number; end: number; bytes: Uint8Array }> = [];
+  const blank = (start: number, end: number): void => {
+    patches.push({ start, end, bytes: new Uint8Array(end - start).fill(0x20) });
+  };
+  for (const p of walk.paths) if (p.streamId === 'page' && p.start < cut) blank(p.start, p.end);
+  for (const im of walk.images) if (im.streamId === 'page' && im.start < cut) blank(im.start, im.end);
+  for (const f of walk.forms) if (f.streamId === 'page' && f.start < cut) blank(f.start, f.end);
+  for (const ii of inlineImages) if (ii.start < cut) blank(ii.start, ii.end);
+  for (const op of walk.ops) {
+    if (op.streamId === 'page' && op.start < cut) {
+      patches.push({ start: op.start, end: op.end, bytes: neutralAdvance(op) });
+    }
+  }
+
+  patches.sort((a, b) => a.start - b.start);
+  const keep: Uint8Array[] = [];
+  let cursor = 0;
+  for (const patch of patches) {
+    if (patch.start < cursor) continue;
+    keep.push(bytes.subarray(cursor, patch.start));
+    keep.push(patch.bytes);
+    cursor = patch.end;
+  }
+  keep.push(bytes.subarray(cursor));
+  const total = keep.reduce((a, b) => a + b.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const piece of keep) {
+    out.set(piece, o);
+    o += piece.length;
+  }
   return out;
 }
 
@@ -255,15 +318,38 @@ export async function buildScene(
     // dragging anything made the text on every panel vanish.
     page.node.set(PDFName.of('Annots'), doc.context.obj([]));
 
-    // Two pages per object, sharing the original's resources so nothing they
-    // name has to be copied or can dangle: the page without that one object,
-    // cropped to its box, which is what erases it during a drag; and the
-    // object on its own, which is what follows the pointer.
+    // What a moving object can slide under is anything drawn after it, and
+    // the walker cannot see inside an inline image, so their ranges come from
+    // the lexer once for the whole page.
+    const inlineImages: Array<{ start: number; end: number }> = [];
+    try {
+      for (const t of Lexer.tokenize(content.bytes)) {
+        if (t.kind === Tok.InlineImage) inlineImages.push({ start: t.start, end: t.end });
+      }
+    } catch {
+      // A stream the lexer chokes on has already failed the walk above.
+    }
+    const laterDraws = (cut: number): boolean =>
+      walk.paths.some((o) => o.streamId === 'page' && o.start >= cut) ||
+      walk.images.some((o) => o.streamId === 'page' && o.start >= cut) ||
+      walk.forms.some((o) => o.streamId === 'page' && o.start >= cut) ||
+      walk.ops.some((o) => o.streamId === 'page' && o.start >= cut) ||
+      inlineImages.some((o) => o.start >= cut);
+
+    // Three pages per object, sharing the original's resources so nothing
+    // they name has to be copied or can dangle: the page without that one
+    // object, cropped to its box, which is what erases it during a drag; the
+    // object on its own, which is what follows the pointer; and everything
+    // drawn after it, full page on a transparent ground, which is what keeps
+    // the moving copy in its own place in the painting order. The last is
+    // skipped when nothing later draws, and its absence just means the copy
+    // rides on top, which is then also the truth.
     const resources = page.node.Resources();
-    const firstExtra = doc.getPageCount();
+    const pageAt: Array<{ hole: number; tile: number; over: number | null }> = [];
     for (const part of parts) {
       const w = Math.max(1, part.x1 - part.x0);
       const h = Math.max(1, part.y1 - part.y0);
+      const at = { hole: doc.getPageCount(), tile: doc.getPageCount() + 1, over: null as number | null };
 
       const hole = doc.addPage([size.width, size.height]);
       if (resources) hole.node.set(PDFName.of('Resources'), resources);
@@ -274,6 +360,14 @@ export async function buildScene(
       if (resources) tile.node.set(PDFName.of('Resources'), resources);
       setPageContent(doc, tile, part.bytes);
       tile.setCropBox(part.x0, part.y0, w, h);
+
+      if (laterDraws(part.end)) {
+        at.over = doc.getPageCount();
+        const over = doc.addPage([size.width, size.height]);
+        if (resources) over.node.set(PDFName.of('Resources'), resources);
+        setPageContent(doc, over, overContent(content.bytes, walk, inlineImages, part.end));
+      }
+      pageAt.push(at);
     }
 
     const task = pdfjs.getDocument({ worker, data: await doc.save({ useObjectStreams: false }) });
@@ -304,13 +398,19 @@ export async function buildScene(
 
     const tiles: Tile[] = [];
     for (const [n, part] of parts.entries()) {
-      const hole = await draw(firstExtra + n * 2);
-      const canvas = await draw(firstExtra + n * 2 + 1, true);
+      const at = pageAt[n];
+      const hole = await draw(at.hole);
+      const canvas = await draw(at.tile, true);
+      // The over layer is transparent everywhere nothing later draws, so it
+      // composites as a plain overlay. Losing it is not losing the object:
+      // the drag still works, the copy just rides on top.
+      const over = at.over === null ? null : await draw(at.over, true);
       if (hole && canvas) {
         tiles.push({
           id: part.id,
           canvas,
           hole,
+          over,
           x0: part.x0,
           y0: part.y0,
           x1: part.x1,

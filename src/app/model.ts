@@ -1593,7 +1593,11 @@ export class HandpressDocument {
     return found.map((g) => {
       const m = moves.get(g.id);
       if (!m) return g;
-      return { ...g, x0: g.x0 + m.dx, x1: g.x1 + m.dx, y0: g.y0 + m.dy, y1: g.y1 + m.dy };
+      // The shift rides along, because the byte range and matrix still say
+      // where the original bytes draw the group: anything replaying those
+      // bytes for a preview has to add the move itself, or the preview lands
+      // where the drawing used to be.
+      return { ...g, x0: g.x0 + m.dx, x1: g.x1 + m.dx, y0: g.y0 + m.dy, y1: g.y1 + m.dy, moved: { dx: m.dx, dy: m.dy } };
     });
   }
 
@@ -2421,6 +2425,7 @@ export class HandpressDocument {
             ops: [],
             images: [],
             paths: [],
+            forms: [],
             stateMarks: new Map(),
             streams: new Map(),
             fonts: new Map(),

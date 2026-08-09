@@ -16,8 +16,9 @@
 import fs from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { getPageContent } from '../src/pdf/page';
-import { walkPage } from '../src/pdf/content';
+import { walkPage, type WalkResult } from '../src/pdf/content';
 import { findGraphics } from '../src/pdf/graphics';
+import { neutralAdvance } from '../src/pdf/writer';
 
 let pass = 0;
 let fail = 0;
@@ -178,6 +179,100 @@ if (!graphics.length && !images.length) {
   } else {
     pass++;
   }
+}
+
+/* ---------- the over layer hides the past and keeps the future ---------- */
+{
+  // Everything drawn after an object, with everything before it invisible but
+  // its state intact. This is the same splice the scene builder does; what is
+  // pinned is that the result parses, that nothing drawn before the cut
+  // survives as a mark, and that everything after the cut is untouched.
+  const overContent = (cut: number): Uint8Array => {
+    const patches: Array<{ start: number; end: number; bytes: Uint8Array }> = [];
+    const blank = (start: number, end: number): void => {
+      patches.push({ start, end, bytes: new Uint8Array(end - start).fill(0x20) });
+    };
+    for (const p of walk.paths) if (p.streamId === 'page' && p.start < cut) blank(p.start, p.end);
+    for (const im of walk.images) if (im.streamId === 'page' && im.start < cut) blank(im.start, im.end);
+    for (const f of walk.forms) if (f.streamId === 'page' && f.start < cut) blank(f.start, f.end);
+    for (const op of walk.ops) {
+      if (op.streamId === 'page' && op.start < cut) {
+        patches.push({ start: op.start, end: op.end, bytes: neutralAdvance(op) });
+      }
+    }
+    patches.sort((a, b) => a.start - b.start);
+    const keep: Uint8Array[] = [];
+    let cursor = 0;
+    for (const patch of patches) {
+      if (patch.start < cursor) continue;
+      keep.push(content.bytes.subarray(cursor, patch.start));
+      keep.push(patch.bytes);
+      cursor = patch.end;
+    }
+    keep.push(content.bytes.subarray(cursor));
+    const total = keep.reduce((a, b) => a + b.length, 0);
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const piece of keep) {
+      out.set(piece, o);
+      o += piece.length;
+    }
+    return out;
+  };
+
+  const pageOnly = (w: WalkResult) => ({
+    paths: w.paths.filter((x) => x.streamId === 'page'),
+    images: w.images.filter((x) => x.streamId === 'page'),
+    ops: w.ops.filter((x) => x.streamId === 'page'),
+  });
+
+  const objects = [...graphics, ...images];
+  let parsed = 0;
+  let pastGone = 0;
+  let futureKept = 0;
+  let textPlaced = 0;
+  for (const obj of objects) {
+    const cut = obj.end;
+    let after: WalkResult;
+    try {
+      after = walkPage(overContent(cut), content.resources);
+    } catch {
+      continue;
+    }
+    parsed++;
+    // The splice shifts every later offset, so before and after cannot be
+    // compared by byte position at all: the layer is judged on what it draws.
+    // Exactly the later marks survive, count for count, and nothing else.
+    const was = pageOnly(walk);
+    const now = pageOnly(after);
+    const wasLaterPaths = was.paths.filter((x) => x.start >= cut).length;
+    const wasLaterImages = was.images.filter((x) => x.start >= cut).length;
+    // A space is a show op too, so only text that draws glyphs is counted on
+    // both sides, or every page that draws its spaces as their own operators
+    // fails for nothing.
+    const wasLaterText = was.ops.filter((x) => x.start >= cut && x.text.trim().length > 0);
+    const nowText = now.ops.filter((x) => x.text.trim().length > 0);
+    if (
+      now.paths.length === wasLaterPaths &&
+      now.images.length === wasLaterImages &&
+      nowText.length === wasLaterText.length
+    ) {
+      pastGone++;
+      futureKept++;
+    }
+    // And the text that survives sits exactly where it sat, which is the
+    // whole reason blanked text is an advance rather than a deletion.
+    const placed =
+      wasLaterText.length === 0 ||
+      wasLaterText.every((w0) =>
+        nowText.some((n0) => n0.text === w0.text && Math.abs(n0.x - w0.x) < 0.01 && Math.abs(n0.y - w0.y) < 0.01),
+      );
+    if (placed) textPlaced++;
+  }
+  check('every over layer parses', parsed === objects.length, `${parsed} of ${objects.length}`);
+  check('nothing before the cut is drawn', pastGone === parsed, `${pastGone} of ${parsed}`);
+  check('everything after the cut survives', futureKept === parsed, `${futureKept} of ${parsed}`);
+  check('and later text sits exactly where it sat', textPlaced === parsed, `${textPlaced} of ${parsed}`);
 }
 
 console.log(`\nscene: ${pass} passed, ${fail} failed`);

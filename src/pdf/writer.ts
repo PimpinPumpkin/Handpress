@@ -888,8 +888,15 @@ function spaceWidthFor(seg: TextSegment): number | undefined {
   return seg.font.widths.get(32) ?? 250;
 }
 
-/** Replaces an operator with a pure advance equal to the one it produced. */
-function neutralAdvance(op: ShowOp): Uint8Array {
+/**
+ * Replaces an operator with a pure advance equal to the one it produced.
+ *
+ * Exported because the scene builder blanks text the same way: a layer of
+ * "everything drawn after this object" has to skip the text before it while
+ * leaving the text matrix exactly where the skipped operators left it, or
+ * every later show in the same block slides out of place.
+ */
+export function neutralAdvance(op: ShowOp): Uint8Array {
   if (op.fontSize === 0 || Math.abs(op.advance) < 1e-6) return new Uint8Array(0);
   const th = op.horizScale / 100;
   return bytes(`[${fmt((-op.advance * 1000) / (op.fontSize * th))}]TJ`);
