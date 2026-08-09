@@ -659,9 +659,33 @@ Three things in it that are easy to get wrong, all pinned by
   own with nothing to cut it against, and honouring it would hide the object
   everywhere but where it started.
 
+An image cannot replay operators, because the operator is `Do` and the pixels
+are behind a filter and a colour space. So `imagePicture` copies the page,
+replaces its content with the single operator that draws that image, crops to
+its box and renders that with pdf.js. Resources are untouched, so no colour
+space, mask or decode array is left dangling, and the renderer does what it
+already does well. It is cached per image and warmed on hover, so the cost lands
+before the drag rather than during it.
+
 The original stays on the page under the moving copy until the drag is let go,
 which is why the layer is slightly transparent. Hiding it would mean rendering
 the page without the object, which is a full page render per drag.
+
+## A selection is a set, even when it holds one thing
+
+`picked` is the last thing touched, which is what the panel describes; the set
+is what the keyboard moves and deletes. Shift, command or control add to it,
+and a band drawn on bare page takes everything it overlaps rather than only
+what is wholly inside, because a band round a group rarely clears their edges.
+
+The Select tool only starts a band when the press landed on the overlay itself.
+A press on an object belongs to that object, so it stays clickable and
+draggable in that mode: a select tool that could only draw bands would be a
+worse edit mode, not a better one.
+
+Watch for automatic semicolon insertion when refactoring these: `return` with
+the expression on the next line returns undefined, and every nudge silently did
+nothing until the expression was bracketed.
 
 ## A selection is what makes an object an object
 

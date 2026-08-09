@@ -120,6 +120,7 @@ const els = {
   btnCallout: $<HTMLButtonElement>('btnCallout'),
   btnMeasure: $<HTMLButtonElement>('btnMeasure'),
   btnMeasureArea: $<HTMLButtonElement>('btnMeasureArea'),
+  btnObjects: $<HTMLButtonElement>('btnObjects'),
   btnComments: $<HTMLButtonElement>('btnComments'),
   btnCompare: $<HTMLButtonElement>('btnCompare'),
   btnPreflight: $<HTMLButtonElement>('btnPreflight'),
@@ -1250,6 +1251,7 @@ const MODE_BUTTONS: Record<string, string> = {
   field: 'btnField',
   measure: 'btnMeasure',
   measureArea: 'btnMeasureArea',
+  objects: 'btnObjects',
 };
 
 function syncEditState(): void {
@@ -1310,7 +1312,8 @@ function setMode(
     | 'callout'
     | 'field'
     | 'measure'
-    | 'measureArea',
+    | 'measureArea'
+    | 'objects',
 ): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
@@ -1335,6 +1338,7 @@ function setMode(
   els.btnField.classList.toggle('tool-active', mode === 'field');
   els.btnMeasure.classList.toggle('tool-active', mode === 'measure');
   els.btnMeasureArea.classList.toggle('tool-active', mode === 'measureArea');
+  els.btnObjects.classList.toggle('tool-active', mode === 'objects');
   revealGroupOf(MODE_BUTTONS[mode] ?? '');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
@@ -1352,6 +1356,7 @@ function setMode(
     field: 'Drag out the box, then say what kind of field it is and what it is called.',
     measure: 'Drag along something to measure it. Set the scale once and the rest read true.',
     measureArea: 'Click the corners of the area. Double click or Enter to finish.',
+    objects: 'Click anything to pick it up. Drag a box round several, or shift click to add.',
     select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
@@ -2323,6 +2328,7 @@ els.btnCallout.addEventListener('click', () => setMode('callout'));
 els.btnField.addEventListener('click', () => setMode('field'));
 els.btnMeasure.addEventListener('click', () => setMode('measure'));
 els.btnMeasureArea.addEventListener('click', () => setMode('measureArea'));
+els.btnObjects.addEventListener('click', () => setMode('objects'));
 
 /* ---------------- the same thing to a pile of files ---------------- */
 

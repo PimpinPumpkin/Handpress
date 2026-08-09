@@ -12,7 +12,7 @@ import { degrees, PDFBool, PDFDict, PDFDocument, PDFName, PDFString, type PDFPag
 import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { getPageContent } from '../pdf/page';
+import { getPageContent, setPageContent } from '../pdf/page';
 import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
 import { groupParagraphs, overflowOf, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
 import { splitChunks } from '../pdf/split';
@@ -1074,6 +1074,73 @@ export class HandpressDocument {
     this.undoStack.push(before);
     this.redoStack = [];
     return true;
+  }
+
+  /** Rendered pictures of single images, kept so a second drag is instant. */
+  private imageArt = new Map<string, HTMLCanvasElement>();
+
+  /**
+   * Draws one image from the page, on its own, with nothing else around it.
+   *
+   * Dragging an image used to float a rectangle of pixels copied off the page
+   * canvas. The rectangle is the image's box, but the pixels in it are
+   * whatever the page drew there: text over the picture, the panel showing
+   * through a transparent one, a neighbour overlapping the corner. All of it
+   * came along for the ride.
+   *
+   * Rather than decoding the image here, which would mean handling every
+   * filter and colour space a PDF may use, the page is copied and its content
+   * replaced with the one operator that draws this image. Its resources are
+   * untouched, so no colour space, mask or decode array is left dangling, and
+   * the renderer does what it already does well.
+   */
+  async imagePicture(pageIndex: number, image: { name: string; x0: number; y0: number; x1: number; y1: number }):
+    Promise<HTMLCanvasElement | null> {
+    const key = `${pageIndex}:${image.name}:${image.x0.toFixed(1)},${image.y0.toFixed(1)}`;
+    const had = this.imageArt.get(key);
+    if (had) return had;
+
+    try {
+      const doc = await PDFDocument.load(this.originalBytes.slice(), {
+        throwOnInvalidObject: false,
+        updateMetadata: false,
+      });
+      if (pageIndex >= doc.getPageCount()) return null;
+      const page = doc.getPage(pageIndex);
+
+      // Only this image, drawn where it sits, on a page cropped to it.
+      const w = image.x1 - image.x0;
+      const h = image.y1 - image.y0;
+      if (w < 1 || h < 1) return null;
+      setPageContent(
+        doc,
+        page,
+        new TextEncoder().encode(`q ${w} 0 0 ${h} ${image.x0} ${image.y0} cm /${image.name} Do Q`),
+      );
+      // Annotations would draw over it and are not part of the image.
+      page.node.set(PDFName.of('Annots'), doc.context.obj([]));
+      page.setCropBox(image.x0, image.y0, w, h);
+
+      const bytes = await doc.save({ useObjectStreams: false });
+      const task = pdfjs.getDocument({ worker: this.worker ?? undefined, data: bytes });
+      const rendered = await task.promise;
+      const one = await rendered.getPage(pageIndex + 1);
+      const viewport = one.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.ceil(viewport.width));
+      canvas.height = Math.max(1, Math.ceil(viewport.height));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      await one.render({ canvas, canvasContext: ctx, viewport } as never).promise;
+      await task.destroy().catch(() => undefined);
+
+      this.imageArt.set(key, canvas);
+      return canvas;
+    } catch {
+      // A page that will not rebuild is one the drag does without a preview
+      // rather than one that throws in the middle of a gesture.
+      return null;
+    }
   }
 
   /* ---------------- spelling ---------------- */

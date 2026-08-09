@@ -48,7 +48,8 @@ export type ViewerMode =
   | 'callout'
   | 'field'
   | 'measure'
-  | 'measureArea';
+  | 'measureArea'
+  | 'objects';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -79,7 +80,7 @@ export interface ViewerCallbacks {
     closed: boolean,
   ): void;
   /** Something was picked, or the selection was cleared with a null kind. */
-  onPicked(kind: string | null, id: string, page: number): void;
+  onPicked(kind: string | null, id: string, page: number, count: number): void;
 }
 
 interface RenderedPage {
@@ -396,7 +397,8 @@ export class Viewer {
         mode === 'callout' ||
         mode === 'field' ||
         mode === 'measure' ||
-        mode === 'measureArea',
+        mode === 'measureArea' ||
+        mode === 'objects',
     );
       p.overlay.classList.toggle(
         'drawing',
@@ -480,6 +482,14 @@ export class Viewer {
         }
         if (this.mode === 'callout') {
           this.beginCallout(this.pages[i], e);
+          return;
+        }
+        if (this.mode === 'objects') {
+          // Only on bare page. A press that landed on an object belongs to
+          // that object, so it can still be clicked and dragged in this mode:
+          // a select tool that could only draw bands would be a worse edit
+          // mode, not a better one.
+          if (e.target === overlay) this.bandSelect(this.pages[i], e);
           return;
         }
         if (this.mode === 'crop' || this.mode === 'field') {
@@ -789,8 +799,8 @@ export class Viewer {
           if (!this.doc.moveLine(p.index, line.id, dx, dy)) return;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
-        () => {
-          this.pick('line', line.id, p.index, box);
+        (add) => {
+          this.pick('line', line.id, p.index, box, true, add);
           this.select(line, p);
           if (line.editable) this.openEditor(p, line, viewport);
           else this.cb.onStatus('That text uses a font Handpress cannot map to characters, so editing it is disabled.', 'warn');
@@ -905,7 +915,7 @@ export class Viewer {
           if (!this.doc.moveStamp(p.index, stamp.id, dx, dy)) return;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
-        () => this.pick('stamp', stamp.id, p.index, box),
+        (add) => this.pick('stamp', stamp.id, p.index, box, true, add),
         p,
       );
       p.overlay.appendChild(box);
@@ -934,8 +944,8 @@ export class Viewer {
           if (!this.doc.moveInsertion(p.index, insertion.id, dx, dy)) return;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
-        () => {
-          this.pick('added', insertion.id, p.index, box);
+        (add) => {
+          this.pick('added', insertion.id, p.index, box, true, add);
           this.openInsertionEditor(p, insertion, viewport);
         },
         p,
@@ -1135,8 +1145,8 @@ export class Viewer {
         if (!this.doc.moveNote(p.index, note.id, dx, dy)) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      () => {
-        if (mine) this.pick('note', note.id, p.index, marker);
+      (add) => {
+        if (mine) this.pick('note', note.id, p.index, marker, true, add);
         this.cb.onThread(p.index, note.id);
       },
       // Deliberately not lifted. A note is an annotation, so the marker is our
@@ -2182,9 +2192,34 @@ export class Viewer {
         if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      () => this.pick('image', id, p.index, box),
+      (add) => this.pick('image', id, p.index, box, true, add),
       p,
+      // The image draws itself, from a copy of the page whose content is only
+      // that image. Copying the page's pixels brought whatever else was in the
+      // same rectangle along with it, which is what a picture with text over
+      // it or a panel behind it looks like when dragged.
+      (target) => {
+        const art = this.imageArt.get(id);
+        if (!art) return;
+        const [ax, ay] = target.toCanvas(image.x0 + state.dx, image.y1 + state.dy);
+        const [bx, by] = target.toCanvas(
+          image.x0 + state.dx + (image.x1 - image.x0) * state.scale,
+          image.y0 + state.dy + (image.y1 - image.y0) * state.scale,
+        );
+        target.ctx.drawImage(art, Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+      },
     );
+
+    // Asked for once, on hover, so the picture is ready before a drag starts
+    // rather than a frame or two into one.
+    box.addEventListener('pointerenter', () => {
+      if (this.imageArt.has(id) || !this.doc) return;
+      void this.doc
+        .imagePicture(p.index, { name: image.name, x0: image.x0, y0: image.y0, x1: image.x1, y1: image.y1 })
+        .then((art) => {
+          if (art) this.imageArt.set(id, art);
+        });
+    });
 
     p.overlay.appendChild(box);
   }
@@ -2417,6 +2452,25 @@ export class Viewer {
   } | null = null;
 
   /**
+   * Everything picked, when more than one thing is.
+   *
+   * `picked` stays the last one touched, since that is what the properties
+   * panel describes and what a single-object action works on. This is the set
+   * the keyboard moves and deletes, and it always contains `picked`.
+   */
+  private alsoPicked: Array<{
+    kind: 'line' | 'image' | 'graphic' | 'ink' | 'note' | 'stamp' | 'added';
+    id: string;
+    page: number;
+    box: HTMLElement;
+  }> = [];
+
+  /** Everything picked, in one list, whether one thing or twenty. */
+  private everything(): Array<{ kind: string; id: string; page: number; box: HTMLElement }> {
+    return this.picked ? [...this.alsoPicked, this.picked] : [];
+  }
+
+  /**
    * Picks an object, or clears the selection when given nothing.
    *
    * The box is remembered rather than looked up, because a rebuild replaces
@@ -2429,11 +2483,19 @@ export class Viewer {
     page: number,
     box: HTMLElement,
     announce = true,
+    add = false,
   ): void {
-    if (this.picked?.box && this.picked.box !== box) this.picked.box.classList.remove('is-picked');
+    if (!add) {
+      // Everything let go of, unless this is being added to what is already
+      // held, which is what shift and the command key mean everywhere.
+      for (const one of this.everything()) one.box.classList.remove('is-picked');
+      this.alsoPicked = [];
+    } else if (this.picked && this.picked.box !== box) {
+      this.alsoPicked.push(this.picked);
+    }
     box.classList.add('is-picked');
     this.picked = { kind, id, page, box };
-    if (announce) this.cb.onPicked(kind, id, page);
+    if (announce) this.cb.onPicked(kind, id, page, this.everything().length);
   }
 
   /**
@@ -2454,9 +2516,10 @@ export class Viewer {
   /** Lets go of whatever was picked. */
   clearPick(): void {
     if (!this.picked) return;
-    this.picked.box.classList.remove('is-picked');
+    for (const one of this.everything()) one.box.classList.remove('is-picked');
+    this.alsoPicked = [];
     this.picked = null;
-    this.cb.onPicked(null, '', -1);
+    this.cb.onPicked(null, '', -1, 0);
   }
 
   /** What is picked, for the interface to describe it. */
@@ -2471,10 +2534,29 @@ export class Viewer {
    * with the pointer produce the same edit and the same undo.
    */
   nudge(dx: number, dy: number): boolean {
-    const p = this.picked;
-    if (!p || !this.doc) return false;
+    const all = this.everything();
+    if (!all.length || !this.doc) return false;
+    // Every page anything moved on, so one rebuild covers a selection that
+    // spans two of them rather than one per object.
+    const pages = new Set<number>();
+    let any = false;
+    for (const one of all) {
+      if (this.nudgeOne(one, dx, dy)) {
+        pages.add(one.page);
+        any = true;
+      }
+    }
+    if (!any) return false;
+    for (const page of pages) void this.rebuild(page).then(() => this.cb.onEdited());
+    return true;
+  }
+
+  private nudgeOne(p: { kind: string; id: string; page: number }, dx: number, dy: number): boolean {
+    if (!this.doc) return false;
     const model = this.doc;
-    const moved =
+    // Bracketed on purpose: a bare return with the expression on the next line
+    // returns undefined, and every nudge silently did nothing.
+    return (
       p.kind === 'ink'
         ? model.moveInk(p.page, p.id, dx, dy)
         : p.kind === 'graphic'
@@ -2487,10 +2569,8 @@ export class Viewer {
                 ? model.moveStamp(p.page, p.id, dx, dy)
                 : p.kind === 'added'
                   ? model.moveInsertion(p.page, p.id, dx, dy)
-                  : model.moveLine(p.page, p.id, dx, dy);
-    if (!moved) return false;
-    void this.rebuild(p.page).then(() => this.cb.onEdited());
-    return true;
+                  : model.moveLine(p.page, p.id, dx, dy)
+    );
   }
 
   /**
@@ -2501,10 +2581,35 @@ export class Viewer {
    * warning, not something the delete key should do by accident.
    */
   removePicked(): boolean {
-    const p = this.picked;
-    if (!p || !this.doc) return false;
+    const all = this.everything();
+    if (!all.length || !this.doc) return false;
+    const pages = new Set<number>();
+    let any = false;
+    let refused = false;
+    for (const one of all) {
+      if (this.removeOne(one)) {
+        pages.add(one.page);
+        any = true;
+      } else {
+        refused = true;
+      }
+    }
+    if (refused && !any) {
+      this.cb.onStatus(
+        'Text that is part of the document is removed by redacting it, which deletes it from the file.',
+        'warn',
+      );
+      return false;
+    }
+    this.clearPick();
+    for (const page of pages) void this.rebuild(page).then(() => this.cb.onEdited());
+    return any;
+  }
+
+  private removeOne(p: { kind: string; id: string; page: number }): boolean {
+    if (!this.doc) return false;
     const model = this.doc;
-    const gone =
+    return (
       p.kind === 'ink'
         ? model.removeInk(p.page, p.id)
         : p.kind === 'note'
@@ -2515,20 +2620,8 @@ export class Viewer {
               ? model.editImage(p.page, p.id, { remove: true })
               : p.kind === 'added'
                 ? model.setInsertionText(p.page, p.id, '')
-                : false;
-    if (!gone) {
-      this.cb.onStatus(
-        p.kind === 'line'
-          ? 'Text that is part of the document is removed by redacting it, which deletes it from the file.'
-          : 'That cannot be removed.',
-        'warn',
-      );
-      return false;
-    }
-    const page = p.page;
-    this.clearPick();
-    void this.rebuild(page).then(() => this.cb.onEdited());
-    return true;
+                : false
+    );
   }
 
   /**
@@ -2679,7 +2772,7 @@ export class Viewer {
         if (!this.doc?.moveInk(p.index, stroke.id, dx, dy)) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      () => this.pick('ink', stroke.id, p.index, box),
+      (add) => this.pick('ink', stroke.id, p.index, box, true, add),
       p,
       // Ink is already a list of points in page space, so there is nothing to
       // replay: it is drawn the same way it was drawn in the first place.
@@ -2741,7 +2834,7 @@ export class Viewer {
         if (!this.doc?.moveGraphic(p.index, graphic.id, dx, dy)) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      () => this.pick('graphic', graphic.id, p.index, box),
+      (add) => this.pick('graphic', graphic.id, p.index, box, true, add),
       p,
       // The drawing draws itself, by replaying the very operators the file
       // uses for it. Nothing of the page comes with it because nothing of the
@@ -2849,6 +2942,9 @@ export class Viewer {
   }
 
   /** Puts back whatever was lifted, once the page has really been redrawn. */
+  /** Pictures of single images, so a drag has something exact to draw. */
+  private imageArt = new Map<string, HTMLCanvasElement>();
+
   /** Drawn copies waiting for the page under them to catch up. */
   private pendingDrawn: HTMLCanvasElement[] = [];
 
@@ -2887,6 +2983,76 @@ export class Viewer {
       this.mode === 'crop' ||
       this.mode === 'field'
     );
+  }
+
+  /**
+   * Drags out a rectangle and picks everything inside it.
+   *
+   * Anything whose box overlaps the band is taken, rather than only what is
+   * wholly inside it, because a band drawn round a group of shapes rarely
+   * clears their edges and the alternative is a selection that quietly misses
+   * the thing at the corner.
+   */
+  private bandSelect(p: RenderedPage, down: PointerEvent): void {
+    down.preventDefault();
+    const rect = p.overlay.getBoundingClientRect();
+    const startX = down.clientX - rect.left;
+    const startY = down.clientY - rect.top;
+
+    const band = document.createElement('div');
+    band.className = 'erase-preview band-preview';
+    p.overlay.appendChild(band);
+
+    const shape = (x: number, y: number): DOMRect => {
+      const box = new DOMRect(
+        Math.min(startX, x),
+        Math.min(startY, y),
+        Math.abs(x - startX),
+        Math.abs(y - startY),
+      );
+      band.style.left = `${box.left}px`;
+      band.style.top = `${box.top}px`;
+      band.style.width = `${box.width}px`;
+      band.style.height = `${box.height}px`;
+      return box;
+    };
+    let box = shape(startX, startY);
+
+    const move = (e: PointerEvent): void => {
+      box = shape(e.clientX - rect.left, e.clientY - rect.top);
+    };
+    const up = (e: PointerEvent): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      box = shape(e.clientX - rect.left, e.clientY - rect.top);
+      band.remove();
+
+      // A band with no drag is a click on bare page, which lets go.
+      if (box.width < 4 && box.height < 4) {
+        this.clearPick();
+        return;
+      }
+
+      const keep = e.shiftKey || e.metaKey || e.ctrlKey;
+      if (!keep) this.clearPick();
+
+      for (const candidate of p.overlay.querySelectorAll<HTMLElement>('[data-pick]')) {
+        const b = candidate.getBoundingClientRect();
+        const left = b.left - rect.left;
+        const top = b.top - rect.top;
+        const overlaps =
+          left < box.right && left + b.width > box.left && top < box.bottom && top + b.height > box.top;
+        if (!overlaps) continue;
+        const [kind, ...rest] = (candidate.dataset.pick ?? '').split(':');
+        if (!kind || !rest.length) continue;
+        this.pick(kind as 'line', rest.join(':'), p.index, candidate, false, true);
+      }
+      const picked = this.everything();
+      this.cb.onPicked(picked.length ? picked[picked.length - 1].kind : null, '', p.index, picked.length);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
   }
 
   /**
@@ -2935,7 +3101,7 @@ export class Viewer {
     box: HTMLElement,
     viewport: { convertToPdfPoint(x: number, y: number): number[] },
     onDrop: (dx: number, dy: number) => void,
-    onClick?: () => void,
+    onClick?: (add: boolean) => void,
     page?: RenderedPage,
     /** How to draw the thing being dragged, when it can draw itself. */
     drawSelf?: (target: PaintTarget) => void,
@@ -2987,7 +3153,9 @@ export class Viewer {
         if (drawn) this.pendingDrawn.push(drawn);
 
         if (!moved) {
-          onClick?.();
+          // Shift, command or control adds to what is held rather than
+          // replacing it, which is what those keys mean in every editor.
+          onClick?.(e.shiftKey || e.metaKey || e.ctrlKey);
           return;
         }
         // The copy stays where it was let go, so the object appears to have

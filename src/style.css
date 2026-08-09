@@ -1303,6 +1303,12 @@ body {
   z-index: 6;
 }
 
+/* The band drawn round several things at once. */
+.erase-preview.band-preview {
+  background: rgba(61, 139, 253, 0.12);
+  border: 1px dashed var(--accent);
+}
+
 /* ---------- what is picked ---------- */
 
 /*

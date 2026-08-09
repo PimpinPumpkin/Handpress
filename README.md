@@ -381,8 +381,14 @@ could not be read does not silently consume a number and leave a gap.
 
 What moves under the pointer is the object itself, drawn from what it actually
 is: a drawing replays the operators the file uses for it, a stroke of ink draws
-its own points. Nothing of the page comes with it, because nothing of the page
-is read.
+its own points, and an image is rendered from a copy of the page whose content
+is only that image. Nothing of the page comes with it, because nothing of the
+page is read.
+
+That last one matters more than it sounds. An image's box is its rectangle, so
+copying pixels out of it seems safe, but the pixels in that rectangle are
+whatever the page drew there: text over the picture, a panel showing through a
+transparent one, a neighbour overlapping the corner. All of it came along.
 
 The first version copied a rectangle of pixels off the page instead, which
 brought whatever was behind the shape along for the ride. The original stays
@@ -390,6 +396,12 @@ where it is until you let go, which is why the moving copy is slightly
 transparent.
 
 ### Picking things up
+
+**Select**, in the File group, is the tool for handling objects: click anything
+to pick it up, drag a box round several to take them all, and hold shift,
+command or control to add to what you already have. Clicking bare page lets go.
+Objects stay clickable and draggable in that mode, so it is not a mode that only
+draws boxes.
 
 Click anything and it stays selected, with handles at the corners. Arrow keys
 nudge it a point at a time, ten with shift. Delete removes it. Escape lets go.
