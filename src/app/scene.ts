@@ -20,8 +20,8 @@
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument, PDFName } from 'pdf-lib';
 import { getPageContent, setPageContent } from '../pdf/page';
-import type { Graphic } from '../pdf/graphics';
-import type { ImageOp, Matrix } from '../pdf/content';
+import { findGraphics, type Graphic } from '../pdf/graphics';
+import { walkPage, type Matrix } from '../pdf/content';
 
 /** One object, drawn on its own, with where it belongs on the page. */
 export interface Tile {
@@ -113,15 +113,13 @@ function withoutRanges(bytes: Uint8Array, ranges: Array<{ start: number; end: nu
  * page with twenty marks on it.
  */
 export async function buildScene(
-  originalBytes: Uint8Array,
+  bytes: Uint8Array,
   pageIndex: number,
-  graphics: Graphic[],
-  images: ImageOp[],
   scale: number,
   worker?: pdfjs.PDFWorker,
 ): Promise<Scene | null> {
   try {
-    const doc = await PDFDocument.load(originalBytes.slice(), {
+    const doc = await PDFDocument.load(bytes.slice(), {
       throwOnInvalidObject: false,
       updateMetadata: false,
     });
@@ -129,6 +127,16 @@ export async function buildScene(
     const page = doc.getPage(pageIndex);
     const content = getPageContent(page);
     const size = page.getSize();
+
+    // Found in the bytes being rendered rather than handed in from the model.
+    // The model's geometry is the original document's, with edits accounted
+    // for separately, so a tile cut to those bounds is cut to where an object
+    // used to be: it drifts further every time the object is moved, and
+    // anything added since is missing from the backdrop and vanishes for as
+    // long as a drag lasts. The page has to describe itself.
+    const walk = walkPage(content.bytes, content.resources);
+    const graphics = findGraphics(walk, size.width, size.height);
+    const images = walk.images;
 
     // Only what can be lifted cleanly. Anything else stays in the backdrop and
     // simply is not draggable with a preview, which is better than a tile that
@@ -214,8 +222,15 @@ export async function buildScene(
       const canvas = await draw(firstTile + n);
       if (canvas) tiles.push({ id: part.id, canvas, x0: part.x0, y0: part.y0, x1: part.x1, y1: part.y1 });
     }
-
     await task.destroy().catch(() => undefined);
+
+    // Every object taken out of the backdrop must have a picture to put back.
+    // One missing and that object is simply gone for as long as a drag lasts,
+    // reappearing when the page is rendered again, which is exactly what a
+    // half built scene looks like from the outside. Better no scene at all:
+    // the drag then falls back to drawing the object itself.
+    if (tiles.length !== parts.length) return null;
+
     return { backdrop, tiles, width: size.width, height: size.height };
   } catch {
     // A page that will not come apart is one that drags the old way rather

@@ -660,6 +660,27 @@ at rest that nobody asked for.
 The scene is keyed on the zoom it was built at and cleared on rebuild, since a
 picture rendered for one zoom is the wrong number of pixels for another.
 
+**Three rules learned by getting them wrong, all visible only in a real drag:**
+
+- **Build from the bytes on screen, not the ones the file arrived as.** A scene
+  built from the original is missing everything added since, so shapes drawn in
+  this session vanished for as long as a drag lasted and came back when it
+  ended.
+- **Let the page describe itself.** Handing in geometry from the model cuts
+  tiles to where objects *used to be*, because the model's coordinates are the
+  original document's with edits accounted for separately. It drifts further
+  every time the same object is moved. `buildScene` walks the bytes it is given
+  and finds the objects itself.
+- **Match tiles by position, not by name.** The scene numbers objects as the
+  rendered page has them and the selection numbers them as the original
+  document does; those two schemes have no reason to agree. Position is what
+  both agree about.
+
+And one invariant: every object taken out of the backdrop must have a picture
+to put back. If any tile fails to render there is no scene at all, because a
+scene missing one object is indistinguishable from that object having been
+deleted until the page renders again.
+
 **A real bug this found.** `findGraphics` inferred "nothing else is drawn
 inside this range" from consecutive numbering, and on one corpus document that
 was wrong: a group came out straddling fifty-six show operators, so taking it

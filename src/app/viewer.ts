@@ -730,12 +730,7 @@ export class Viewer {
     this.sceneBuilding.add(p.index);
     try {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const scene = await this.doc.sceneFor(
-        p.index,
-        this.doc.graphicsOn(p.index),
-        p.model.walk.images,
-        this.zoom * dpr,
-      );
+      const scene = await this.doc.sceneFor(p.index, this.zoom * dpr);
       if (scene) this.scenes.set(p.index, { scene, zoom: this.zoom });
     } finally {
       this.sceneBuilding.delete(p.index);
@@ -749,22 +744,34 @@ export class Viewer {
    * through and nothing is drawn twice. What comes back is the picture of it,
    * for the drag layer to move about.
    */
-  private stage(p: RenderedPage, exceptId: string): Tile | null {
+  private stage(p: RenderedPage, where: { x0: number; y0: number; x1: number; y1: number }): Tile | null {
     const held = this.scenes.get(p.index);
     if (!held || Math.abs(held.zoom - this.zoom) > 0.001) return null;
-    const wanted = held.scene.tiles.find((t) => t.id === exceptId);
-    if (!wanted || !p.viewport) return null;
+
+    // Matched on where it sits rather than by name. The scene describes the
+    // page as rendered and the selection names objects as the original
+    // document knows them, and those two numbering schemes have no reason to
+    // agree. Position is the thing both of them do agree about.
+    const wanted = held.scene.tiles
+      .map((t) => ({
+        t,
+        off: Math.hypot(t.x0 - where.x0, t.y0 - where.y0) + Math.hypot(t.x1 - where.x1, t.y1 - where.y1),
+      }))
+      .sort((a, b) => a.off - b.off)[0];
+    if (!wanted || wanted.off > 2 || !p.viewport) return null;
+    const tile = wanted.t;
+    if (!p.viewport) return null;
 
     const ctx = p.canvas.getContext('2d');
     if (!ctx) return null;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, p.canvas.width, p.canvas.height);
     ctx.drawImage(held.scene.backdrop, 0, 0, p.canvas.width, p.canvas.height);
-    for (const tile of held.scene.tiles) {
-      if (tile.id === exceptId) continue;
-      this.blitTile(p, ctx, tile, 0, 0);
+    for (const other of held.scene.tiles) {
+      if (other === tile) continue;
+      this.blitTile(p, ctx, other, 0, 0);
     }
-    return wanted;
+    return tile;
   }
 
   /** Draws one tile where it belongs on the page, optionally shifted. */
@@ -2291,7 +2298,12 @@ export class Viewer {
         );
         target.ctx.drawImage(art, Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
       },
-      id,
+      {
+        x0: image.x0 + state.dx,
+        y0: image.y0 + state.dy,
+        x1: image.x0 + state.dx + (image.x1 - image.x0) * state.scale,
+        y1: image.y0 + state.dy + (image.y1 - image.y0) * state.scale,
+      },
     );
 
     // Asked for once, on hover, so the picture is ready before a drag starts
@@ -2933,7 +2945,7 @@ export class Viewer {
           lineWidth: s.lineWidth,
         });
       },
-      graphic.id,
+      { x0: graphic.x0, y0: graphic.y0, x1: graphic.x1, y1: graphic.y1 },
     );
 
     p.overlay.appendChild(box);
@@ -3190,8 +3202,8 @@ export class Viewer {
     page?: RenderedPage,
     /** How to draw the thing being dragged, when it can draw itself. */
     drawSelf?: (target: PaintTarget) => void,
-    /** Which tile this is, so the page can be repainted without it. */
-    pickId?: string,
+    /** Where this object sits, so the page can be repainted without it. */
+    where?: { x0: number; y0: number; x1: number; y1: number },
   ): void {
     const THRESHOLD = 3;
 
@@ -3213,11 +3225,11 @@ export class Viewer {
         const dx = e.clientX - down.clientX;
         const dy = e.clientY - down.clientY;
         if (!moved && Math.hypot(dx, dy) < THRESHOLD) return;
-        if (!moved && page && pickId) {
+        if (!moved && page && where) {
           // The page has already been taken apart, so lifting the object out
           // is repainting from pictures that exist: no rendering happens here,
           // which is what makes the movement instant rather than merely quick.
-          staged = this.stage(page, pickId);
+          staged = this.stage(page, where);
           if (staged) {
             drawn = this.liftDrawn(page, (target) => {
               const t = staged!;

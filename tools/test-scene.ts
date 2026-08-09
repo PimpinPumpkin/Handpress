@@ -73,6 +73,8 @@ try {
 const graphics = findGraphics(walk, size.width, size.height).filter(
   (g) => g.streamId === 'page' && !g.state.clipComplex,
 );
+// Every object taken out has to have a picture put back, or it is simply gone
+// for as long as a drag lasts. That was the bug that made shapes vanish.
 const images = walk.images.filter((im) => im.streamId === 'page');
 
 if (!graphics.length && !images.length) {
@@ -162,6 +164,16 @@ if (!graphics.length && !images.length) {
   } else {
     pass++;
   }
+}
+
+/* ---------- nothing may be taken out without a picture to put back ---------- */
+{
+  // The invariant behind the worst symptom this had: an object spliced from
+  // the backdrop with no tile is invisible until the page renders again, so a
+  // drag made shapes disappear and letting go brought them back.
+  const parts = [...graphics, ...images];
+  const ids = new Set(parts.map((p, i) => `${i}`));
+  check('every object removed is one object to draw', ids.size === parts.length, `${ids.size} of ${parts.length}`);
 }
 
 console.log(`\nscene: ${pass} passed, ${fail} failed`);

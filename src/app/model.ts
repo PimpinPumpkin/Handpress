@@ -13,7 +13,7 @@ import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { getPageContent, setPageContent } from '../pdf/page';
-import { charsInRect, groupLines, walkPage, type ImageOp, type TextLine, type WalkResult } from '../pdf/content';
+import { charsInRect, groupLines, walkPage, type TextLine, type WalkResult } from '../pdf/content';
 import { groupParagraphs, overflowOf, paragraphOf, reflow, type Paragraph } from '../pdf/paragraphs';
 import { splitChunks } from '../pdf/split';
 import { standardTextWidth } from '../pdf/fonts';
@@ -1084,13 +1084,11 @@ export class HandpressDocument {
    * render begun by a drag can never be instant however it is done. This is
    * the cost that buys instant movement, paid where nobody is waiting.
    */
-  async sceneFor(
-    pageIndex: number,
-    graphics: Graphic[],
-    images: ImageOp[],
-    scale: number,
-  ): Promise<Scene | null> {
-    return buildScene(this.originalBytes, pageIndex, graphics, images, scale, this.worker ?? undefined);
+  async sceneFor(pageIndex: number, scale: number): Promise<Scene | null> {
+    // The bytes on screen, not the ones the file arrived as. A scene built
+    // from the original is missing everything added since, so those things
+    // vanish for as long as a drag lasts and come back when it ends.
+    return buildScene(this.currentBytes, pageIndex, scale, this.worker ?? undefined);
   }
 
   /** Rendered pictures of single images, kept so a second drag is instant. */
