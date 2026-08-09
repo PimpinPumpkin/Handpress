@@ -1036,9 +1036,10 @@ export class Viewer {
         box,
         viewport as never,
         (dx, dy) => {
-          if (!this.doc || !line.editable) return;
-          if (!this.doc.moveLine(p.index, line.id, dx, dy)) return;
+          if (!this.doc || !line.editable) return false;
+          if (!this.doc.moveLine(p.index, line.id, dx, dy)) return false;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
+          return true;
         },
         (add) => {
           this.pick('line', line.id, p.index, box, true, add);
@@ -1152,9 +1153,9 @@ export class Viewer {
         box,
         viewport as never,
         (dx, dy) => {
-          if (!this.doc) return;
-          if (!this.doc.moveStamp(p.index, stamp.id, dx, dy)) return;
+          if (!this.doc?.moveStamp(p.index, stamp.id, dx, dy)) return false;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
+          return true;
         },
         (add) => this.pick('stamp', stamp.id, p.index, box, true, add),
         p,
@@ -1181,9 +1182,9 @@ export class Viewer {
         box,
         viewport as never,
         (dx, dy) => {
-          if (!this.doc) return;
-          if (!this.doc.moveInsertion(p.index, insertion.id, dx, dy)) return;
+          if (!this.doc?.moveInsertion(p.index, insertion.id, dx, dy)) return false;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
+          return true;
         },
         (add) => {
           this.pick('added', insertion.id, p.index, box, true, add);
@@ -1382,9 +1383,10 @@ export class Viewer {
       (dx, dy) => {
         // Only our own. A comment that came with the file belongs to whoever
         // wrote it, and moving it would rewrite their annotation.
-        if (!this.doc || !mine) return;
-        if (!this.doc.moveNote(p.index, note.id, dx, dy)) return;
+        if (!this.doc || !mine) return false;
+        if (!this.doc.moveNote(p.index, note.id, dx, dy)) return false;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
+        return true;
       },
       (add) => {
         if (mine) this.pick('note', note.id, p.index, marker, true, add);
@@ -2187,8 +2189,9 @@ export class Viewer {
       box,
       viewport as never,
       (dx, dy) => {
-        if (!this.doc?.moveErasure(p.index, erasure.id, dx, dy)) return;
+        if (!this.doc?.moveErasure(p.index, erasure.id, dx, dy)) return false;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
+        return true;
       },
       undefined,
       p,
@@ -2430,13 +2433,14 @@ export class Viewer {
       box,
       viewport as never,
       (dx, dy) => {
-        if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
+        if (!this.doc?.editImage(p.index, id, { dx, dy })) return false;
         // The model stores a fresh edit object, so the one in this closure is
         // a snapshot. Advanced here, or a re-grab before the overlay rebuilds
         // previews the image one whole move behind where it visibly sits.
         state.dx += dx;
         state.dy += dy;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
+        return true;
       },
       (add) => this.pick('image', id, p.index, box, true, add),
       p,
@@ -3035,8 +3039,9 @@ export class Viewer {
       box,
       viewport as never,
       (dx, dy) => {
-        if (!this.doc?.moveInk(p.index, stroke.id, dx, dy)) return;
+        if (!this.doc?.moveInk(p.index, stroke.id, dx, dy)) return false;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
+        return true;
       },
       (add) => this.pick('ink', stroke.id, p.index, box, true, add),
       p,
@@ -3097,7 +3102,7 @@ export class Viewer {
       box,
       viewport as never,
       (dx, dy) => {
-        if (!this.doc?.moveGraphic(p.index, graphic.id, dx, dy)) return;
+        if (!this.doc?.moveGraphic(p.index, graphic.id, dx, dy)) return false;
         // graphicsOn hands out copies, so the graphic in this closure is a
         // snapshot. The accumulated move advances with the drop, or a re-grab
         // before the overlay rebuilds replays the drawing one move behind.
@@ -3106,6 +3111,7 @@ export class Viewer {
           dy: (graphic.moved?.dy ?? 0) + dy,
         };
         void this.rebuild(p.index).then(() => this.cb.onEdited());
+        return true;
       },
       (add) => this.pick('graphic', graphic.id, p.index, box, true, add),
       p,
@@ -3382,7 +3388,8 @@ export class Viewer {
   private makeDraggable(
     box: HTMLElement,
     viewport: { convertToPdfPoint(x: number, y: number): number[] },
-    onDrop: (dx: number, dy: number) => void,
+    /** Applies the move; false means the model refused it and nothing changed. */
+    onDrop: (dx: number, dy: number) => boolean,
     onClick?: (add: boolean) => void,
     page?: RenderedPage,
     /** How to draw the thing being dragged, when it can draw itself. */
@@ -3470,6 +3477,23 @@ export class Viewer {
         const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
         const pdx = x1 - x0;
         const pdy = y1 - y0;
+        if (!onDrop(pdx, pdy)) {
+          // The model refused, so nothing changed and no rebuild is coming.
+          // The composite goes back to rest, and the floating copies come
+          // off now rather than waiting for a cleanup that only a rebuild
+          // performs; advancing the box would leave a hit target displaced
+          // from its object with nothing ever due to correct it.
+          if (staged && page) this.stageMove(page, staged, 0, 0, true);
+          if (drawn) {
+            drawn.remove();
+            this.pendingDrawn = this.pendingDrawn.filter((d) => d !== drawn);
+          }
+          if (lifted) {
+            lifted.ghost.remove();
+            lifted.cover.remove();
+          }
+          return;
+        }
         // The overlay takes a rebuild's worth of time to catch up, and a
         // re-grab inside that window used to find everything one move behind:
         // the box still at the old spot, the bounds a move out of date, so
@@ -3490,7 +3514,6 @@ export class Viewer {
         // half second the rebuild takes, which reads as the move having only
         // half happened.
         if (staged && page) this.stageMove(page, staged, pdx, pdy, true);
-        onDrop(pdx, pdy);
       };
 
       window.addEventListener('pointermove', move);
