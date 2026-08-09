@@ -25,8 +25,10 @@ import {
   type LineEdit,
   type RectFill,
   type InkStroke,
+  type GraphicEdit,
   type TextInsertion,
 } from '../pdf/writer';
+import { findGraphics, type Graphic } from '../pdf/graphics';
 import { decryptToBytes } from '../pdf/decrypt';
 import { describeSignatures, findSignatures, type SignatureReport } from '../pdf/signatures';
 import { applyFormValues, readForm, type FormField } from '../pdf/forms';
@@ -52,6 +54,7 @@ interface EditState {
   edits: Map<number, Map<string, string>>;
   lineOffsets: Map<number, Map<string, { dx: number; dy: number }>>;
   imageEdits: Map<number, Map<string, ImageEdit>>;
+  graphicEdits: Map<number, Map<string, GraphicEdit>>;
   erasures: Map<number, Map<string, RectFill>>;
   ink: Map<number, Map<string, InkStroke>>;
   redactions: Map<number, Map<string, RedactionArea>>;
@@ -162,6 +165,10 @@ export class HandpressDocument {
   private extraDocs: Array<{ name: string; bytes: Uint8Array }> = [];
   /** pageIndex -> image id -> how that image has been moved, resized or removed. */
   private imageEdits = new Map<number, Map<string, ImageEdit>>();
+  /** pageIndex -> graphic id -> how far that drawing has been dragged. */
+  private graphicEdits = new Map<number, Map<string, GraphicEdit>>();
+  /** pageIndex -> the movable drawings found on it, worked out once per parse. */
+  private graphicCache = new Map<number, Graphic[]>();
   /** pageIndex -> erasure id -> a rectangle painted over the page. */
   private erasures = new Map<number, Map<string, RectFill>>();
   private ink = new Map<number, Map<string, InkStroke>>();
@@ -342,6 +349,7 @@ export class HandpressDocument {
     for (const m of this.edits.values()) if (m.size) return true;
     for (const m of this.lineOffsets.values()) if (m.size) return true;
     for (const m of this.imageEdits.values()) if (m.size) return true;
+    for (const m of this.graphicEdits.values()) if (m.size) return true;
     for (const m of this.erasures.values()) if (m.size) return true;
     for (const m of this.ink.values()) if (m.size) return true;
     for (const m of this.redactions.values()) if (m.size) return true;
@@ -365,6 +373,7 @@ export class HandpressDocument {
     for (const m of this.edits.values()) n += m.size;
     for (const m of this.lineOffsets.values()) n += m.size;
     for (const m of this.imageEdits.values()) n += m.size;
+    for (const m of this.graphicEdits.values()) n += m.size;
     for (const m of this.erasures.values()) n += m.size;
     for (const m of this.ink.values()) n += m.size;
     for (const m of this.redactions.values()) n += m.size;
@@ -391,6 +400,9 @@ export class HandpressDocument {
       edits: new Map([...this.edits].map(([k, v]) => [k, new Map(v)])),
       lineOffsets: new Map([...this.lineOffsets].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       imageEdits: new Map([...this.imageEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
+      graphicEdits: new Map(
+        [...this.graphicEdits].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))]),
+      ),
       erasures: new Map([...this.erasures].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       ink: new Map([...this.ink].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o, points: o.points.map((q) => ({ ...q })) }]))])),
       redactions: new Map([...this.redactions].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
@@ -407,6 +419,7 @@ export class HandpressDocument {
     this.edits = state.edits;
     this.lineOffsets = state.lineOffsets;
     this.imageEdits = state.imageEdits;
+    this.graphicEdits = state.graphicEdits;
     this.erasures = state.erasures;
     this.ink = state.ink;
     this.redactions = state.redactions;
@@ -837,6 +850,54 @@ export class HandpressDocument {
     return true;
   }
 
+  /**
+   * The movable drawings on a page, with any move already applied to the box.
+   *
+   * Grouping is worked out from the page's own parse and cached, because it
+   * walks every path on the page and the answer only changes when the page
+   * does. The move is added to the bounds here rather than stored, so the
+   * grouping stays a fact about the document and the drag stays an edit.
+   */
+  graphicsOn(pageIndex: number): Graphic[] {
+    let found = this.graphicCache.get(pageIndex);
+    if (!found) {
+      const model = this.lineCache.get(pageIndex);
+      if (!model) return [];
+      found = findGraphics(model.walk, model.width, model.height);
+      this.graphicCache.set(pageIndex, found);
+    }
+    const moves = this.graphicEdits.get(pageIndex);
+    if (!moves?.size) return found;
+    return found.map((g) => {
+      const m = moves.get(g.id);
+      if (!m) return g;
+      return { ...g, x0: g.x0 + m.dx, x1: g.x1 + m.dx, y0: g.y0 + m.dy, y1: g.y1 + m.dy };
+    });
+  }
+
+  /** Moves a drawing by a page-space delta. */
+  moveGraphic(pageIndex: number, graphicId: string, dx: number, dy: number): boolean {
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return false;
+    const before = this.snapshot();
+    let page = this.graphicEdits.get(pageIndex);
+    if (!page) {
+      page = new Map();
+      this.graphicEdits.set(pageIndex, page);
+    }
+    const current = page.get(graphicId);
+    const next: GraphicEdit = {
+      graphicId,
+      dx: (current?.dx ?? 0) + dx,
+      dy: (current?.dy ?? 0) + dy,
+    };
+    // Dragged back to where it started is not an edit, it is a change of mind.
+    if (Math.abs(next.dx) < 0.01 && Math.abs(next.dy) < 0.01) page.delete(graphicId);
+    else page.set(graphicId, next);
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
   /** Current move, scale and removal state for an image already on the page. */
   imageEditFor(pageIndex: number, imageId: string): ImageEdit {
     return (
@@ -1181,6 +1242,7 @@ export class HandpressDocument {
       ...this.edits.keys(),
       ...this.lineOffsets.keys(),
       ...this.imageEdits.keys(),
+      ...this.graphicEdits.keys(),
       ...this.erasures.keys(),
       ...this.redactions.keys(),
       ...this.insertions.keys(),
@@ -1194,6 +1256,7 @@ export class HandpressDocument {
       const pageInsertions = [...(this.insertions.get(pageIndex)?.values() ?? [])];
       const pageStamps = [...(this.stamps.get(pageIndex)?.values() ?? [])];
       const pageImages = [...(this.imageEdits.get(pageIndex)?.values() ?? [])];
+      const pageGraphics = [...(this.graphicEdits.get(pageIndex)?.values() ?? [])];
       const pageErasures = [...(this.erasures.get(pageIndex)?.values() ?? [])];
       const pageRedactions = [...(this.redactions.get(pageIndex)?.values() ?? [])];
       const pageNotes = [...(this.notes.get(pageIndex)?.values() ?? [])];
@@ -1211,7 +1274,8 @@ export class HandpressDocument {
         !pageErasures.length &&
         !pageRedactions.length &&
         !pageNotes.length &&
-        !pageInk.length
+        !pageInk.length &&
+        !pageGraphics.length
       ) {
         continue;
       }
@@ -1279,6 +1343,7 @@ export class HandpressDocument {
           pageImages,
           pageErasures,
           pageInk,
+          pageGraphics,
         );
         warnings.push(...result.warnings);
       } catch (e) {
@@ -1431,7 +1496,15 @@ export class HandpressDocument {
           rotation: 0,
           lines: [],
           paragraphs: [],
-          walk: { ops: [], images: [], streams: new Map(), fonts: new Map(), resources: new Map() },
+          walk: {
+            ops: [],
+            images: [],
+            paths: [],
+            stateMarks: new Map(),
+            streams: new Map(),
+            fonts: new Map(),
+            resources: new Map(),
+          },
           contentBytes: new Uint8Array(0),
           cssFonts: new Map(),
         };

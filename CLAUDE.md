@@ -522,6 +522,44 @@ it saves, which would otherwise underflow into our own state.
 where the stamp actually lands; with the wrap removed, three of its five cases
 fail, which is the point of it.
 
+## A logo is not an object until something decides it is
+
+An image is placed by a matrix, so moving one is rewriting that matrix. A
+drawing made of paths has no such handle: the coordinates are baked into the
+path operators, and a logo is thirty of them in a row that a reader assembles
+into one mark. Until this existed the mark at the top of a Carfax report was
+not editable in any sense, because nothing in the editor believed it was a
+thing.
+
+`src/pdf/graphics.ts` groups paths that follow each other in the stream and
+land near each other on the page, and `src/pdf/writer.ts` moves a group by
+putting `1 0 0 1 dx dy cm` in front of its byte range and the exact inverse
+after it. The inverse rather than a `Q`, because a `Q` would also discard any
+colour or line width the run had set and the content after it inherits those.
+The shift is carried back through the inverse of the group's own matrix, the
+same correction an image needs.
+
+Most of `graphics.ts` is refusals, and each one is a way the bracket leaks:
+
+- **A background** is near everything, so left in the sequence it drags the
+  whole page into one group. It ends the run and nothing joins across it.
+- **A `Q` inside the run** pops out past the opening matrix, so the closing one
+  would land on content that was never translated.
+- **A `cm` at the run's own level** survives the run, and the inverse then
+  composes with it in the wrong order.
+- **Text or an image drawn through the run** would be swallowed by the byte
+  range and moved along with it. Consecutive numbering in the walk is what
+  proves nothing else was drawn in between.
+- **A group that draws in under a fifth of its own box** is a skeleton, not a
+  drawing: two crossing hairlines pass every other test here and are a table.
+
+`tools/test-graphics.ts` builds pages for each of those, and
+`tools/test-graphic-move.ts --list` moves the widest drawing on page one of
+every file in a corpus and checks that exactly one thing moved and every text
+run stayed put. A moved drawing keeps its place in the painting order, so one
+taken from the top of a page and dropped into the middle can end up behind
+something drawn later. That is the file's ordering, not a bug.
+
 ## Every edit used to redraw the whole document
 
 `onEdited` called `renderThumbs`, which rasterised every page in the document,

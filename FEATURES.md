@@ -51,6 +51,17 @@ check anything you are about to rely on.
 | Comment list, filter, summarise | Yes | No |
 | Stamps | Yes, a library | Signatures only |
 | Measuring tools | Yes | No |
+| Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
+
+**On moving a drawing.** A PDF has no idea what a logo is. It has a run of
+fills and strokes that happen to land in the same place, and Acrobat's editor
+reconstructs an object from them much as this does. Handpress groups paths that
+are next to each other in the file and next to each other on the page, and
+refuses to offer anything it cannot move without disturbing the rest: a
+background covering the page, a run of table rules enclosing mostly nothing, or
+a run that leaves the graphics state changed behind it. A moved drawing keeps
+its place in the painting order, so one from the top of a page dropped into the
+middle of it can end up behind something drawn later.
 
 **A real difference in kind.** Acrobat's markup is *annotations*: separate
 objects a reader can hide, filter or delete, which is what makes threads and

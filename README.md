@@ -334,6 +334,21 @@ while a matrix inserted there applies in the space the matrix maps from, so it
 is carried back through the inverse of the matrix's linear part. Skipping that
 step sends images on rotated or scaled pages off in the wrong direction.
 
+A logo is harder, because a PDF has no idea what one is. What it has is a run of
+fills and strokes that happen to land in the same place, and the coordinates are
+baked into each one, so there is no matrix to rewrite. Handpress groups paths
+that follow each other in the file and land near each other on the page, then
+moves the group by putting a translation in front of its bytes and the exact
+opposite behind it, which leaves the state for everything after it precisely as
+it found it. Hover a drawing and its outline appears; drag it and it moves.
+
+Anything that cannot be moved without disturbing the page is not offered at all.
+A tint behind a table, a run of rules enclosing mostly nothing, a run with text
+drawn through the middle of it: each of those would take more than you pointed
+at, and the grouping refuses them rather than guessing. A moved drawing keeps
+its place in the painting order too, so one taken from the top of a page and
+dropped into the middle of it can land behind something drawn later.
+
 ### If the tab goes away
 
 Everything happens in the browser, so there is no account to save to and nothing

@@ -16,6 +16,7 @@ import { encodeLiteralString } from './lexer';
 import { coverageSpans, encodeText, missingChars, standardFontAlias, type EncodedPart, type LoadedFont } from './fonts';
 import type { ImageOp, ShowOp, TextLine, TextSegment, WalkResult } from './content';
 import { setPageContent } from './page';
+import { findGraphics, type Graphic } from './graphics';
 
 export interface LineEdit {
   lineId: string;
@@ -110,6 +111,22 @@ export interface TextInsertion {
    * width they occupy in the image so selection lines up with what is seen.
    */
   horizScale?: number;
+}
+
+/**
+ * A move applied to a group of paths already drawn on the page.
+ *
+ * There is no resize here on purpose. Scaling a path group about a point means
+ * a matrix whose inverse has to undo the scale as well as the translation, and
+ * any line width set inside the group scales with it, so a logo would come
+ * back with strokes of the wrong weight. Moving is the useful half and it is
+ * the half that is exactly reversible.
+ */
+export interface GraphicEdit {
+  graphicId: string;
+  /** Move in page-space units. */
+  dx: number;
+  dy: number;
 }
 
 /** A move or resize applied to an image already in the document. */
@@ -838,6 +855,35 @@ async function buildInsertion(
 }
 
 /**
+ * The pair of matrices that move a run of paths and then undo themselves.
+ *
+ * The shift is asked for in page space, but a matrix put in here applies in
+ * whatever space the current matrix maps from, so it is carried back through
+ * the inverse of that matrix's linear part. Without that a logo on a scaled or
+ * rotated page moves the wrong way and by the wrong amount, which is the same
+ * correction an image needs and for the same reason.
+ *
+ * The closing matrix is the exact inverse rather than a `Q`, because a `Q`
+ * would also throw away any colour or line width the run had set, and the
+ * content after it is entitled to inherit those.
+ */
+function graphicShift(graphic: Graphic, edit: GraphicEdit): { open: Uint8Array; close: Uint8Array } | null {
+  const [a, b, c, d] = graphic.ctm;
+  const det = a * d - b * c;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-9) return null;
+
+  const ux = (d * edit.dx - c * edit.dy) / det;
+  const uy = (-b * edit.dx + a * edit.dy) / det;
+  if (!Number.isFinite(ux) || !Number.isFinite(uy)) return null;
+  if (Math.abs(ux) < 1e-9 && Math.abs(uy) < 1e-9) return null;
+
+  return {
+    open: bytes(`1 0 0 1 ${fmt(ux)} ${fmt(uy)} cm\n`),
+    close: bytes(`\n1 0 0 1 ${fmt(-ux)} ${fmt(-uy)} cm\n`),
+  };
+}
+
+/**
  * Rewrites an image's draw so it lands somewhere else, or at a different size.
  *
  * The placement of an image is entirely its transformation matrix, so the draw
@@ -918,6 +964,7 @@ export async function applyEdits(
   imageEdits: ImageEdit[] = [],
   rects: RectFill[] = [],
   ink: InkStroke[] = [],
+  graphicEdits: GraphicEdit[] = [],
 ): Promise<ApplyResult> {
   const warnings: EditWarning[] = [];
   const warn = (w: EditWarning): void => {
@@ -989,6 +1036,31 @@ export async function applyEdits(
       const list = patchesByStream.get(image.streamId) ?? [];
       list.push({ start: image.start, end: image.end, bytes: buildImageEdit(image, edit) });
       patchesByStream.set(image.streamId, list);
+      editedLines++;
+    }
+  }
+
+  // A drawing made of paths carries its own coordinates, so there is no single
+  // operator to rewrite the way an image has. It is moved by bracketing the
+  // whole run: a translation in front of it, and the opposite behind it to put
+  // the matrix back exactly as it was for whatever follows.
+  if (graphicEdits.length) {
+    // Regrouped from the walk that is being written, so the ids a drag was
+    // recorded against are the ids looked up here.
+    const size = page.getSize();
+    const graphics = findGraphics(walk, size.width, size.height);
+    const byId = new Map(graphics.map((g) => [g.id, g]));
+    for (const edit of graphicEdits) {
+      const graphic = byId.get(edit.graphicId);
+      if (!graphic) continue;
+      const shift = graphicShift(graphic, edit);
+      if (!shift) continue;
+      const list = patchesByStream.get(graphic.streamId) ?? [];
+      // Zero length patches, so they insert rather than replace. The paths
+      // between them are handed through untouched.
+      list.push({ start: graphic.start, end: graphic.start, bytes: shift.open });
+      list.push({ start: graphic.end, end: graphic.end, bytes: shift.close });
+      patchesByStream.set(graphic.streamId, list);
       editedLines++;
     }
   }

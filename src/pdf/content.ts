@@ -146,9 +146,47 @@ export interface ImageOp {
   y1: number;
 }
 
+/**
+ * One painted path: the drawing a logo, rule or box is actually made of.
+ *
+ * Unlike an image, a path carries its own coordinates rather than being placed
+ * by a matrix, so there is nothing to rewrite to move it. What there is
+ * instead is a byte range, and a translation put in front of that range moves
+ * everything the range draws. `depth` is the q/Q nesting the path sits at,
+ * which is what decides whether a run of these can be moved as one piece.
+ */
+export interface PathOp {
+  streamId: string;
+  index: number;
+  /** Byte range covering the whole path, from first coordinate to paint operator. */
+  start: number;
+  end: number;
+  /** Matrix in effect, needed to carry a page-space move back into path space. */
+  ctm: Matrix;
+  /** q/Q nesting depth at the point the path is drawn. */
+  depth: number;
+  /** Axis-aligned bounds in page space, PDF coordinates. */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface WalkResult {
   ops: ShowOp[];
   images: ImageOp[];
+  paths: PathOp[];
+  /**
+   * Every q, Q and cm in each stream, by byte offset.
+   *
+   * Moving a run of paths means putting a matrix in front of the run and
+   * taking it away again afterwards. That only restores what it found if the
+   * run does not restore its way out of the matrix partway through, and if it
+   * does not leave a matrix of its own in effect: an unbalanced cm inside the
+   * run would end up wrapped by the translation rather than beside it. These
+   * marks are what those two checks read.
+   */
+  stateMarks: Map<string, Array<{ pos: number; op: 'q' | 'Q' | 'cm' }>>;
   /** Decoded bytes of every stream visited, keyed by streamId. */
   streams: Map<string, { bytes: Uint8Array; stream: PDFStream; ref: PDFRef | null }>;
   fonts: Map<string, LoadedFont>;
@@ -158,7 +196,15 @@ export interface WalkResult {
 
 /** Replays a page's content streams and collects every show-text operator. */
 export function walkPage(contentBytes: Uint8Array, resources: PDFDict | null, streamId = 'page'): WalkResult {
-  const result: WalkResult = { ops: [], images: [], streams: new Map(), fonts: new Map(), resources: new Map() };
+  const result: WalkResult = {
+    ops: [],
+    images: [],
+    paths: [],
+    stateMarks: new Map(),
+    streams: new Map(),
+    fonts: new Map(),
+    resources: new Map(),
+  };
   const counter = { n: 0 };
   result.resources.set(streamId, resources);
   walkStream(contentBytes, resources, streamId, result, counter, IDENTITY, 0, new Set());
@@ -227,6 +273,51 @@ function walkStream(
   let operandStart = -1;
 
   const nums = (): number[] => operands.filter((t) => t.kind === Tok.Num).map((t) => t.num!);
+
+  // The path currently being built, in page space, with the byte offset it
+  // started at. A path spans several operators, so its extent and its bytes
+  // both have to be accumulated until a paint operator ends it.
+  const stateMarks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' }> = [];
+  out.stateMarks.set(streamId, stateMarks);
+
+  let pathStart = -1;
+  let pathMinX = Infinity;
+  let pathMinY = Infinity;
+  let pathMaxX = -Infinity;
+  let pathMaxY = -Infinity;
+  let pendingClip = false;
+
+  const addPathPoint = (x: number, y: number): void => {
+    if (pathStart < 0) pathStart = operandStart >= 0 ? operandStart : 0;
+    const [px, py] = applyMatrix(gs.ctm, x, y);
+    if (px < pathMinX) pathMinX = px;
+    if (px > pathMaxX) pathMaxX = px;
+    if (py < pathMinY) pathMinY = py;
+    if (py > pathMaxY) pathMaxY = py;
+  };
+
+  const endPath = (opTok: Token, painted: boolean): void => {
+    if (painted && pathStart >= 0 && pathMinX <= pathMaxX) {
+      out.paths.push({
+        streamId,
+        index: counter.n++,
+        start: pathStart,
+        end: opTok.end,
+        ctm: [...gs.ctm] as Matrix,
+        depth: stack.length,
+        x0: pathMinX,
+        y0: pathMinY,
+        x1: pathMaxX,
+        y1: pathMaxY,
+      });
+    }
+    pathStart = -1;
+    pathMinX = Infinity;
+    pathMinY = Infinity;
+    pathMaxX = -Infinity;
+    pathMaxY = -Infinity;
+    pendingClip = false;
+  };
 
   const showText = (
     op: ShowOp['operator'],
@@ -331,14 +422,17 @@ function walkStream(
     switch (op) {
       case 'q':
         stack.push(cloneState(gs));
+        stateMarks.push({ pos: t.start, op: 'q' });
         break;
       case 'Q': {
         const prev = stack.pop();
         if (prev) gs = prev;
+        stateMarks.push({ pos: t.start, op: 'Q' });
         break;
       }
       case 'cm':
         if (n.length >= 6) gs.ctm = mul(n.slice(-6) as Matrix, gs.ctm);
+        stateMarks.push({ pos: operandStart >= 0 ? operandStart : t.start, op: 'cm' });
         break;
 
       case 'BT':
@@ -432,6 +526,56 @@ function walkStream(
         if (parts.length) showText('TJ', parts, t);
         break;
       }
+
+      // Path construction. Each of these extends the path being built and
+      // contributes its points to the bounds. Curve control points are counted
+      // as if they were on the curve, which can only make the box too big, and
+      // a box slightly too big is the harmless direction for something whose
+      // job is to be clicked on.
+      case 'm':
+      case 'l':
+        if (n.length >= 2) addPathPoint(n[n.length - 2], n[n.length - 1]);
+        break;
+      case 'c':
+        for (let k = 0; k + 1 < n.length; k += 2) addPathPoint(n[k], n[k + 1]);
+        break;
+      case 'v':
+      case 'y':
+        for (let k = 0; k + 1 < n.length; k += 2) addPathPoint(n[k], n[k + 1]);
+        break;
+      case 're':
+        if (n.length >= 4) {
+          const [rx, ry, rw, rh] = n.slice(-4);
+          addPathPoint(rx, ry);
+          addPathPoint(rx + rw, ry + rh);
+        }
+        break;
+      case 'h':
+        // Closes the subpath back to its start, which adds no new extent.
+        if (pathStart < 0) pathStart = operandStart >= 0 ? operandStart : t.start;
+        break;
+
+      // A clip does not draw. `W` is followed by a paint operator that both
+      // paints and clips, or by `n`, which only clips.
+      case 'W':
+      case 'W*':
+        pendingClip = true;
+        break;
+
+      // Path painting. Every one of these ends the path, so the run of bytes
+      // from the first coordinate to here is one complete drawing.
+      case 'S':
+      case 's':
+      case 'f':
+      case 'F':
+      case 'f*':
+      case 'B':
+      case 'B*':
+      case 'b':
+      case 'b*':
+      case 'n':
+        endPath(t, op !== 'n' && !pendingClip);
+        break;
 
       case 'g':
         if (n.length >= 1) gs.fill = { r: n[0], g: n[0], b: n[0] };

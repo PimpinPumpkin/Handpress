@@ -1129,6 +1129,28 @@ body {
   border-style: solid;
 }
 
+/* ---------- drawings made of paths ---------- */
+
+/*
+ * No resting outline, unlike an image.
+ *
+ * Where an image is one object the file itself declares, a drawing is a run of
+ * paths grouped by where they landed, and a page can have a dozen of them.
+ * Dashed boxes around every logo, badge and banner turn the page into a
+ * wireframe of the editor's guesses. It shows itself on hover, when the
+ * pointer has already asked the question.
+ */
+.line-box.graphic-box {
+  border: 1px solid transparent;
+  cursor: grab;
+}
+
+.line-box.graphic-box:hover {
+  background: rgba(61, 139, 253, 0.08);
+  border-color: rgba(61, 139, 253, 0.7);
+  border-style: dashed;
+}
+
 .box-resize {
   position: absolute;
   right: -6px;
