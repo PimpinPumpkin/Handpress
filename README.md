@@ -377,6 +377,26 @@ never restart and never repeat.
 The counter only advances on a page that was actually stamped, so a page that
 could not be read does not silently consume a number and leave a gap.
 
+### Picking things up
+
+Click anything and it stays selected, with handles at the corners. Arrow keys
+nudge it a point at a time, ten with shift. Delete removes it. Escape lets go.
+Clicking bare page lets go too.
+
+Text is the exception, deliberately. Clicking a line of text opens it for
+typing, so the arrow keys are the caret's and the line is moved by dragging it.
+A line of the document's own text also cannot be deleted with the delete key:
+removing text from a PDF is redaction, which has its own tool and its own
+warning, and is not something a stray keypress should do.
+
+### Every comment at once
+
+**All comments** lists them in reading order with replies indented under what
+they answer, filtered by author and by whether they came with the file or were
+added here. Those are the two questions a review actually gets asked: what did
+this person say, and what is still mine to deal with. Clicking one goes to it
+and opens its thread.
+
 ### Comparing two versions
 
 **Compare** takes another file and lists what differs: lines added, removed and

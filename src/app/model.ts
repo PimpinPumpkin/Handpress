@@ -8,7 +8,7 @@
  * alone.
  */
 
-import { degrees, PDFDocument, type PDFPage } from 'pdf-lib';
+import { degrees, PDFBool, PDFDict, PDFDocument, PDFName, PDFString, type PDFPage } from 'pdf-lib';
 import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -71,6 +71,8 @@ interface EditState {
   stamps: Map<number, Map<string, ImageStamp>>;
   notes: Map<number, Map<string, PageNote>>;
   formValues: Map<string, string>;
+  language: string;
+  title: string;
   newFields: Map<number, Map<string, NewField>>;
   /** Page order and rotation, as a list of operations against the original. */
   pagePlan: PagePlanEntry[];
@@ -452,6 +454,8 @@ export class HandpressDocument {
       stamps: new Map([...this.stamps].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       notes: new Map([...this.notes].map(([k, v]) => [k, new Map([...v].map(([i, x]) => [i, { ...x }]))])),
       formValues: new Map(this.formValues),
+      language: this.language,
+      title: this.title,
       newFields: new Map([...this.newFields].map(([k, v]) => [k, new Map([...v].map(([i, o]) => [i, { ...o }]))])),
       pagePlan: (this.pagePlan ?? []).map((e) => ({ ...e })),
       extraDocs: [...this.extraDocs],
@@ -472,6 +476,8 @@ export class HandpressDocument {
     this.stamps = state.stamps;
     this.notes = state.notes;
     this.formValues = state.formValues;
+    this.language = state.language;
+    this.title = state.title;
     this.newFields = state.newFields;
     this.pagePlan = state.pagePlan.length ? state.pagePlan : null;
     this.extraDocs = state.extraDocs;
@@ -759,6 +765,45 @@ export class HandpressDocument {
   }
 
   /**
+   * Every comment in the document, in reading order, with its thread depth.
+   *
+   * A list of all of them is how a review is actually worked through: page by
+   * page is how they were made, not how they are answered. Depth is carried so
+   * replies can be shown under what they answer without the caller rebuilding
+   * the tree.
+   */
+  allComments(): Array<{
+    id: string;
+    page: number;
+    text: string;
+    author: string;
+    written: number;
+    mine: boolean;
+    depth: number;
+  }> {
+    const out: Array<{
+      id: string;
+      page: number;
+      text: string;
+      author: string;
+      written: number;
+      mine: boolean;
+      depth: number;
+    }> = [];
+
+    for (let page = 0; page < this.pageCount; page++) {
+      const here = this.commentsOn(page);
+      const roots = here.filter((c) => !c.replyTo);
+      const walk = (parent: (typeof here)[number], depth: number): void => {
+        out.push({ ...parent, page, depth });
+        for (const child of here.filter((c) => c.replyTo === parent.id)) walk(child, depth + 1);
+      };
+      for (const root of roots) walk(root, 0);
+    }
+    return out;
+  }
+
+  /**
    * Answers a comment, whether it came with the document or was added here.
    *
    * The reply is an ordinary note carrying the id of the one it answers, which
@@ -991,6 +1036,44 @@ export class HandpressDocument {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The document's language and title, which are accessibility, not metadata.
+   *
+   * A screen reader uses the language to decide how to pronounce the words: an
+   * English reader speaking French text is unintelligible, and the file is the
+   * only thing that can say which it is. The title is what a reader announces
+   * when the document opens, and without one it announces the filename, which
+   * is usually a reference number.
+   *
+   * These are two of the three things preflight reports and the only two that
+   * can be fixed from here. The third is a structure tree, which is a
+   * different and much larger job.
+   */
+  language = '';
+  title = '';
+
+  /** Sets the language, as a tag like `en-GB`. */
+  setLanguage(code: string): boolean {
+    const next = code.trim();
+    if (next === this.language) return false;
+    const before = this.snapshot();
+    this.language = next;
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
+  /** Sets the title a reader announces when the document opens. */
+  setTitle(text: string): boolean {
+    const next = text.trim();
+    if (next === this.title) return false;
+    const before = this.snapshot();
+    this.title = next;
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
   }
 
   /* ---------------- spelling ---------------- */
@@ -2145,6 +2228,19 @@ export class HandpressDocument {
           detail: `page rearrangement failed: ${(e as Error).message}`,
         });
       }
+    }
+
+    // Said before anything else is written, since neither depends on the page
+    // contents and both are what a reader needs before it starts reading.
+    if (this.language) doc.catalog.set(PDFName.of('Lang'), PDFString.of(this.language));
+    if (this.title) {
+      doc.setTitle(this.title);
+      // The flag that tells a reader to announce the title rather than the
+      // filename. Setting a title without it changes nothing that anyone hears.
+      const prefs = doc.catalog.lookup(PDFName.of('ViewerPreferences'));
+      const target = prefs instanceof PDFDict ? prefs : doc.context.obj({});
+      target.set(PDFName.of('DisplayDocTitle'), PDFBool.True);
+      doc.catalog.set(PDFName.of('ViewerPreferences'), target);
     }
 
     // Fields are created before values are written, so a value typed into a

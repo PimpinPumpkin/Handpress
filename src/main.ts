@@ -120,6 +120,7 @@ const els = {
   btnCallout: $<HTMLButtonElement>('btnCallout'),
   btnMeasure: $<HTMLButtonElement>('btnMeasure'),
   btnMeasureArea: $<HTMLButtonElement>('btnMeasureArea'),
+  btnComments: $<HTMLButtonElement>('btnComments'),
   btnCompare: $<HTMLButtonElement>('btnCompare'),
   btnPreflight: $<HTMLButtonElement>('btnPreflight'),
   btnSpell: $<HTMLButtonElement>('btnSpell'),
@@ -272,6 +273,61 @@ const viewer = new Viewer(els.viewer, {
   onMeasured(text, length, points, closed) {
     showMeasurement(text, length, points, closed);
   },
+  onPicked(kind) {
+    // The status line says what the keyboard will now act on, which is the
+    // only thing that makes a selection discoverable at all.
+    if (!kind) return;
+    // Not the same sentence for both. Clicking a line of text opens it for
+    // typing, so the arrow keys are the caret's and saying they nudge the line
+    // is a promise the editor takes back the moment it opens.
+    setStatus(
+      kind === 'line'
+        ? 'Editing this line. Drag it to move it.'
+        : 'Selected. Arrow keys nudge it, Delete removes it, Escape lets go.',
+    );
+  },
+});
+
+/* ---------------- what the keyboard does to a selection ---------------- */
+
+/**
+ * Nudging and deleting, which is what having a selection is for.
+ *
+ * Ignored while typing, because arrow keys in a text editor move the caret and
+ * Delete deletes a character, and stealing either would make editing
+ * impossible. The check is what the event came from rather than a mode flag,
+ * so it stays right however the editor was opened.
+ */
+window.addEventListener('keydown', (e) => {
+  const from = e.target as HTMLElement | null;
+  if (from && (from.isContentEditable || from.tagName === 'INPUT' || from.tagName === 'TEXTAREA')) return;
+  if (!viewer.picking()) return;
+
+  if (e.key === 'Escape') {
+    viewer.clearPick();
+    setStatus('Let go.');
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (viewer.removePicked()) setStatus('Removed.');
+    e.preventDefault();
+    return;
+  }
+
+  // A point at a time, ten with shift, which is the step every editor uses.
+  const step = e.shiftKey ? 10 : 1;
+  const by: Record<string, [number, number]> = {
+    ArrowLeft: [-step, 0],
+    ArrowRight: [step, 0],
+    // Page coordinates count upwards, so up on the keyboard is up on the page.
+    ArrowUp: [0, step],
+    ArrowDown: [0, -step],
+  };
+  const move = by[e.key];
+  if (!move) return;
+  e.preventDefault();
+  viewer.nudge(move[0], move[1]);
 });
 
 /* ---------------- measuring ---------------- */
@@ -2383,6 +2439,119 @@ els.batchGo.addEventListener('click', async () => {
   }
 });
 
+/* ---------------- every comment at once ---------------- */
+
+/**
+ * Lists every comment in the document, replies indented under what they answer.
+ *
+ * Page by page is how comments are made; all at once is how they are worked
+ * through. Filtering is by author and by whose they are, which are the two
+ * questions actually asked of a review: what did this person say, and what is
+ * still mine to deal with.
+ */
+els.btnComments.addEventListener('click', () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  showComments('', 'all');
+});
+
+function showComments(author: string, whose: 'all' | 'mine' | 'theirs'): void {
+  if (!doc) return;
+  const all = doc.allComments();
+  els.panelBody.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  head.textContent = all.length ? `${all.length} comments` : 'No comments';
+  els.panelBody.appendChild(head);
+  if (!all.length) return;
+
+  const authors = [...new Set(all.map((c) => c.author).filter(Boolean))].sort();
+  const filters = document.createElement('div');
+  filters.className = 'comment-filters';
+
+  const whoseSelect = document.createElement('select');
+  whoseSelect.className = 'zoom-select';
+  for (const [value, label] of [
+    ['all', 'Everyone'],
+    ['theirs', 'Only the ones that came with it'],
+    ['mine', 'Only mine'],
+  ]) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    whoseSelect.appendChild(opt);
+  }
+  whoseSelect.value = whose;
+  whoseSelect.addEventListener('change', () => showComments(author, whoseSelect.value as 'all' | 'mine' | 'theirs'));
+  filters.appendChild(whoseSelect);
+
+  if (authors.length > 1) {
+    const byAuthor = document.createElement('select');
+    byAuthor.className = 'zoom-select';
+    const any = document.createElement('option');
+    any.value = '';
+    any.textContent = 'Anyone';
+    byAuthor.appendChild(any);
+    for (const name of authors) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      byAuthor.appendChild(opt);
+    }
+    byAuthor.value = author;
+    byAuthor.addEventListener('change', () => showComments(byAuthor.value, whose));
+    filters.appendChild(byAuthor);
+  }
+  els.panelBody.appendChild(filters);
+
+  const shown = all.filter(
+    (c) =>
+      (whose === 'all' || (whose === 'mine' ? c.mine : !c.mine)) && (!author || c.author === author),
+  );
+
+  if (!shown.length) {
+    const none = document.createElement('p');
+    none.className = 'panel-empty';
+    none.textContent = 'Nothing matches that.';
+    els.panelBody.appendChild(none);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'thread';
+  for (const c of shown) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = c.mine ? 'compare-row' : 'compare-row compare-changed';
+    // Indented under what it answers, which is what makes a list of forty
+    // comments readable as a conversation rather than a pile.
+    row.style.marginLeft = `${Math.min(c.depth, 4) * 12}px`;
+    const who = document.createElement('div');
+    who.className = 'compare-where';
+    who.textContent = [
+      c.author || 'Unsigned',
+      `page ${c.page + 1}`,
+      c.written ? new Date(c.written).toLocaleDateString() : '',
+    ]
+      .filter(Boolean)
+      .join(' \u00b7 ');
+    const body = document.createElement('div');
+    body.className = 'compare-now';
+    body.textContent = c.text || '(empty)';
+    row.append(who, body);
+    // Straight to the thread it belongs to, which is where it gets answered.
+    row.addEventListener('click', () => {
+      void viewer.scrollToPage(c.page);
+      showThread(c.page, c.id);
+    });
+    list.appendChild(row);
+  }
+  els.panelBody.appendChild(list);
+}
+
 /* ---------------- comparing two versions ---------------- */
 
 /**
@@ -2585,6 +2754,70 @@ function showPreflight(report: { findings: PreflightFinding[]; archivable: boole
     list.appendChild(row);
   }
   els.panelBody.appendChild(list);
+  els.panelBody.appendChild(accessibilityFixes());
+}
+
+/**
+ * The two things preflight reports that can actually be fixed from here.
+ *
+ * A screen reader uses the language to decide how to pronounce the words, and
+ * announces the title when the document opens. Both are one field each and
+ * both are genuinely what somebody using a reader needs.
+ *
+ * A structure tree, which is what makes a document properly tagged, is not
+ * here. It would mean marking every run in every content stream and building a
+ * parallel tree over them, and a file that claims to be tagged without one is
+ * worse than a file that claims nothing: it passes the checker and still fails
+ * the person the checker is for.
+ */
+function accessibilityFixes(): HTMLElement {
+  const box = document.createElement('div');
+  box.className = 'restyle';
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  head.textContent = 'What can be fixed here';
+  box.appendChild(head);
+
+  const row = (label: string, input: HTMLInputElement): void => {
+    const wrap = document.createElement('label');
+    wrap.className = 'restyle-row';
+    const text = document.createElement('span');
+    text.textContent = label;
+    wrap.append(text, input);
+    box.appendChild(wrap);
+  };
+
+  const lang = document.createElement('input');
+  lang.className = 'range-input';
+  lang.type = 'text';
+  lang.placeholder = 'en-GB';
+  lang.value = doc?.language ?? '';
+  lang.addEventListener('change', () => {
+    if (!doc?.setLanguage(lang.value)) return;
+    syncEditState();
+    setStatus(`Language set to ${lang.value}. A reader will speak it as that.`);
+  });
+  row('Language', lang);
+
+  const title = document.createElement('input');
+  title.className = 'range-input';
+  title.type = 'text';
+  title.placeholder = 'What this document is called';
+  title.value = doc?.title ?? '';
+  title.addEventListener('change', () => {
+    if (!doc?.setTitle(title.value)) return;
+    syncEditState();
+    setStatus('Title set. A reader will announce it instead of the filename.');
+  });
+  row('Title', title);
+
+  const note = document.createElement('div');
+  note.className = 'preflight-why';
+  note.textContent =
+    'Tagging, which marks what is a heading and what is a table, is not done here. A file that says it is ' +
+    'tagged without being tagged passes the checker and still fails the person using a reader.';
+  box.appendChild(note);
+  return box;
 }
 
 /* ---------------- spelling ---------------- */

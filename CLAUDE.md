@@ -635,6 +635,23 @@ rectangle of page *pixels*, and a drawing's box is a loose rectangle around a
 shape, so dragging a circle floated a square of everything behind the circle.
 An image is its rectangle and keeps the copy.
 
+## A selection is what makes an object an object
+
+Everything before this was hover and drag: nothing stayed chosen, so there was
+nothing for the keyboard to act on and nothing for the panel to follow. Every
+box now carries `data-pick="kind:id"`, `pick()` records what is chosen, and
+`restorePick` puts it back after a rebuild, since a rebuild throws away every
+box on the page and a nudge would otherwise let go of what it just moved.
+
+Two things worth keeping straight. The keyboard handler ignores events whose
+target is editable, because arrow keys in a text editor move the caret and
+Delete deletes a character. And clicking a line of text opens that editor, so
+arrow-nudge is unreachable for text by design: the status line says "editing
+this line" rather than promising a nudge the editor immediately takes back.
+
+Deleting a line of the document's own text is refused. That is redaction, which
+has its own tool and its own warning.
+
 ## Comparing is page alignment first, diff second
 
 `src/pdf/compare.ts`. The diff is ordinary; what makes a comparison useful on a

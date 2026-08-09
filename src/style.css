@@ -1287,6 +1287,58 @@ body {
   margin: 8px 0 12px;
 }
 
+/* ---------- what is picked ---------- */
+
+/*
+ * A selection has to be visible at rest, unlike a hover outline, because the
+ * whole point of it is that it survives the pointer going elsewhere: the
+ * keyboard acts on it and the panel follows it.
+ */
+.line-box.is-picked,
+.note-marker.is-picked {
+  border: 1px solid var(--accent) !important;
+  border-style: solid !important;
+  background: rgba(61, 139, 253, 0.14);
+  box-shadow: 0 0 0 1px rgba(61, 139, 253, 0.35);
+}
+
+/* Handles at the corners, which is what says "this is an object" rather than
+   "something is highlighted here". They are markers, not grips: resizing is an
+   image's own corner handle and nothing else can be resized. */
+.line-box.is-picked::before,
+.line-box.is-picked::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.line-box.is-picked::before {
+  left: -3px;
+  top: -3px;
+}
+
+.line-box.is-picked::after {
+  right: -3px;
+  bottom: -3px;
+}
+
+/* The two questions a review actually gets asked: what did this person say,
+   and what is still mine to deal with. */
+.comment-filters {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.comment-filters .zoom-select {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---------- comparing two versions ---------- */
 
 .compare {

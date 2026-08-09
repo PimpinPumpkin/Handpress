@@ -77,6 +77,8 @@ export interface ViewerCallbacks {
     points: Array<{ x: number; y: number }>,
     closed: boolean,
   ): void;
+  /** Something was picked, or the selection was cleared with a null kind. */
+  onPicked(kind: string | null, id: string, page: number): void;
 }
 
 interface RenderedPage {
@@ -253,6 +255,11 @@ function cloudPoints(
     }
   }
   return out;
+}
+
+/** Escapes an id for use in an attribute selector, which ids here can need. */
+function cssEscape(value: string): string {
+  return value.replace(/["\\]/g, '\\$&');
 }
 
 function shapePoints(
@@ -439,6 +446,8 @@ export class Viewer {
         // the stylesheet lets clicks through them while placing, because a
         // signature usually belongs exactly where the page already has text.
         if (e.target !== overlay) return;
+        // A click on bare page is how somebody lets go of what they picked.
+        this.clearPick();
         if (this.mode === 'add') void this.placeText(this.pages[i], e as MouseEvent);
         else if (this.mode === 'sign') void this.placeSignature(this.pages[i], e as MouseEvent);
         else if (this.mode === 'note') void this.placeNote(this.pages[i], e as MouseEvent);
@@ -711,6 +720,7 @@ export class Viewer {
     for (const line of p.model.lines) {
       const box = document.createElement('div');
       box.className = 'line-box';
+      box.dataset.pick = `line:${line.id}`;
       if (!line.editable) box.classList.add('line-locked');
       if (this.doc.isEdited(p.index, line.id)) box.classList.add('line-edited');
       if (this.selectedLineId === line.id) box.classList.add('line-selected');
@@ -779,6 +789,7 @@ export class Viewer {
           void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
         () => {
+          this.pick('line', line.id, p.index, box);
           this.select(line, p);
           if (line.editable) this.openEditor(p, line, viewport);
           else this.cb.onStatus('That text uses a font Handpress cannot map to characters, so editing it is disabled.', 'warn');
@@ -860,6 +871,7 @@ export class Viewer {
       const [sx, sy] = viewport.convertToViewportPoint(stamp.x, stamp.y + stamp.height);
       const box = document.createElement('div');
       box.className = 'line-box line-stamp';
+    box.dataset.pick = `stamp:${stamp.id}`;
       box.style.left = `${sx}px`;
       box.style.top = `${sy}px`;
       box.style.width = `${stamp.width * this.zoom}px`;
@@ -892,7 +904,7 @@ export class Viewer {
           if (!this.doc.moveStamp(p.index, stamp.id, dx, dy)) return;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
-        undefined,
+        () => this.pick('stamp', stamp.id, p.index, box),
         p,
       );
       p.overlay.appendChild(box);
@@ -907,6 +919,7 @@ export class Viewer {
 
       const box = document.createElement('div');
       box.className = 'line-box line-added';
+    box.dataset.pick = `added:${insertion.id}`;
       box.style.left = `${ix}px`;
       box.style.top = `${iy - size}px`;
       box.style.width = `${Math.max(size * 3, insertion.text.length * size * 0.5)}px`;
@@ -920,7 +933,10 @@ export class Viewer {
           if (!this.doc.moveInsertion(p.index, insertion.id, dx, dy)) return;
           void this.rebuild(p.index).then(() => this.cb.onEdited());
         },
-        () => this.openInsertionEditor(p, insertion, viewport),
+        () => {
+          this.pick('added', insertion.id, p.index, box);
+          this.openInsertionEditor(p, insertion, viewport);
+        },
         p,
       );
       p.overlay.appendChild(box);
@@ -1095,6 +1111,7 @@ export class Viewer {
     const [nx, ny] = viewport.convertToViewportPoint(note.x, note.y);
     const marker = document.createElement('div');
     marker.className = 'note-marker';
+    marker.dataset.pick = `note:${note.id}`;
     marker.dataset.note = note.id;
     marker.style.left = `${nx}px`;
     marker.style.top = `${ny}px`;
@@ -1117,7 +1134,10 @@ export class Viewer {
         if (!this.doc.moveNote(p.index, note.id, dx, dy)) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      () => this.cb.onThread(p.index, note.id),
+      () => {
+        if (mine) this.pick('note', note.id, p.index, marker);
+        this.cb.onThread(p.index, note.id);
+      },
       // Deliberately not lifted. A note is an annotation, so the marker is our
       // own drawing rather than page pixels; copying the canvas underneath it
       // would float whatever the page happens to have there.
@@ -2095,6 +2115,7 @@ export class Viewer {
 
     const box = document.createElement('div');
     box.className = 'line-box image-box';
+    box.dataset.pick = `image:${id}`;
     box.style.left = `${Math.min(ax, bx)}px`;
     box.style.top = `${Math.min(ay, by)}px`;
     box.style.width = `${Math.abs(bx - ax)}px`;
@@ -2160,7 +2181,7 @@ export class Viewer {
         if (!this.doc?.editImage(p.index, id, { dx, dy })) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      undefined,
+      () => this.pick('image', id, p.index, box),
       p,
     );
 
@@ -2379,6 +2400,137 @@ export class Viewer {
   }
 
   /**
+   * What is currently picked, if anything.
+   *
+   * Everything before this was hover and drag: nothing stayed chosen, so there
+   * was nothing for the keyboard to act on and nothing for the panel to
+   * follow. A selection is what makes an object an object rather than a region
+   * that happens to respond to the pointer, and it is the convention every
+   * editor uses because it is the one everybody already knows.
+   */
+  private picked: {
+    kind: 'line' | 'image' | 'graphic' | 'ink' | 'note' | 'stamp' | 'added';
+    id: string;
+    page: number;
+    box: HTMLElement;
+  } | null = null;
+
+  /**
+   * Picks an object, or clears the selection when given nothing.
+   *
+   * The box is remembered rather than looked up, because a rebuild replaces
+   * every box on the page and the selection has to be re-applied afterwards
+   * against the ids rather than the elements.
+   */
+  private pick(
+    kind: 'line' | 'image' | 'graphic' | 'ink' | 'note' | 'stamp' | 'added',
+    id: string,
+    page: number,
+    box: HTMLElement,
+    announce = true,
+  ): void {
+    if (this.picked?.box && this.picked.box !== box) this.picked.box.classList.remove('is-picked');
+    box.classList.add('is-picked');
+    this.picked = { kind, id, page, box };
+    if (announce) this.cb.onPicked(kind, id, page);
+  }
+
+  /**
+   * Puts the selection back after a page has been rebuilt.
+   *
+   * Every box on the page is thrown away and made again when the document
+   * changes, so a nudge would otherwise let go of what it just moved and the
+   * next arrow key would do nothing.
+   */
+  private restorePick(p: RenderedPage): void {
+    const was = this.picked;
+    if (!was || was.page !== p.index) return;
+    const box = p.overlay.querySelector<HTMLElement>(`[data-pick="${was.kind}:${cssEscape(was.id)}"]`);
+    if (!box) return;
+    this.pick(was.kind, was.id, was.page, box, false);
+  }
+
+  /** Lets go of whatever was picked. */
+  clearPick(): void {
+    if (!this.picked) return;
+    this.picked.box.classList.remove('is-picked');
+    this.picked = null;
+    this.cb.onPicked(null, '', -1);
+  }
+
+  /** What is picked, for the interface to describe it. */
+  picking(): { kind: string; id: string; page: number } | null {
+    return this.picked ? { kind: this.picked.kind, id: this.picked.id, page: this.picked.page } : null;
+  }
+
+  /**
+   * Moves what is picked by a page-space step.
+   *
+   * The same call every drag makes, so nudging with the keyboard and dragging
+   * with the pointer produce the same edit and the same undo.
+   */
+  nudge(dx: number, dy: number): boolean {
+    const p = this.picked;
+    if (!p || !this.doc) return false;
+    const model = this.doc;
+    const moved =
+      p.kind === 'ink'
+        ? model.moveInk(p.page, p.id, dx, dy)
+        : p.kind === 'graphic'
+          ? model.moveGraphic(p.page, p.id, dx, dy)
+          : p.kind === 'image'
+            ? model.editImage(p.page, p.id, { dx, dy })
+            : p.kind === 'note'
+              ? model.moveNote(p.page, p.id, dx, dy)
+              : p.kind === 'stamp'
+                ? model.moveStamp(p.page, p.id, dx, dy)
+                : p.kind === 'added'
+                  ? model.moveInsertion(p.page, p.id, dx, dy)
+                  : model.moveLine(p.page, p.id, dx, dy);
+    if (!moved) return false;
+    void this.rebuild(p.page).then(() => this.cb.onEdited());
+    return true;
+  }
+
+  /**
+   * Removes what is picked, where removing it is a thing that can be done.
+   *
+   * A line of the document's own text is not removable: taking it out is
+   * redaction, which is a deliberate act with its own tool and its own
+   * warning, not something the delete key should do by accident.
+   */
+  removePicked(): boolean {
+    const p = this.picked;
+    if (!p || !this.doc) return false;
+    const model = this.doc;
+    const gone =
+      p.kind === 'ink'
+        ? model.removeInk(p.page, p.id)
+        : p.kind === 'note'
+          ? model.removeNote(p.page, p.id)
+          : p.kind === 'stamp'
+            ? model.removeStamp(p.page, p.id)
+            : p.kind === 'image'
+              ? model.editImage(p.page, p.id, { remove: true })
+              : p.kind === 'added'
+                ? model.setInsertionText(p.page, p.id, '')
+                : false;
+    if (!gone) {
+      this.cb.onStatus(
+        p.kind === 'line'
+          ? 'Text that is part of the document is removed by redacting it, which deletes it from the file.'
+          : 'That cannot be removed.',
+        'warn',
+      );
+      return false;
+    }
+    const page = p.page;
+    this.clearPick();
+    void this.rebuild(page).then(() => this.cb.onEdited());
+    return true;
+  }
+
+  /**
    * How many real units one point on the page stands for, and their name.
    *
    * A drawing is at some scale that the file does not record, so a measurement
@@ -2496,6 +2648,7 @@ export class Viewer {
 
     const box = document.createElement('div');
     box.className = 'line-box ink-box';
+    box.dataset.pick = `ink:${stroke.id}`;
     box.style.left = `${Math.min(ax, bx)}px`;
     box.style.top = `${Math.min(ay, by)}px`;
     box.style.width = `${Math.abs(bx - ax)}px`;
@@ -2525,6 +2678,7 @@ export class Viewer {
         if (!this.doc?.moveInk(p.index, stroke.id, dx, dy)) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
+      () => this.pick('ink', stroke.id, p.index, box),
       // No lifted copy, for the same reason a drawing has none: the box is a
       // loose rectangle round a stroke and most of it is whatever is behind.
     );
@@ -2551,6 +2705,7 @@ export class Viewer {
 
     const box = document.createElement('div');
     box.className = 'line-box graphic-box';
+    box.dataset.pick = `graphic:${graphic.id}`;
     box.style.left = `${Math.min(ax, bx)}px`;
     box.style.top = `${Math.min(ay, by)}px`;
     box.style.width = `${Math.abs(bx - ax)}px`;
@@ -2565,7 +2720,7 @@ export class Viewer {
         if (!this.doc?.moveGraphic(p.index, graphic.id, dx, dy)) return;
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
-      undefined,
+      () => this.pick('graphic', graphic.id, p.index, box),
       // No page, which means no lifted copy. The copy is a rectangle of page
       // pixels, and a drawing's box is a loose rectangle around a shape: most
       // of what it contains is whatever the page has behind it, so dragging a
@@ -2948,6 +3103,7 @@ export class Viewer {
         await this.settleRenders();
         await this.doc.refresh();
         await this.refreshRendered(onlyPage);
+        for (const page of this.pages) this.restorePick(page);
       } catch (e) {
         if (Viewer.isCancellation(e)) return;
         this.cb.onStatus(`Could not apply that: ${(e as Error).message}`, 'warn');

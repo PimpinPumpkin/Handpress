@@ -48,11 +48,25 @@ check anything you are about to rely on.
 | Sticky note comment | Yes | Yes |
 | Text callout box | Yes | Yes, box, leader and text in one drag |
 | Reply to a comment, comment threads | Yes | Yes, including comments the file arrived with |
-| Comment list, filter, summarise | Yes | No |
+| Comment list, filter, summarise | Yes | List and filter, no summarising |
 | Stamps | Yes, a library | Signatures only |
 | Measuring tools | Yes | Distance, perimeter and area, with calibration |
 | Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
 | Bring to front, send to back, forward and back a step | Yes | Yes, with the page's own drawing as one rung |
+
+**On accessibility.** Language and title are set here, and both are real:
+a reader uses the language to decide how to pronounce the words and announces
+the title instead of the filename. Tagging, the structure tree that marks what
+is a heading and what is a table, is not done. It would mean marking every run
+in every content stream and building a parallel tree over them, and a file that
+declares itself tagged without one is worse than a file that declares nothing:
+it passes the checker and still fails the person the checker exists for.
+Preflight reports the absence rather than papering over it.
+
+**On selection.** Click anything and it stays picked, with handles. Arrow keys
+nudge it a point, ten with shift; Delete removes it; Escape lets go. Text is the
+exception: clicking a line opens it for typing, so the arrow keys belong to the
+caret, and the line is moved by dragging.
 
 **On comparing.** Text only. Two versions of a contract differ in what they
 say, and a comparison that also reported every rule and image that moved a
@@ -161,7 +175,7 @@ different questions. Handpress is not a review tool.
 | Export to Word, Excel, PowerPoint | Yes | No |
 | Export to image | Yes | Yes, page as PNG |
 | Compare two documents | Yes | Yes, by text, with pages matched to each other |
-| Accessibility tagging and checking | Yes | No |
+| Accessibility tagging and checking | Yes | Language and title; checking only for tagging |
 | PDF/A and preflight | Yes, checks and converts | Checks and reports; does not convert |
 | Actions, batch processing | Yes, over a folder | Yes, over files chosen at once, out as a zip |
 | Cloud storage, sharing, review links | Yes | No, by design |
