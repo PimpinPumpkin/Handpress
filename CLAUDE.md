@@ -652,6 +652,15 @@ ground. A drag is then four drawImage calls into the page canvas itself: the
 page, the hole over the object's spot, the object at the pointer's offset,
 and the over layer on top. No rendering happens during the gesture at all.
 
+**The truth needs an echo.** The correct composite can put the copy behind
+content drawn later, which is right and reads as the drag having stopped
+drawing: the fox on a real report, dragged into an illustration painted after
+it, simply vanished mid-gesture. So while the object is in hand, `stageMove`
+draws it once more at 45% on top of everything. Where nothing covers it,
+blending it over its own opaque pixels changes nothing; where something does,
+it shows through as a ghost. The drop repaints without the echo, so what
+settles is the true order alone.
+
 **The over layer is what keeps a drag in the painting order.** A copy floated
 on a layer above the page pops over content the object was naturally behind,
 which reads as the object jumping the queue the moment it is touched. With

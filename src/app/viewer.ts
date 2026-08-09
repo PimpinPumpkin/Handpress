@@ -832,7 +832,7 @@ export class Viewer {
    * painting order: what covered it at rest keeps covering it while it moves,
    * instead of the copy popping over content it was naturally behind.
    */
-  private stageMove(p: RenderedPage, tile: Tile, dx: number, dy: number): void {
+  private stageMove(p: RenderedPage, tile: Tile, dx: number, dy: number, settled = false): void {
     const held = this.scenes.get(p.index);
     if (!held) return;
     const ctx = p.canvas.getContext('2d');
@@ -843,6 +843,19 @@ export class Viewer {
     this.blitTile(p, ctx, tile, 0, 0, tile.hole);
     this.blitTile(p, ctx, tile, dx, dy);
     if (tile.over) ctx.drawImage(tile.over, 0, 0, p.canvas.width, p.canvas.height);
+    if (!settled) {
+      // A translucent echo of the object on top of everything, while it is in
+      // hand. The true composite can put the copy behind content drawn later,
+      // which is right and reads as the drag having stopped drawing: the fox
+      // on a real report dragged into an illustration painted after it simply
+      // vanished. Where nothing covers the object, blending it over its own
+      // opaque pixels changes nothing; where something does, it shows through
+      // as a ghost, so what is being held is always visible. The drop repaints
+      // without the echo, so what settles is the true order alone.
+      ctx.globalAlpha = 0.45;
+      this.blitTile(p, ctx, tile, dx, dy);
+      ctx.globalAlpha = 1;
+    }
   }
 
   /** Draws one tile where it belongs on the page, optionally shifted. */
@@ -3377,6 +3390,12 @@ export class Viewer {
         const rect = parent.getBoundingClientRect();
         const [x0, y0] = viewport.convertToPdfPoint(down.clientX - rect.left, down.clientY - rect.top);
         const [x1, y1] = viewport.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
+        // The echo comes off before the rebuild, so what sits on screen while
+        // the document is rewritten is the true painting order and nothing
+        // else. Left on, a drop under later content showed the ghost for the
+        // half second the rebuild takes, which reads as the move having only
+        // half happened.
+        if (staged && page) this.stageMove(page, staged, x1 - x0, y1 - y0, true);
         onDrop(x1 - x0, y1 - y0);
       };
 
