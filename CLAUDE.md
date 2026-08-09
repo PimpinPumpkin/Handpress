@@ -635,6 +635,35 @@ rectangle of page *pixels*, and a drawing's box is a loose rectangle around a
 shape, so dragging a circle floated a square of everything behind the circle.
 An image is its rectangle and keeps the copy.
 
+## Bates numbering cannot be worked out from the page index
+
+It runs on across a whole set of documents, so the counter comes into
+`stampEveryPage` and the next value goes back out; `batch.ts` threads it from
+one file to the next. It advances only when a page is actually stamped, so an
+unreadable page does not consume a number and leave a gap in a sequence whose
+whole purpose is that there are none.
+
+## Preflight reports and does not convert
+
+Making a file archival means embedding fonts whose glyphs are not in the file,
+which cannot be done from inside it. A conversion that substitutes typefaces
+and calls the result archival is worse than a list of what is wrong.
+
+Two things in `src/pdf/preflight.ts` are worth not breaking. A Type0 font keeps
+its descriptor on the descendant, so the obvious check on the outer dictionary
+reports every composite font in the document as missing. And a Type 3 font
+carries its glyphs as operators, so it is embedded by construction and has no
+font file to look for.
+
+Image resolution is judged against the page rather than the box the image is
+drawn in, which under-reports. That is the right way round: an image drawn
+smaller than the page is sharper than this says, never softer, so nothing is
+flagged that is actually fine.
+
+The rates over 384 real documents are the sanity check: 99% no output intent,
+23% a font not embedded, 16% low resolution, 3% JavaScript, 1% XFA. A rule
+firing on nearly everything is a rule that is wrong, not a corpus that is.
+
 ## Comment threads never needed a server
 
 This was assumed to need one for a while and it does not. A reply is an

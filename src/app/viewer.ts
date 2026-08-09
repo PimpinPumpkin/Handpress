@@ -45,7 +45,9 @@ export type ViewerMode =
   | 'polyline'
   | 'cloud'
   | 'callout'
-  | 'field';
+  | 'field'
+  | 'measure'
+  | 'measureArea';
 
 export interface ViewerCallbacks {
   onSelect(line: TextLine | null, page: PageModel | null): void;
@@ -63,6 +65,18 @@ export interface ViewerCallbacks {
   onPagesChanged(message: string): void;
   /** A comment was clicked, so its thread should be shown and made repliable. */
   onThread(pageIndex: number, commentId: string): void;
+  /**
+   * Something was measured.
+   *
+   * `length` is the run of it for a line and null for an area, since only a
+   * length can be calibrated against a known distance.
+   */
+  onMeasured(
+    text: string,
+    length: number | null,
+    points: Array<{ x: number; y: number }>,
+    closed: boolean,
+  ): void;
 }
 
 interface RenderedPage {
@@ -372,7 +386,9 @@ export class Viewer {
         mode === 'polyline' ||
         mode === 'cloud' ||
         mode === 'callout' ||
-        mode === 'field',
+        mode === 'field' ||
+        mode === 'measure' ||
+        mode === 'measureArea',
     );
       p.overlay.classList.toggle(
         'drawing',
@@ -440,6 +456,16 @@ export class Viewer {
         }
         if (this.mode === 'polygon' || this.mode === 'polyline' || this.mode === 'cloud') {
           this.addPolyPoint(this.pages[i], e, this.mode);
+          return;
+        }
+        if (this.mode === 'measureArea') {
+          // Measured with the same corner-at-a-time gesture a polygon uses, so
+          // there is one way to describe a shape rather than two.
+          this.addPolyPoint(this.pages[i], e, 'polygon', true);
+          return;
+        }
+        if (this.mode === 'measure') {
+          this.beginShape(this.pages[i], e, 'line', true);
           return;
         }
         if (this.mode === 'callout') {
@@ -1365,6 +1391,7 @@ export class Viewer {
   private poly: {
     page: RenderedPage;
     kind: 'polygon' | 'polyline' | 'cloud';
+    measuring: boolean;
     points: Array<{ x: number; y: number }>;
     preview: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
@@ -1373,7 +1400,12 @@ export class Viewer {
     stop: () => void;
   } | null = null;
 
-  private addPolyPoint(p: RenderedPage, down: PointerEvent, kind: 'polygon' | 'polyline' | 'cloud'): void {
+  private addPolyPoint(
+    p: RenderedPage,
+    down: PointerEvent,
+    kind: 'polygon' | 'polyline' | 'cloud',
+    measuring = false,
+  ): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();
 
@@ -1413,6 +1445,7 @@ export class Viewer {
       this.poly = {
         page: p,
         kind,
+        measuring,
         points: [],
         preview,
         ctx,
@@ -1499,6 +1532,11 @@ export class Viewer {
       const [x, y] = viewport.convertToPdfPoint(q.x, q.y);
       return { x, y };
     });
+
+    if (poly.measuring) {
+      this.finishMeasure(inPage, true);
+      return;
+    }
     const points = poly.kind === 'cloud' ? cloudPoints(inPage, scallop) : inPage;
 
     this.doc.addInk(poly.page.index, {
@@ -1634,7 +1672,12 @@ export class Viewer {
     window.addEventListener('pointerup', up);
   }
 
-  private beginShape(p: RenderedPage, down: PointerEvent, kind: 'line' | 'arrow' | 'rect' | 'ellipse'): void {
+  private beginShape(
+    p: RenderedPage,
+    down: PointerEvent,
+    kind: 'line' | 'arrow' | 'rect' | 'ellipse',
+    measuring = false,
+  ): void {
     if (!this.doc || !p.viewport) return;
     down.preventDefault();
     const rect = p.overlay.getBoundingClientRect();
@@ -1671,6 +1714,13 @@ export class Viewer {
     const move = (e: PointerEvent): void => {
       end = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       paint();
+      if (measuring) {
+        const [ax, ay] = viewport.convertToPdfPoint(start.x, start.y);
+        const [bx, by] = viewport.convertToPdfPoint(end.x, end.y);
+        // Live, because a measurement you only see after letting go is one you
+        // have to take twice.
+        this.cb.onStatus(`${this.say(this.measured({ x: ax, y: ay }, { x: bx, y: by }))}`);
+      }
     };
 
     let finished = false;
@@ -1692,6 +1742,12 @@ export class Viewer {
         const [x, y] = viewport.convertToPdfPoint(q.x, q.y);
         return { x, y };
       };
+      if (measuring) {
+        preview.remove();
+        this.finishMeasure([toPage(start), toPage(end)], false);
+        return;
+      }
+
       const shape = shapePoints(kind, toPage(start), toPage(end), this.penWidth);
       this.doc.addInk(p.index, {
         color: { ...this.penColor },
@@ -2323,6 +2379,103 @@ export class Viewer {
   }
 
   /**
+   * How many real units one point on the page stands for, and their name.
+   *
+   * A drawing is at some scale that the file does not record, so a measurement
+   * in points is useless and one in millimetres is a guess. Calibrating
+   * against something of known length is the only honest way, and it is what
+   * every measuring tool asks for first.
+   */
+  measureScale = 1;
+  measureUnit = 'pt';
+
+  /**
+   * Reports a measurement, and offers to leave it on the page.
+   *
+   * Also where calibration happens, because the moment somebody has just
+   * measured something they know the length of is the moment they can say what
+   * it should have been. Asking up front, before anything has been drawn, is
+   * asking a question with no context.
+   */
+  private finishMeasure(points: Array<{ x: number; y: number }>, closed: boolean): void {
+    if (!this.doc || points.length < 2) return;
+
+    let total = 0;
+    for (let i = 0; i + 1 < points.length; i++) total += this.measured(points[i], points[i + 1]);
+    if (closed) total += this.measured(points[points.length - 1], points[0]);
+
+    const value = closed ? this.area(points) : total;
+    const text = closed
+      ? `${this.say(value, true)}, ${this.say(total)} around`
+      : this.say(value);
+    this.cb.onMeasured(text, closed ? null : total, points, closed);
+  }
+
+  /**
+   * Sets the scale from a length just measured, in the caller's own units.
+   *
+   * Everything measured afterwards is reported against this, including things
+   * measured before it: the number was always the same distance on the page
+   * and only the name for it changes.
+   */
+  calibrate(pagePoints: Array<{ x: number; y: number }>, realLength: number, unit: string): void {
+    let raw = 0;
+    for (let i = 0; i + 1 < pagePoints.length; i++) {
+      raw += Math.hypot(pagePoints[i + 1].x - pagePoints[i].x, pagePoints[i + 1].y - pagePoints[i].y);
+    }
+    if (raw <= 0 || realLength <= 0) return;
+    this.measureScale = realLength / raw;
+    this.measureUnit = unit || 'units';
+  }
+
+  /** Draws a measurement onto the page, as a line and the number beside it. */
+  markMeasurement(points: Array<{ x: number; y: number }>, closed: boolean, text: string): void {
+    const index = this.currentPageIndex();
+    if (!this.doc) return;
+    this.doc.addInk(index, {
+      color: { ...this.penColor },
+      width: this.penWidth,
+      opacity: this.penOpacity,
+      closed,
+      points,
+    });
+    // Beside the middle of what was measured, which is where a dimension goes.
+    const mid = points.reduce((a, q) => ({ x: a.x + q.x / points.length, y: a.y + q.y / points.length }), { x: 0, y: 0 });
+    this.doc.addInsertion(index, {
+      x: mid.x,
+      y: mid.y + this.addSize * 0.4,
+      size: this.addSize,
+      color: { ...this.penColor },
+      text,
+      bold: false,
+      italic: false,
+    });
+    void this.rebuild(index).then(() => this.cb.onEdited());
+  }
+
+  /** Distance between two page-space points, in the calibrated unit. */
+  private measured(a: { x: number; y: number }, b: { x: number; y: number }): number {
+    return Math.hypot(b.x - a.x, b.y - a.y) * this.measureScale;
+  }
+
+  /** Area of a closed run of page-space points, by the shoelace formula. */
+  private area(points: Array<{ x: number; y: number }>): number {
+    let sum = 0;
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      sum += a.x * b.y - b.x * a.y;
+    }
+    return Math.abs(sum / 2) * this.measureScale * this.measureScale;
+  }
+
+  /** Rounded the way a measurement is read rather than the way it is stored. */
+  private say(value: number, square = false): string {
+    const shown = value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+    return `${shown} ${this.measureUnit}${square ? '\u00b2' : ''}`;
+  }
+
+  /**
    * A hit target for a stroke of ink.
    *
    * Sized to the points plus half the line width, because a stroke is drawn
@@ -2541,6 +2694,8 @@ export class Viewer {
       this.mode === 'polyline' ||
       this.mode === 'cloud' ||
       this.mode === 'callout' ||
+      this.mode === 'measure' ||
+      this.mode === 'measureArea' ||
       this.mode === 'crop' ||
       this.mode === 'field'
     );

@@ -365,6 +365,46 @@ at, and the grouping refuses them rather than guessing. A moved drawing keeps
 its place in the painting order too, so one taken from the top of a page and
 dropped into the middle of it can land behind something drawn later.
 
+### Bates numbering
+
+Legal discovery's own numbering: a number that runs on across a whole set of
+files so a page can be cited afterwards. It is a stamp preset, with a start
+number and a digit count, and `{n}` where the number goes. Run it through Batch
+and the sequence carries into the next file rather than restarting, which is
+the entire point of it: the number is how a page gets referred to, so it must
+never restart and never repeat.
+
+The counter only advances on a page that was actually stamped, so a page that
+could not be read does not silently consume a number and leave a gap.
+
+### Checking a file before you rely on it
+
+**Preflight** reports what would stop a file being archived, and what would make
+it render differently somewhere else: fonts that are not embedded, no colour
+intent, no metadata, JavaScript, XFA, low resolution images, transparency.
+Everything is counted rather than listed one occurrence at a time.
+
+It reports and does not convert. Making a file properly archival means embedding
+fonts whose glyphs are not in the file at all, and a conversion that silently
+substitutes typefaces and calls the result archival is worse than a clear list
+of what is wrong.
+
+### Measuring
+
+Drag along something with **Measure** and it reads out as you drag. Click the
+corners with **Area** for an area and its perimeter.
+
+Everything reads in points until you say otherwise, which is honest but rarely
+what is wanted. After a measurement you can say what it really was, in your own
+units, and the scale is set from that: measure a wall you know is ten metres,
+say so, and everything after reads in metres. Calibration is offered after a
+measurement rather than before one, because that is the moment somebody has
+something whose real length they know.
+
+Area cannot be calibrated, only distance: an area gives two unknowns for one
+number. Note that area scales by the square of the calibration, which is the
+part that surprises people.
+
 ### Replying to a comment
 
 Click any comment, including one the document arrived with, and the panel shows

@@ -38,6 +38,8 @@ export interface BatchResult {
   done: number;
   /** Files that failed, with the reason, so nothing is lost in silence. */
   failed: Array<{ name: string; detail: string }>;
+  /** Where a sequential numbering run finished, for the record. */
+  lastNumber: number;
 }
 
 export interface BatchProgress {
@@ -58,6 +60,7 @@ export async function runBatch(
 ): Promise<BatchResult> {
   const entries: ZipEntry[] = [];
   const failed: BatchResult['failed'] = [];
+  let next = recipe.stamp?.number?.next ?? 1;
 
   // Opened once for the whole run rather than per file. Starting the
   // recogniser means loading its wasm core and a language, which is tens of
@@ -95,7 +98,15 @@ export async function runBatch(
         if (recipe.rotate) {
           for (let i = 0; i < doc.pageCount; i++) doc.rotatePage(i, recipe.rotate);
         }
-        if (recipe.stamp) await doc.stampEveryPage(recipe.stamp);
+        if (recipe.stamp) {
+          // The sequence runs on into the next file. A Bates number that
+          // restarted per document would be worse than useless: the number is
+          // how a page gets cited, so it has to be unique across the set.
+          await doc.stampEveryPage(
+            recipe.stamp.number ? { ...recipe.stamp, number: { ...recipe.stamp.number, next } } : recipe.stamp,
+          );
+          if (recipe.stamp.number) next = doc.lastNumber;
+        }
 
         let bytes = (await doc.build()).bytes;
         if (recipe.compress) bytes = (await compress(bytes, recompressInBrowser)).bytes;
@@ -117,7 +128,7 @@ export async function runBatch(
   }
 
   onProgress('Packing them up…', 0.99);
-  return { bytes: zip(entries), done: entries.length, failed };
+  return { bytes: zip(entries), done: entries.length, failed, lastNumber: next };
 }
 
 /** Reads one page and writes what it finds back as invisible text. */

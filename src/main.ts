@@ -23,6 +23,7 @@ import { encrypt } from './pdf/encrypt';
 import { AUTOSAVE_LIMIT, forget, howLongAgo, keep, recover } from './app/autosave';
 import { recompressInBrowser } from './app/recompress';
 import { runBatch } from './app/batch';
+import type { Finding as PreflightFinding } from './pdf/preflight';
 import { standardTextWidth } from './pdf/fonts';
 import type { TextLine } from './pdf/content';
 
@@ -116,6 +117,9 @@ const els = {
   btnPolyline: $<HTMLButtonElement>('btnPolyline'),
   btnCloud: $<HTMLButtonElement>('btnCloud'),
   btnCallout: $<HTMLButtonElement>('btnCallout'),
+  btnMeasure: $<HTMLButtonElement>('btnMeasure'),
+  btnMeasureArea: $<HTMLButtonElement>('btnMeasureArea'),
+  btnPreflight: $<HTMLButtonElement>('btnPreflight'),
   btnSpell: $<HTMLButtonElement>('btnSpell'),
   btnBatch: $<HTMLButtonElement>('btnBatch'),
   batchModal: $('batchModal'),
@@ -139,6 +143,9 @@ const els = {
   stampOpacity: $<HTMLInputElement>('stampOpacity'),
   stampColor: $<HTMLInputElement>('stampColor'),
   stampRange: $<HTMLInputElement>('stampRange'),
+  stampBatesRow: $('stampBatesRow'),
+  stampStart: $<HTMLInputElement>('stampStart'),
+  stampDigits: $<HTMLInputElement>('stampDigits'),
   stampHint: $('stampHint'),
   stampCancel: $<HTMLButtonElement>('stampCancel'),
   stampGo: $<HTMLButtonElement>('stampGo'),
@@ -260,7 +267,93 @@ const viewer = new Viewer(els.viewer, {
   onThread(pageIndex, commentId) {
     showThread(pageIndex, commentId);
   },
+  onMeasured(text, length, points, closed) {
+    showMeasurement(text, length, points, closed);
+  },
 });
+
+/* ---------------- measuring ---------------- */
+
+/**
+ * Reports a measurement, and offers the two things wanted straight after one.
+ *
+ * Calibration lives here rather than in a dialog beforehand, because the
+ * moment somebody has measured something whose real length they know is the
+ * moment they can say what it should have read. Asking before anything is
+ * drawn is asking a question with no context.
+ */
+function showMeasurement(
+  text: string,
+  length: number | null,
+  points: Array<{ x: number; y: number }>,
+  closed: boolean,
+): void {
+  setStatus(text);
+  els.panelBody.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  head.textContent = closed ? 'Area' : 'Distance';
+  els.panelBody.appendChild(head);
+
+  const value = document.createElement('div');
+  value.className = 'measure-value';
+  value.textContent = text;
+  els.panelBody.appendChild(value);
+
+  const mark = document.createElement('button');
+  mark.type = 'button';
+  mark.className = 'btn';
+  mark.textContent = 'Put it on the page';
+  mark.addEventListener('click', () => viewer.markMeasurement(points, closed, text));
+  els.panelBody.appendChild(mark);
+
+  // Only a length can be calibrated: an area gives two unknowns for one
+  // number and there is no way to divide them.
+  if (length === null) return;
+
+  const box = document.createElement('div');
+  box.className = 'restyle';
+  const label = document.createElement('div');
+  label.className = 'restyle-head';
+  label.textContent = 'Say what this really is';
+  box.appendChild(label);
+
+  const row = document.createElement('div');
+  row.className = 'restyle-weight';
+  const amount = document.createElement('input');
+  amount.className = 'range-input';
+  amount.type = 'number';
+  amount.min = '0';
+  amount.step = 'any';
+  amount.placeholder = 'Length';
+  const unit = document.createElement('input');
+  unit.className = 'range-input';
+  unit.type = 'text';
+  unit.placeholder = 'Units, such as m';
+  unit.value = viewer.measureUnit === 'pt' ? '' : viewer.measureUnit;
+  row.append(amount, unit);
+  box.appendChild(row);
+
+  const set = document.createElement('button');
+  set.type = 'button';
+  set.className = 'btn btn-primary';
+  set.textContent = 'Set the scale';
+  set.addEventListener('click', () => {
+    const real = parseFloat(amount.value);
+    if (!(real > 0)) {
+      setStatus('Give the real length of what you just measured.', 'warn');
+      return;
+    }
+    viewer.calibrate(points, real, unit.value.trim() || 'units');
+    setStatus(
+      `Set. One page point is ${viewer.measureScale.toPrecision(3)} ${viewer.measureUnit}, ` +
+        'and everything measured from here reads in that.',
+    );
+  });
+  box.appendChild(set);
+  els.panelBody.appendChild(box);
+}
 
 /* ---------------- comment threads ---------------- */
 
@@ -839,6 +932,8 @@ const WRITERS = [
   'btnPolyline',
   'btnCloud',
   'btnCallout',
+  'btnMeasure',
+  'btnMeasureArea',
   'btnSign',
   'btnOcr',
   'btnLocalFonts',
@@ -1095,6 +1190,8 @@ const MODE_BUTTONS: Record<string, string> = {
   cloud: 'btnCloud',
   callout: 'btnCallout',
   field: 'btnField',
+  measure: 'btnMeasure',
+  measureArea: 'btnMeasureArea',
 };
 
 function syncEditState(): void {
@@ -1153,7 +1250,9 @@ function setMode(
     | 'polyline'
     | 'cloud'
     | 'callout'
-    | 'field',
+    | 'field'
+    | 'measure'
+    | 'measureArea',
 ): void {
   viewer.setMode(mode);
   els.btnModeEdit.classList.toggle('tool-active', mode === 'edit');
@@ -1176,6 +1275,8 @@ function setMode(
   els.btnCloud.classList.toggle('tool-active', mode === 'cloud');
   els.btnCallout.classList.toggle('tool-active', mode === 'callout');
   els.btnField.classList.toggle('tool-active', mode === 'field');
+  els.btnMeasure.classList.toggle('tool-active', mode === 'measure');
+  els.btnMeasureArea.classList.toggle('tool-active', mode === 'measureArea');
   revealGroupOf(MODE_BUTTONS[mode] ?? '');
   const messages = {
     edit: 'Click any line of text to edit it, or drag it to move it.',
@@ -1191,6 +1292,8 @@ function setMode(
     cloud: 'Click each corner of the area to cloud. Double click or Enter to finish.',
     callout: 'Drag from what you are commenting on to where the note should sit.',
     field: 'Drag out the box, then say what kind of field it is and what it is called.',
+    measure: 'Drag along something to measure it. Set the scale once and the rest read true.',
+    measureArea: 'Click the corners of the area. Double click or Enter to finish.',
     select: 'Drag across the text to select it, then copy it with Cmd or Ctrl and C.',
     add: 'Click anywhere on the page to add text. Shift+Enter for a new line, Enter to finish.',
     sign: 'Click where the signature should go.',
@@ -2056,7 +2159,7 @@ const STAMP_PRESETS: Record<
     rotate: number;
     opacity: number;
     color: string;
-    place: 'top-centre' | 'bottom-centre' | 'centre';
+    place: 'top-centre' | 'bottom-centre' | 'bottom-right' | 'centre';
     /** Under the page rather than over it. Only a watermark wants this. */
     behind: boolean;
   }
@@ -2065,10 +2168,17 @@ const STAMP_PRESETS: Record<
   header: { text: 'Confidential', size: 10, rotate: 0, opacity: 100, color: '#555555', place: 'top-centre', behind: false },
   footer: { text: 'Confidential', size: 10, rotate: 0, opacity: 100, color: '#555555', place: 'bottom-centre', behind: false },
   numbers: { text: '{page} of {pages}', size: 10, rotate: 0, opacity: 100, color: '#333333', place: 'bottom-centre', behind: false },
+  // Bates numbering is legal discovery's own: a number that runs on across a
+  // whole set of files so a page can be cited afterwards. The prefix is a case
+  // or party name and belongs in the text; {n} is the counter.
+  bates: { text: 'ABC-{n}', size: 9, rotate: 0, opacity: 100, color: '#000000', place: 'bottom-right', behind: false },
 };
 
 function fillStampPreset(): void {
   const preset = STAMP_PRESETS[els.stampPreset.value] ?? STAMP_PRESETS.watermark;
+  // Only Bates has a counter to configure, and showing start and digits for a
+  // watermark would be four fields nobody can act on.
+  els.stampBatesRow.hidden = els.stampPreset.value !== 'bates';
   els.stampText.value = preset.text;
   els.stampSize.value = String(preset.size);
   els.stampRotate.value = String(preset.rotate);
@@ -2078,6 +2188,15 @@ function fillStampPreset(): void {
 }
 
 els.stampPreset.addEventListener('change', fillStampPreset);
+
+/** The counter settings, when the chosen preset is the one that has a counter. */
+function batesFromDialog(): { next: number; digits: number } | undefined {
+  if (els.stampPreset.value !== 'bates') return undefined;
+  return {
+    next: Math.max(0, parseInt(els.stampStart.value, 10) || 1),
+    digits: Math.min(12, Math.max(1, parseInt(els.stampDigits.value, 10) || 6)),
+  };
+}
 
 els.btnStamp.addEventListener('click', () => {
   if (!doc) return;
@@ -2115,6 +2234,7 @@ els.stampGo.addEventListener('click', async () => {
       bold: false,
       italic: false,
       behind: preset.behind,
+      number: batesFromDialog(),
       pages: wanted,
     });
     if (!done) {
@@ -2125,7 +2245,12 @@ els.stampGo.addEventListener('click', async () => {
     await viewer.refreshRendered();
     void renderThumbs();
     syncEditState();
-    setStatus(`Stamped ${done} page${done === 1 ? '' : 's'}. Each one can be dragged or retyped like any added text.`);
+    const bates = batesFromDialog();
+    setStatus(
+      bates
+        ? `Numbered ${done} page${done === 1 ? '' : 's'}, up to ${String(doc.lastNumber - 1).padStart(bates.digits, '0')}.`
+        : `Stamped ${done} page${done === 1 ? '' : 's'}. Each one can be dragged or retyped like any added text.`,
+    );
   } catch (e) {
     setStatus(`Could not stamp the pages: ${reason(e)}`, 'warn');
   } finally {
@@ -2138,6 +2263,8 @@ els.btnPolyline.addEventListener('click', () => setMode('polyline'));
 els.btnCloud.addEventListener('click', () => setMode('cloud'));
 els.btnCallout.addEventListener('click', () => setMode('callout'));
 els.btnField.addEventListener('click', () => setMode('field'));
+els.btnMeasure.addEventListener('click', () => setMode('measure'));
+els.btnMeasureArea.addEventListener('click', () => setMode('measureArea'));
 
 /* ---------------- the same thing to a pile of files ---------------- */
 
@@ -2218,6 +2345,7 @@ els.batchGo.addEventListener('click', async () => {
               bold: false,
               italic: false,
               behind: preset.behind,
+              number: batesFromDialog(),
             }
           : undefined,
         rotate,
@@ -2240,7 +2368,9 @@ els.batchGo.addEventListener('click', async () => {
         ? `${result.done} done, ${result.failed.length} could not be read: ${result.failed
             .map((f: { name: string }) => f.name)
             .join(', ')}.`
-        : `${result.done} file${result.done === 1 ? '' : 's'} done, saved as one zip.`,
+        : batesFromDialog()
+          ? `${result.done} files done, numbered up to ${result.lastNumber - 1}, saved as one zip.`
+          : `${result.done} file${result.done === 1 ? '' : 's'} done, saved as one zip.`,
       result.failed.length ? 'warn' : 'info',
     );
   } catch (e) {
@@ -2250,6 +2380,76 @@ els.batchGo.addEventListener('click', async () => {
     batchFiles = [];
   }
 });
+
+/* ---------------- preflight ---------------- */
+
+/**
+ * Reports what would stop a file being archived, or printed well.
+ *
+ * This reports and does not convert. Making a file properly archival means
+ * embedding fonts whose glyphs are not in the file at all, and a conversion
+ * that quietly substitutes typefaces and calls the result archival is worse
+ * than a clear list of what is wrong.
+ */
+els.btnPreflight.addEventListener('click', async () => {
+  if (!doc) {
+    setStatus('Open a PDF first.', 'warn');
+    return;
+  }
+  setBusy(true, 'Checking the file…');
+  try {
+    const report = await doc.preflight();
+    if (!report) {
+      setStatus('This file cannot be read closely enough to check.', 'warn');
+      return;
+    }
+    showPreflight(report);
+    const blocking = report.findings.filter((f) => f.severity === 'blocks').length;
+    setStatus(
+      report.archivable
+        ? `Nothing here would stop it being archived. ${report.findings.length} other things worth knowing.`
+        : `${blocking} thing${blocking === 1 ? '' : 's'} would stop it being archived.`,
+      report.archivable ? 'info' : 'warn',
+    );
+  } catch (e) {
+    setStatus(`Could not check the file: ${reason(e)}`, 'warn');
+  } finally {
+    setBusy(false);
+  }
+});
+
+function showPreflight(report: { findings: PreflightFinding[]; archivable: boolean; pages: number }): void {
+  els.panelBody.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'restyle-head';
+  head.textContent = report.archivable ? 'Nothing blocking' : 'What would stop it';
+  els.panelBody.appendChild(head);
+
+  if (!report.findings.length) {
+    const none = document.createElement('p');
+    none.className = 'panel-empty';
+    none.textContent = 'Nothing to report.';
+    els.panelBody.appendChild(none);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'preflight';
+  for (const f of report.findings) {
+    const row = document.createElement('div');
+    row.className = `preflight-row preflight-${f.severity}`;
+    const what = document.createElement('div');
+    what.className = 'preflight-what';
+    // The count only earns its space when there is more than one of them.
+    what.textContent = f.count > 1 ? `${f.what} (${f.count})` : f.what;
+    const why = document.createElement('div');
+    why.className = 'preflight-why';
+    why.textContent = f.why;
+    row.append(what, why);
+    list.appendChild(row);
+  }
+  els.panelBody.appendChild(list);
+}
 
 /* ---------------- spelling ---------------- */
 

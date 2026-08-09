@@ -151,6 +151,14 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="4" width="12" height="9" rx="1.5" /><path d="M12 13L3 20" /></svg>
             <span>Callout</span>
           </button>
+          <button class="tool" id="btnMeasure" type="button" title="Drag along something to measure how long it is">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 14l12-12 8 8-12 12z" /><path d="M6 10l2 2" /><path d="M9 7l2 2" /><path d="M12 4l2 2" /></svg>
+            <span>Measure</span>
+          </button>
+          <button class="tool" id="btnMeasureArea" type="button" title="Click the corners of an area to measure it">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V6l8-2 8 4v12z" /><path d="M9 20v-8h6v8" /></svg>
+            <span>Area</span>
+          </button>
           <button class="tool" id="btnInkErase" type="button" title="Rub out strokes you have drawn">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19h12" /><path d="M14.5 5.5l4 4-8 8H6.5l-1.5-4z" /></svg>
             <span>Rub out</span>
@@ -243,6 +251,10 @@
           <button class="tool" id="btnBatch" type="button" title="Do the same thing to a pile of files at once">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="12" height="14" rx="1.5" /><path d="M7 3h11a1.5 1.5 0 0 1 1.5 1.5V17" /></svg>
             <span>Batch</span>
+          </button>
+          <button class="tool" id="btnPreflight" type="button" title="Check what would stop this file being archived or printed well">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4v6c0 4-3.5 7-8 8-4.5-1-8-4-8-8V7z" /><path d="M9 12l2 2 4-4" /></svg>
+            <span>Preflight</span>
           </button>
           <button class="tool" id="btnSpell" type="button" title="Check the spelling of every page">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17L9 6l5 11" /><path d="M5.8 13.5h6.4" /><path d="M15 15l2.5 2.5L22 13" /></svg>
@@ -493,6 +505,7 @@
           <option value="header">Header, along the top</option>
           <option value="footer">Footer, along the bottom</option>
           <option value="numbers">Page numbers, bottom centre</option>
+          <option value="bates">Bates numbering, bottom right</option>
         </select>
         <label class="sig-check" for="stampText">Text</label>
         <input class="range-input" id="stampText" type="text" value="DRAFT" />
@@ -505,6 +518,12 @@
           <input class="range-input" id="stampOpacity" type="number" min="5" max="100" step="5" value="12" />
           <label class="sig-check" for="stampColor">Colour</label>
           <input type="color" class="add-color" id="stampColor" value="#808080" />
+        </div>
+        <div class="stamp-row" id="stampBatesRow" hidden>
+          <label class="sig-check" for="stampStart">Start at</label>
+          <input class="range-input" id="stampStart" type="number" min="0" step="1" value="1" />
+          <label class="sig-check" for="stampDigits">Digits</label>
+          <input class="range-input" id="stampDigits" type="number" min="1" max="12" step="1" value="6" />
         </div>
         <label class="sig-check" for="stampRange">Which pages, if not all of them</label>
         <input class="range-input" id="stampRange" type="text" placeholder="for example 1-3, 5, 8-" />

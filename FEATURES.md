@@ -50,9 +50,16 @@ check anything you are about to rely on.
 | Reply to a comment, comment threads | Yes | Yes, including comments the file arrived with |
 | Comment list, filter, summarise | Yes | No |
 | Stamps | Yes, a library | Signatures only |
-| Measuring tools | Yes | No |
+| Measuring tools | Yes | Distance, perimeter and area, with calibration |
 | Move a logo or other vector drawing already on the page | Yes | Yes, move only, no resize or delete |
 | Bring to front, send to back, forward and back a step | Yes | Yes, with the page's own drawing as one rung |
+
+**On preflight.** This reports and does not convert. Making a file properly
+archival means embedding fonts whose glyphs are not in the file at all, and a
+conversion that quietly substitutes typefaces and calls the result archival is
+worse than a clear list of what is wrong. Several of the checks are worth
+running whatever you think of PDF/A: a document whose fonts are not embedded
+renders differently on somebody else's machine today, not in fifty years.
 
 **On comment threads.** These need no server and nothing proprietary. A reply
 is an ordinary annotation carrying `/IRT`, pointing at the comment it answers,
@@ -126,7 +133,7 @@ different questions. Handpress is not a review tool.
 | Extract | Yes | Yes |
 | Crop | Yes | Yes, one page or all of them |
 | Headers, footers, page numbers, watermarks | Yes | Yes, one dialog for all four |
-| Bates numbering | Yes | No, page numbers only |
+| Bates numbering | Yes | Yes, running on across a set of files |
 
 ## Documents
 
@@ -147,7 +154,7 @@ different questions. Handpress is not a review tool.
 | Export to image | Yes | Yes, page as PNG |
 | Compare two documents | Yes | No |
 | Accessibility tagging and checking | Yes | No |
-| PDF/A and preflight | Yes | No |
+| PDF/A and preflight | Yes, checks and converts | Checks and reports; does not convert |
 | Actions, batch processing | Yes, over a folder | Yes, over files chosen at once, out as a zip |
 | Cloud storage, sharing, review links | Yes | No, by design |
 

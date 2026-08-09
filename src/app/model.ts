@@ -37,6 +37,7 @@ import { describeSignatures, findSignatures, type SignatureReport } from '../pdf
 import { applyFormValues, readForm, type FormField } from '../pdf/forms';
 import { addFields, type NewField } from '../pdf/newfields';
 import { Dictionary, FOREIGN_SHARE, findMisspellings } from '../pdf/spell';
+import { preflight, type PreflightReport } from '../pdf/preflight';
 import { addNotes, readNotes, type ExistingNote, type PageNote } from '../pdf/notes';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -239,6 +240,8 @@ export class HandpressDocument {
   private lineCache = new Map<number, PageModel>();
   /** CSS font names, which belong to the current pdf.js instance and reset with it. */
   private cssFontCache = new Map<number, Map<string, string>>();
+  /** True when the file arrived encrypted, which no archival profile allows. */
+  wasEncrypted = false;
   /** Bytes currently rendered, which include all committed edits. */
   private currentBytes: Uint8Array;
   /**
@@ -279,6 +282,9 @@ export class HandpressDocument {
   ): Promise<{ doc: HandpressDocument; report: LoadReport }> {
     const { bytes: plain, wasEncrypted } = await decryptToBytes(bytes, password);
     const doc = new HandpressDocument(name, plain);
+    // Kept, because a file that arrived locked can never be archival and the
+    // check for that runs long after this point.
+    doc.wasEncrypted = wasEncrypted;
     await doc.reload();
     const report = await doc.describe();
     report.wasEncrypted = wasEncrypted;
@@ -921,6 +927,24 @@ export class HandpressDocument {
     return done;
   }
 
+  /**
+   * Checks the document against what it needs to survive being archived.
+   *
+   * Read from the original bytes rather than a rebuild, because the question
+   * is about the file somebody has, not about what this would produce from it.
+   */
+  async preflight(): Promise<PreflightReport | null> {
+    try {
+      const libDoc = await PDFDocument.load(this.originalBytes.slice(), {
+        throwOnInvalidObject: false,
+        updateMetadata: false,
+      });
+      return preflight(libDoc, this.wasEncrypted);
+    } catch {
+      return null;
+    }
+  }
+
   /* ---------------- spelling ---------------- */
 
   /** The word list, fetched once and kept, or null when it is not installed. */
@@ -1129,6 +1153,16 @@ export class HandpressDocument {
     italic: boolean;
     /** Draw under the page rather than over it, which is what a watermark wants. */
     behind?: boolean;
+    /**
+     * Sequential numbering, for the `{n}` token.
+     *
+     * Bates numbering is this: a number that runs on across a whole set of
+     * documents so that a page can be cited unambiguously afterwards. It must
+     * never restart and never repeat, which is why the counter comes in and
+     * the next value goes back out rather than being worked out from the page
+     * index. `{page}` is per document; `{n}` is per set.
+     */
+    number?: { next: number; digits: number };
     /** Zero-based pages to stamp. Absent means all of them. */
     pages?: number[];
   }): Promise<number> {
@@ -1148,6 +1182,12 @@ export class HandpressDocument {
         ? 'Helvetica-Oblique'
         : 'Helvetica';
     let done = 0;
+    // Only advanced when a page is actually stamped, so a page that could not
+    // be read does not silently consume a number and leave a gap in a sequence
+    // whose whole purpose is that there are none.
+    let next = spec.number?.next ?? 1;
+    const counted = (): string =>
+      spec.number ? String(next).padStart(spec.number.digits, '0') : '';
 
     for (const index of wanted) {
       const page = await this.getPage(index).catch(() => null);
@@ -1159,7 +1199,8 @@ export class HandpressDocument {
 
       const text = spec.text
         .replaceAll('{page}', String(index + 1))
-        .replaceAll('{pages}', String(this.pageCount));
+        .replaceAll('{pages}', String(this.pageCount))
+        .replaceAll('{n}', counted());
       const width = standardTextWidth(alias, text, spec.size);
 
       // A turned stamp is measured along its own axis, so the width that
@@ -1200,9 +1241,12 @@ export class HandpressDocument {
         })
       ) {
         done++;
+        if (spec.number) next++;
       }
     }
 
+    // Handed back so a batch can carry the sequence into the next file.
+    this.lastNumber = next;
     this.undoStack.length = undoDepth;
     if (done) {
       this.undoStack.push(before);
@@ -1210,6 +1254,14 @@ export class HandpressDocument {
     }
     return done;
   }
+
+  /**
+   * Where a sequential numbering run got to, for the next document in a set.
+   *
+   * Bates numbering has to run on across files, so the counter cannot live
+   * inside one document.
+   */
+  lastNumber = 1;
 
   /** Turns a page by a quarter turn, positive being clockwise. */
   rotatePage(position: number, degrees: number): boolean {

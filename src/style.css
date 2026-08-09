@@ -1279,6 +1279,53 @@ body {
   background: var(--warn);
 }
 
+/* A measurement is the answer to a question, so it is the biggest thing in
+   the panel rather than a line of body text. */
+.measure-value {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 8px 0 12px;
+}
+
+/* ---------- preflight ---------- */
+
+.preflight {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.preflight-row {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--chrome-3);
+  border-left: 3px solid var(--ink-faint);
+}
+
+/* What stops the file being archival, what is merely worth knowing, and what
+   is only a remark. Three levels, coloured so the list can be skimmed. */
+.preflight-blocks {
+  border-left-color: #e5534b;
+}
+
+.preflight-warns {
+  border-left-color: var(--warn);
+}
+
+.preflight-note {
+  border-left-color: var(--ink-faint);
+}
+
+.preflight-what {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.preflight-why {
+  color: var(--ink-dim);
+}
+
 /* ---------- spelling ---------- */
 
 .spell-list {
