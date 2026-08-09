@@ -277,7 +277,7 @@ export interface WalkResult {
    * run would end up wrapped by the translation rather than beside it. These
    * marks are what those two checks read.
    */
-  stateMarks: Map<string, Array<{ pos: number; op: 'q' | 'Q' | 'cm' }>>;
+  stateMarks: Map<string, Array<{ pos: number; op: 'q' | 'Q' | 'cm' | 'clip'; ctm?: Matrix }>>;
   /** Decoded bytes of every stream visited, keyed by streamId. */
   streams: Map<string, { bytes: Uint8Array; stream: PDFStream; ref: PDFRef | null }>;
   fonts: Map<string, LoadedFont>;
@@ -391,7 +391,7 @@ function walkStream(
   // The path currently being built, in page space, with the byte offset it
   // started at. A path spans several operators, so its extent and its bytes
   // both have to be accumulated until a paint operator ends it.
-  const stateMarks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' }> = [];
+  const stateMarks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' | 'clip'; ctm?: Matrix }> = [];
   out.stateMarks.set(streamId, stateMarks);
 
   let pathStart = -1;
@@ -416,6 +416,10 @@ function walkStream(
 
   const endPath = (opTok: Token, painted: boolean): void => {
     if (pendingClip) {
+      // Where the clip was established, so a move can tell which q block owns
+      // it. The innermost block around a drawing is usually the one holding
+      // its matrix, with the clip a level further out.
+      stateMarks.push({ pos: pathStart >= 0 ? pathStart : opTok.start, op: 'clip' });
       // The clip is the path just built, intersected with whatever was already
       // in force. Anything but one plain rectangle is a shape whose bounding
       // box would be a lie, so it is recorded as unknowable instead.
@@ -562,7 +566,11 @@ function walkStream(
     switch (op) {
       case 'q':
         stack.push(cloneState(gs));
-        stateMarks.push({ pos: t.start, op: 'q' });
+        // The matrix in force where the block opens. A translation inserted
+        // in front of a block applies in the space that matrix maps from, not
+        // the one in force further inside it, and using the inner one scaled
+        // every move by whatever the block had already scaled by.
+        stateMarks.push({ pos: t.start, op: 'q', ctm: [...gs.ctm] as Matrix });
         break;
       case 'Q': {
         const prev = stack.pop();

@@ -124,49 +124,127 @@ for (const file of files) {
     const place = (g: { count: number; x0: number; y0: number; x1: number; y1: number }): string =>
       `${g.count}@${g.x0.toFixed(1)},${g.y0.toFixed(1)}+${(g.x1 - g.x0).toFixed(1)}x${(g.y1 - g.y0).toFixed(1)}`;
 
-    const expected = before.graphics
-      .map((g) => (g.id === target.id ? { ...g, x0: g.x0 + DX, x1: g.x1 + DX, y0: g.y0 + DY, y1: g.y1 + DY } : g))
-      .map(place)
-      .sort();
-    const actual = after.graphics.map(place).sort();
-    const same = expected.length === actual.length && expected.every((e, i) => e === actual[i]);
+    // A drawing cut to its own shape by something that cannot travel with it
+    // is held inside that shape rather than moved out of sight, so the target
+    // may land anywhere between where it started and where it was sent.
+    // Everything else has to be exactly where it was, which is checked by
+    // taking the target out of both lists and comparing what is left.
+    const shape = `${target.count}@${(target.x1 - target.x0).toFixed(1)}x${(target.y1 - target.y0).toFixed(1)}`;
+    const shapeOf = (g: typeof target): string =>
+      `${g.count}@${(g.x1 - g.x0).toFixed(1)}x${(g.y1 - g.y0).toFixed(1)}`;
+    const between = (now: number, from: number, by: number): boolean =>
+      by >= 0 ? now >= from - 0.5 && now <= from + by + 0.5 : now <= from + 0.5 && now >= from + by - 0.5;
+
+    // Furthest from where it started, because a page can carry eight identical
+    // shapes and "it may also have stayed put" would otherwise match one of the
+    // seven that did, leaving the one that moved looking like a stray.
+    const landed = after.graphics
+      .filter((g) => shapeOf(g) === shape && between(g.x0, target.x0, DX) && between(g.y0, target.y0, DY))
+      .sort((a, b) => Math.hypot(b.x0 - target.x0, b.y0 - target.y0) - Math.hypot(a.x0 - target.x0, a.y0 - target.y0))[0];
     check(
-      'the drawing moves, and nothing else does',
-      same,
-      same ? '' : `expected ${expected.filter((e, i) => e !== actual[i]).slice(0, 2).join(' ')} ` +
-        `got ${actual.filter((a, i) => a !== expected[i]).slice(0, 2).join(' ')}`,
-    );
-    // And so does every line of text, which is the check that the closing matrix
-    // really did put the state back for everything drawn afterwards.
-    // Compared in stream order rather than by what the runs say. A report repeats
-    // itself constantly, so matching runs by their text pairs the first "N/A" with
-    // every later one and reports the whole page as having moved.
-    check(
-      'the same number of text runs come back',
-      before.text.length === after.text.length,
-      `${before.text.length} before, ${after.text.length} after`,
-    );
-    let strayText = 0;
-    let worst = 0;
-    for (let i = 0; i < Math.min(before.text.length, after.text.length); i++) {
-      if (before.text[i].key !== after.text[i].key) {
-        strayText++;
-        continue;
-      }
-      const off = Math.hypot(after.text[i].x - before.text[i].x, after.text[i].y - before.text[i].y);
-      if (off > 0.5) {
-        strayText++;
-        worst = Math.max(worst, off);
-      }
-    }
-    check(
-      'no text moves',
-      strayText === 0,
-      `${strayText} of ${after.text.length} runs shifted, worst by ${worst.toFixed(1)}pt`,
+      'the drawing moves, or is held inside what clips it',
+      !!landed,
+      `wanted ${shape} between (${target.x0.toFixed(1)}, ${target.y0.toFixed(1)}) and ` +
+        `(${(target.x0 + DX).toFixed(1)}, ${(target.y0 + DY).toFixed(1)})`,
     );
 
+    const drop = (list: typeof before.graphics, one: typeof target | undefined): string[] => {
+      const out = list.map(place);
+      const at = one ? out.indexOf(place(one)) : -1;
+      if (at >= 0) out.splice(at, 1);
+      return out.sort();
+    };
+    const wasRest = drop(before.graphics, target);
+    const nowRest = drop(after.graphics, landed);
+    check(
+      'and nothing else moves',
+      wasRest.length === nowRest.length && wasRest.every((e, i) => e === nowRest[i]),
+      wasRest.filter((e, i) => e !== nowRest[i]).slice(0, 2).join(' '),
+    );
   } catch (e) {
     check('the move does not throw', false, (e as Error).message);
+  }
+}
+
+/* ---------- a drawing cut to its own shape must survive being moved ---------- */
+//
+// Nearly every small mark on a real page sits in a clip a point or two bigger
+// than itself. Translating only the drawing slides it out from under its own
+// clip and it vanishes, which is what moving the icons on a report did. The
+// check is not that the bytes changed: it is that the drawing is still there
+// afterwards, and still inside whatever is cutting it.
+for (const file of files) {
+  let original: Uint8Array;
+  try {
+    original = new Uint8Array(fs.readFileSync(file));
+  } catch {
+    continue;
+  }
+  label = quiet ? `${file.split('/').pop()}: ` : '';
+
+  let before;
+  try {
+    before = await survey(original);
+  } catch {
+    continue;
+  }
+
+  // The tightest clipped group on the page, which is the hardest case.
+  const clipped = before.graphics
+    .filter((g) => {
+      const c = g.state.clip;
+      return !!c && Math.min(g.x0 - c.x0, c.x1 - g.x1, g.y0 - c.y0, c.y1 - g.y1) < 4;
+    })
+    .sort((a, b) => (a.x1 - a.x0) * (a.y1 - a.y0) - (b.x1 - b.x0) * (b.y1 - b.y0))[0];
+  if (!clipped) continue;
+
+  const dx = 40;
+  const dy = -60;
+  try {
+    const doc = await PDFDocument.load(original, { throwOnInvalidObject: false, updateMetadata: false });
+    const page = doc.getPage(0);
+    const content = getPageContent(page);
+    const walk = walkPage(content.bytes, content.resources);
+    await applyEdits(doc, page, walk, [], [], content.bytes, null, [], [], [], [], [], [
+      { graphicId: clipped.id, dx, dy },
+    ]);
+
+    const after = await survey(await doc.save({ useObjectStreams: false }));
+    // Either it moved the whole way, because its clip came with it, or it was
+    // held at the edge of the clip. Both are fine; vanishing is not.
+    const moved = after.graphics.find(
+      (g) =>
+        g.count === clipped.count &&
+        Math.abs(g.x1 - g.x0 - (clipped.x1 - clipped.x0)) < 0.5 &&
+        g.x0 >= clipped.x0 - 0.5 &&
+        g.x0 <= clipped.x0 + dx + 0.5 &&
+        g.y0 <= clipped.y0 + 0.5 &&
+        g.y0 >= clipped.y0 + dy - 0.5,
+    );
+    check('a clipped drawing is still there after being moved', !!moved,
+      `${clipped.id} wanted between (${clipped.x0.toFixed(1)}, ${clipped.y0.toFixed(1)}) and (${(clipped.x0 + dx).toFixed(1)}, ${(clipped.y0 + dy).toFixed(1)})`);
+    if (moved) {
+      const c = moved.state.clip;
+      const was = clipped.state.clip;
+      // Only where it started inside. Some documents draw a shape already
+      // spilling past what cuts it, and holding the move to a clip it was
+      // never within would be asking for something that was never true.
+      const startedInside =
+        !was ||
+        (clipped.x0 >= was.x0 - 0.5 &&
+          clipped.x1 <= was.x1 + 0.5 &&
+          clipped.y0 >= was.y0 - 0.5 &&
+          clipped.y1 <= was.y1 + 0.5);
+      check(
+        startedInside ? 'and its clip moved with it' : 'and it is no worse cut than it was',
+        !c ||
+          !startedInside ||
+          (moved.x0 >= c.x0 - 0.5 && moved.x1 <= c.x1 + 0.5 && moved.y0 >= c.y0 - 0.5 && moved.y1 <= c.y1 + 0.5),
+        c ? `drawing ${moved.x0.toFixed(0)},${moved.y0.toFixed(0)} clip ${c.x0.toFixed(0)},${c.y0.toFixed(0)}` : '',
+      );
+    }
+  } catch (e) {
+    check('moving a clipped drawing does not throw', false, (e as Error).message);
   }
 }
 

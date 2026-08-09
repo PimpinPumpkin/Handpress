@@ -789,6 +789,13 @@ export class Viewer {
       this.addFieldControl(p, field, viewport);
     }
 
+    // Ink gets a hit target of its own, so something drawn with the pen or a
+    // shape tool can be picked up and moved like anything else. Without one it
+    // could only be rubbed out and drawn again, which is not an edit.
+    for (const stroke of this.doc.inkFor(p.index)) {
+      this.addInkBox(p, stroke, viewport);
+    }
+
     for (const erasure of this.doc.erasuresFor(p.index)) {
       this.addErasureBox(p, erasure, viewport);
     }
@@ -2316,6 +2323,62 @@ export class Viewer {
   }
 
   /**
+   * A hit target for a stroke of ink.
+   *
+   * Sized to the points plus half the line width, because a stroke is drawn
+   * centred on its path and a box cut to the path alone leaves the outer edge
+   * of a thick line outside the thing meant to catch it.
+   */
+  private addInkBox(
+    p: RenderedPage,
+    stroke: { id: string; width: number; points: Array<{ x: number; y: number }> },
+    viewport: { convertToViewportPoint(x: number, y: number): number[] },
+  ): void {
+    if (!stroke.points.length) return;
+    const pad = stroke.width / 2 + 1;
+    const xs = stroke.points.map((q) => q.x);
+    const ys = stroke.points.map((q) => q.y);
+    const [ax, ay] = viewport.convertToViewportPoint(Math.min(...xs) - pad, Math.max(...ys) + pad);
+    const [bx, by] = viewport.convertToViewportPoint(Math.max(...xs) + pad, Math.min(...ys) - pad);
+
+    const box = document.createElement('div');
+    box.className = 'line-box ink-box';
+    box.style.left = `${Math.min(ax, bx)}px`;
+    box.style.top = `${Math.min(ay, by)}px`;
+    box.style.width = `${Math.abs(bx - ax)}px`;
+    box.style.height = `${Math.abs(by - ay)}px`;
+    box.title = 'Something you drew. Drag to move it, cross to remove it.';
+
+    const remove = document.createElement('button');
+    remove.className = 'box-remove';
+    remove.type = 'button';
+    remove.textContent = '\u00d7';
+    remove.title = 'Remove this';
+    remove.addEventListener('pointerdown', (e) => e.stopPropagation());
+    remove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!this.doc?.removeInk(p.index, stroke.id)) return;
+      void this.rebuild(p.index).then(() => {
+        this.cb.onStatus('Removed.');
+        this.cb.onEdited();
+      });
+    });
+    box.appendChild(remove);
+
+    this.makeDraggable(
+      box,
+      viewport as never,
+      (dx, dy) => {
+        if (!this.doc?.moveInk(p.index, stroke.id, dx, dy)) return;
+        void this.rebuild(p.index).then(() => this.cb.onEdited());
+      },
+      // No lifted copy, for the same reason a drawing has none: the box is a
+      // loose rectangle round a stroke and most of it is whatever is behind.
+    );
+    p.overlay.appendChild(box);
+  }
+
+  /**
    * A hit target for a drawing made of paths, so a logo can be dragged.
    *
    * There is no remove and no resize here, unlike an image. Removing would
@@ -2350,7 +2413,12 @@ export class Viewer {
         void this.rebuild(p.index).then(() => this.cb.onEdited());
       },
       undefined,
-      p,
+      // No page, which means no lifted copy. The copy is a rectangle of page
+      // pixels, and a drawing's box is a loose rectangle around a shape: most
+      // of what it contains is whatever the page has behind it, so dragging a
+      // circle floated a square of everything around the circle. An image is
+      // its rectangle and keeps the copy; a drawing shows its outline moving
+      // and reappears where it is dropped.
     );
 
     p.overlay.appendChild(box);

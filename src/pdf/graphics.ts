@@ -30,6 +30,20 @@ export interface Graphic {
   /** Enough state to draw the group again elsewhere in the stream. */
   state: DrawState;
   /**
+   * A wider byte range to move instead, when the group is cut to its own shape.
+   *
+   * Nearly every small mark on a real page is drawn inside a clip a point or
+   * two bigger than itself. Translating just the drawing then slides it out
+   * from under its own clip and it vanishes, which is what moving the icons on
+   * a report did. The clip cannot be widened from inside, because clipping only
+   * ever intersects, so the fix is to move the whole q block that established
+   * it: the clip travels with the drawing and cuts it in the same place.
+   *
+   * Only set when that block holds nothing but this group, since moving it
+   * would move anything else inside it too.
+   */
+  block?: { start: number; end: number; ctm: PathOp['ctm'] };
+  /**
    * Whether this can be lifted out of where it sits and drawn somewhere else.
    *
    * Changing what is in front of what moves an object's operators to the end
@@ -86,6 +100,15 @@ const MIN_LONE_SIZE = 10;
  */
 const MIN_DENSITY = 0.2;
 
+/**
+ * How much room a clip has to leave before it is treated as harmless.
+ *
+ * Measured from a real report: the icons on it sit in clips 1.6pt bigger than
+ * themselves and the logos in clips exactly their own size, so anything under
+ * a few points means a drag of any distance slides the drawing out of view.
+ */
+const CLIP_ROOM = 6;
+
 /** True if two boxes touch or come within the joining distance of each other. */
 function near(
   a: { x0: number; y0: number; x1: number; y1: number },
@@ -106,7 +129,11 @@ function near(
  * A `cm` at the range's own nesting level survives the range, and the inverse
  * then composes with it in the wrong order.
  */
-function isBalanced(marks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' }>, start: number, end: number): boolean {
+function isBalanced(
+  marks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' | 'clip' }>,
+  start: number,
+  end: number,
+): boolean {
   let depth = 0;
   for (const m of marks) {
     if (m.pos < start || m.pos >= end) continue;
@@ -114,9 +141,51 @@ function isBalanced(marks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' }>, start: 
     else if (m.op === 'Q') {
       depth--;
       if (depth < 0) return false;
-    } else if (depth === 0) return false;
+    } else if (m.op === 'cm' && depth === 0) return false;
   }
   return depth === 0;
+}
+
+/**
+ * The innermost q...Q that encloses a byte range and holds nothing else.
+ *
+ * "Holds nothing else" is the whole safety of it: the range is only widened to
+ * the block when every drawing operation inside that block belongs to the
+ * group being moved. A block shared with a neighbour would take the neighbour
+ * along, which is exactly the class of bug this file exists to avoid.
+ */
+function enclosingBlock(
+  marks: Array<{ pos: number; op: 'q' | 'Q' | 'cm' | 'clip'; ctm?: PathOp['ctm'] }>,
+  others: Array<{ start: number }>,
+  start: number,
+  end: number,
+): { start: number; end: number; ctm: PathOp['ctm'] } | null {
+  const opens: Array<{ pos: number; ctm?: PathOp['ctm'] }> = [];
+  let found: { start: number; end: number; ctm: PathOp['ctm'] } | null = null;
+
+  for (const m of marks) {
+    if (m.op === 'q') {
+      opens.push({ pos: m.pos, ctm: m.ctm });
+      continue;
+    }
+    if (m.op !== 'Q') continue;
+    const open = opens.pop();
+    if (!open || !open.ctm) continue;
+    // The tightest block that contains the whole group *and* a clip. The
+    // innermost block around a drawing usually holds only its matrix, with the
+    // clip a level further out, and bracketing that inner one moves the
+    // drawing out from under a clip that stayed behind.
+    const holdsClip = marks.some((k) => k.op === 'clip' && k.pos > open.pos && k.pos < m.pos);
+    if (open.pos < start && m.pos >= end && holdsClip) {
+      if (!found || open.pos > found.start) found = { start: open.pos, end: m.pos + 1, ctm: open.ctm };
+    }
+  }
+  if (!found) return null;
+
+  for (const op of others) {
+    if (op.start > found.start && op.start < found.end && !(op.start >= start && op.start < end)) return null;
+  }
+  return found;
 }
 
 /**
@@ -181,11 +250,23 @@ export function findGraphics(walk: WalkResult, pageWidth: number, pageHeight: nu
     const marks = walk.stateMarks.get(first.streamId) ?? [];
     if (!isBalanced(marks, start, end)) continue;
 
+    // Only worth widening when the clip is tight enough to matter. A page
+    // sized clip cuts nothing and the narrower range is the safer one.
+    const clip = first.state.clip;
+    const tight =
+      !!clip &&
+      Math.min(box.x0 - clip.x0, clip.x1 - box.x1, box.y0 - clip.y0, clip.y1 - box.y1) < CLIP_ROOM;
+    const block =
+      tight && first.streamId === 'page'
+        ? enclosingBlock(marks, [...walk.ops, ...walk.images, ...walk.paths], start, end) ?? undefined
+        : undefined;
+
     out.push({
       id: `${first.streamId}:${start}`,
       streamId: first.streamId,
       start,
       end,
+      block,
       ctm: first.ctm,
       count: group.length,
       state: first.state,

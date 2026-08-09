@@ -502,6 +502,21 @@ Each stamp is ordinary added text once it is placed, so any single one can be
 dragged, retyped or deleted without disturbing the rest, and the whole batch is
 one undo.
 
+### Moving a drawing that is cut to its own shape
+
+Nearly every small mark on a page is drawn inside a clipping path a point or
+two bigger than itself. Move only the drawing and it slides out from under its
+own clip and disappears, which is what dragging the icons on a report used to
+do.
+
+Handpress moves the block that established the clip, so the clip travels with
+the drawing. Where that is not possible, because the block holds other things
+too, the move is held at the edge of what is cutting it: it stops somewhere
+visible rather than vanishing.
+
+Ink you have drawn yourself can be picked up and moved as well, and removed
+with the cross, rather than only rubbed out and drawn again.
+
 ### What covers what
 
 Right click a drawing or an image for the four commands: bring to front, bring

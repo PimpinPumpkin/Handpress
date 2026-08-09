@@ -600,6 +600,41 @@ overlay biggest first, so the smallest thing under the pointer is on top and
 gets the click. Before that, a logo dragged onto a full width panel became
 unreachable, and right clicking it offered to rearrange the panel.
 
+## A drawing cut to its own shape vanishes when it is moved
+
+This was the single worst bug in the object editing: dragging any small icon on
+a real report made it disappear. Nearly every mark on a real page is drawn
+inside a clip a point or two bigger than itself. The Carfax icons sit in 20pt
+clips with 1.6pt of room; its two logos sit in clips exactly their own size.
+Translating only the drawing slides it out from under its own clip, and
+clipping only ever intersects, so it cannot be widened from inside.
+
+The fix is to bracket the `q` block that established the clip, so the clip
+travels with the drawing. Three things had to be right:
+
+- **Which block.** The innermost block around a drawing usually holds only its
+  matrix, with the clip a level further out, so `stateMarks` records where
+  clips are set and `enclosingBlock` takes the innermost block that contains
+  one. Widening is refused if the block holds any other drawing operation.
+- **Which matrix.** The translation is inserted in front of the block, so it
+  applies in the space the matrix *at the block* maps from, not the one in
+  force further inside it. Using the inner one scaled every move by whatever
+  the block had already scaled by: a 180pt drag came out as 126.
+- **When there is no block**, the move is held inside the clip rather than
+  allowed to disappear. Zero always has to be allowed, because a clip smaller
+  than the drawing it cuts gives a lower bound above zero and an upper bound
+  below it, and a clamp that took those literally shoved the drawing the
+  opposite way to the drag.
+
+`tools/test-graphic-move.ts` asserts, for the tightest clipped group on every
+corpus document, that the drawing is still there afterwards and no worse cut
+than it was.
+
+Related: a drawing's drag no longer floats a lifted copy. The copy is a
+rectangle of page *pixels*, and a drawing's box is a loose rectangle around a
+shape, so dragging a circle floated a square of everything behind the circle.
+An image is its rectangle and keeps the copy.
+
 ## Comment threads never needed a server
 
 This was assumed to need one for a while and it does not. A reply is an

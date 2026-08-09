@@ -1028,6 +1028,31 @@ function relocated(
 }
 
 /**
+ * Holds a move inside the clip, when the clip cannot travel with the drawing.
+ *
+ * A drawing cut to its own shape and moved out from under that shape simply
+ * disappears, which is the worst way for a drag to fail: nothing to see and
+ * nothing to undo but a guess. Where the clip can be carried along there is
+ * nothing to hold; where it cannot, the drawing stops at the edge of what is
+ * cutting it, which is at least visible and obviously what happened.
+ */
+function held(graphic: Graphic, edit: GraphicEdit): GraphicEdit {
+  const clip = graphic.state.clip;
+  if (graphic.block || !clip) return edit;
+
+  // Zero is always allowed. A clip smaller than the drawing it cuts gives a
+  // lower bound above zero and an upper bound below it, and a clamp that took
+  // those literally shoved the drawing the opposite way to the drag.
+  const room = (low: number, high: number, want: number): number =>
+    want < 0 ? Math.max(want, Math.min(0, low)) : Math.min(want, Math.max(0, high));
+  return {
+    ...edit,
+    dx: room(clip.x0 - graphic.x0, clip.x1 - graphic.x1, edit.dx),
+    dy: room(clip.y0 - graphic.y0, clip.y1 - graphic.y1, edit.dy),
+  };
+}
+
+/**
  * The pair of matrices that move a run of paths and then undo themselves.
  *
  * The shift is asked for in page space, but a matrix put in here applies in
@@ -1040,7 +1065,10 @@ function relocated(
  * would also throw away any colour or line width the run had set, and the
  * content after it is entitled to inherit those.
  */
-function graphicShift(graphic: Graphic, edit: GraphicEdit): { open: Uint8Array; close: Uint8Array } | null {
+function graphicShift(
+  graphic: { ctm: Graphic['ctm'] },
+  edit: GraphicEdit,
+): { open: Uint8Array; close: Uint8Array } | null {
   const [a, b, c, d] = graphic.ctm;
   const det = a * d - b * c;
   if (!Number.isFinite(det) || Math.abs(det) < 1e-9) return null;
@@ -1261,13 +1289,19 @@ export async function applyEdits(
       if (zById.has(edit.graphicId)) continue;
       const graphic = graphicsById.get(edit.graphicId);
       if (!graphic) continue;
-      const shift = graphicShift(graphic, edit);
+      // Carried through the matrix of whatever is actually being bracketed.
+      const shift = graphicShift(graphic.block ?? graphic, held(graphic, edit));
       if (!shift) continue;
       const list = patchesByStream.get(graphic.streamId) ?? [];
-      // Zero length patches, so they insert rather than replace. The paths
-      // between them are handed through untouched.
-      list.push({ start: graphic.start, end: graphic.start, bytes: shift.open });
-      list.push({ start: graphic.end, end: graphic.end, bytes: shift.close });
+      // Around the block that set the clip when there is one, so the clip
+      // travels with the drawing. Translating only the drawing slides it out
+      // from under a clip cut to its own shape and it disappears, which is
+      // what moving a small icon on a real report used to do.
+      const range = graphic.block ?? graphic;
+      // Zero length patches, so they insert rather than replace. Everything
+      // between them is handed through untouched.
+      list.push({ start: range.start, end: range.start, bytes: shift.open });
+      list.push({ start: range.end, end: range.end, bytes: shift.close });
       patchesByStream.set(graphic.streamId, list);
       editedLines++;
     }

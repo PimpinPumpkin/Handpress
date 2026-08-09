@@ -1423,6 +1423,25 @@ export class HandpressDocument {
     return true;
   }
 
+  /**
+   * Moves something drawn with the pen or a shape tool.
+   *
+   * Ink had no way to be moved at all: once drawn it could only be rubbed out
+   * and drawn again, which is not an edit, it is a redo. The points carry the
+   * position, so moving one is moving all of them.
+   */
+  moveInk(pageIndex: number, id: string, dx: number, dy: number): boolean {
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return false;
+    const page = this.ink.get(pageIndex);
+    const stroke = page?.get(id);
+    if (!page || !stroke) return false;
+    const before = this.snapshot();
+    page.set(id, { ...stroke, points: stroke.points.map((q) => ({ x: q.x + dx, y: q.y + dy })) });
+    this.undoStack.push(before);
+    this.redoStack = [];
+    return true;
+  }
+
   /** Moves a drawing by a page-space delta. */
   moveGraphic(pageIndex: number, graphicId: string, dx: number, dy: number): boolean {
     if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return false;

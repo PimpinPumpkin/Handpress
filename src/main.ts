@@ -1052,7 +1052,10 @@ for (const tab of document.querySelectorAll<HTMLElement>('.tool-tab')) {
   tab.addEventListener('click', () => showToolGroup(tab.dataset.group ?? 'text'));
 }
 
-showToolGroup(localStorage.getItem(TOOL_GROUP_KEY) ?? 'text');
+// File first: the things done to the whole document are what somebody who has
+// just opened one is most likely to want, and Text was only first because it
+// was the first thing built.
+showToolGroup(localStorage.getItem(TOOL_GROUP_KEY) ?? 'doc');
 
 /**
  * Brings a tool's own group forward when the tool is chosen another way.

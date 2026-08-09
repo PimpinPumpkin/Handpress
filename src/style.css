@@ -1129,6 +1129,19 @@ body {
   border-style: solid;
 }
 
+/* Ink you drew yourself. Same treatment as a drawing already on the page:
+   nothing at rest, an outline once the pointer asks. */
+.line-box.ink-box {
+  border: 1px solid transparent;
+  cursor: grab;
+}
+
+.line-box.ink-box:hover {
+  background: rgba(61, 139, 253, 0.08);
+  border-color: rgba(61, 139, 253, 0.7);
+  border-style: dashed;
+}
+
 /* ---------- drawings made of paths ---------- */
 
 /*
